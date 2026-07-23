@@ -58,20 +58,29 @@ defmodule Arvo.ProfilesTest do
              Arvo.Profiles.switch("rust", ["base"], opts)
   end
 
-  test "project auto-activate requires trust", %{tmp: tmp} do
+  test "project auto-activate applies profile without requiring trust", %{tmp: tmp} do
+    # Trust gates project-local plugin dirs only (Registry), not the profile name
+    # from project config — untrusted projects still get global/bundled profile plugins.
     proj = Path.join(tmp, "proj")
     File.mkdir_p!(Path.join(proj, ".arvo"))
     File.write!(Path.join([proj, ".arvo", "config.toml"]), "profile = \"python\"\n")
 
-    assert {:error, :untrusted} =
-             Arvo.Profiles.auto_activate_project(proj, trust_check: fn _ -> false end)
-
-    assert {:ok, _} =
+    assert {:ok, result} =
              Arvo.Profiles.auto_activate_project(proj,
-               trust_check: fn _ -> true end,
+               trust_check: fn _ -> false end,
                activate: fn _ -> :ok end,
                deactivate: fn _ -> :ok end
              )
+
+    assert is_map(result)
+  end
+
+  test "project auto-activate no-ops when profile key absent", %{tmp: tmp} do
+    proj = Path.join(tmp, "noprof")
+    File.mkdir_p!(Path.join(proj, ".arvo"))
+    File.write!(Path.join([proj, ".arvo", "config.toml"]), "# empty\n")
+
+    assert {:ok, :no_profile} = Arvo.Profiles.auto_activate_project(proj)
   end
 
   test "/profile slash lists and switches" do

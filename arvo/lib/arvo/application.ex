@@ -2,6 +2,8 @@ defmodule Arvo.Application do
   @moduledoc false
   use Application
 
+  require Logger
+
   @impl true
   def start(_type, _args) do
     # Load global + project config before children start (stubs may read Application env later).
@@ -23,11 +25,35 @@ defmodule Arvo.Application do
 
     case result do
       {:ok, _pid} ->
+        # After Registry+TUI are up: apply project profile plugins (SPEC §5).
+        _ = maybe_auto_activate_profile()
         maybe_start_repl()
         result
 
       other ->
         other
+    end
+  end
+
+  @doc """
+  Apply `profile` from project config via `Arvo.Profiles.auto_activate_project/2`.
+
+  Safe to call after the supervision tree is running (e.g. tests). Failures are
+  logged and returned; boot continues.
+  """
+  def maybe_auto_activate_profile(cwd \\ nil) do
+    cwd = cwd || Application.get_env(:arvo, :cwd) || Arvo.cwd()
+
+    case Arvo.Profiles.auto_activate_project(cwd) do
+      {:ok, _} = ok ->
+        ok
+
+      {:error, reason} = err ->
+        Logger.warning(
+          "Arvo: project profile auto-activate failed for #{cwd}: #{inspect(reason)}"
+        )
+
+        err
     end
   end
 

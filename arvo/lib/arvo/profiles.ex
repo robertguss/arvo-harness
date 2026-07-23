@@ -99,22 +99,27 @@ defmodule Arvo.Profiles do
     end)
   end
 
-  @doc "Auto-activate profile from project config if trusted."
+  @doc """
+  Auto-activate workflow profile from project `.arvo/config.toml`.
+
+  Trust does **not** block this path: project config is always readable (SPEC §5/§11).
+  Project-local plugins under `<cwd>/.arvo/plugins/` remain trust-gated in
+  `Arvo.Plugins.Registry` resolution. Bundled/global profile plugins still load
+  when the project is untrusted.
+  """
   def auto_activate_project(cwd, opts \\ []) do
     cfg = Arvo.Config.load(cwd)
     profile = cfg.profile
-    trust_fun = Keyword.get(opts, :trust_check, &Arvo.Plugins.Trust.trusted?/1)
+    # Drop trust_check if present — reserved key, not a switch option.
+    switch_opts = Keyword.drop(opts, [:trust_check])
 
     cond do
       is_nil(profile) or profile == "" ->
         {:ok, :no_profile}
 
-      not trust_fun.(cwd) ->
-        {:error, :untrusted}
-
       true ->
         active = Arvo.Plugins.Registry.list_active()
-        switch(profile, active, opts)
+        switch(profile, active, switch_opts)
     end
   end
 end

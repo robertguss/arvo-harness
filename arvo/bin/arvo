@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Thin PATH wrapper (SPEC §12): capture launch dir, run mix from the arvo checkout via mise.
+set -euo pipefail
+
+export ARVO_CWD="${ARVO_CWD:-$PWD}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHECKOUT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+cd "${CHECKOUT}"
+
+if command -v mise >/dev/null 2>&1; then
+  exec mise exec -- mix run --no-halt "$@"
+else
+  exec mix run --no-halt "$@"
+fi

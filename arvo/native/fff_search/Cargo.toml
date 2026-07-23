@@ -1,0 +1,12 @@
+[package]
+name = "fff_search"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "fff_search"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = "0.36"
+walkdir = "2"

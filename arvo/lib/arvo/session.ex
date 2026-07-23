@@ -112,10 +112,10 @@ defmodule Arvo.Session do
           path_or_cwd
 
         is_binary(path_or_cwd) ->
-          Arvo.Session.Store.list_for_cwd(path_or_cwd) |> List.first()
+          Arvo.Session.Store.list_resumable_for_cwd(path_or_cwd) |> List.first()
 
         true ->
-          Arvo.Session.Store.list_for_cwd(state.cwd || Arvo.cwd()) |> List.first()
+          Arvo.Session.Store.list_resumable_for_cwd(state.cwd || Arvo.cwd()) |> List.first()
       end
 
     if is_nil(path) do

@@ -97,4 +97,25 @@ defmodule Arvo.SessionStoreTest do
     assert {:ok, %{messages: msgs}} = Arvo.Session.resume(path)
     assert Enum.any?(msgs, &(&1.content =~ "hello"))
   end
+
+  test "list_resumable_for_cwd drops meta-only sessions", %{cwd: cwd} do
+    File.mkdir_p!(cwd)
+    {:ok, empty, _meta} = Arvo.Session.Store.create(cwd)
+    {:ok, full, meta} = Arvo.Session.Store.create(cwd)
+
+    Arvo.Session.Store.append!(full, %{
+      "type" => "message",
+      "parent_id" => meta["id"],
+      "role" => "user",
+      "content" => "hi"
+    })
+
+    all = Arvo.Session.Store.list_for_cwd(cwd)
+    resumable = Arvo.Session.Store.list_resumable_for_cwd(cwd)
+
+    assert empty in all
+    assert full in all
+    refute empty in resumable
+    assert full in resumable
+  end
 end

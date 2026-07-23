@@ -179,7 +179,7 @@ defmodule Arvo.TUI do
 
   defp do_slash(state, "resume", "") do
     cwd = Application.get_env(:arvo, :cwd) || Arvo.cwd()
-    sessions = Arvo.Session.Store.list_for_cwd(cwd)
+    sessions = Arvo.Session.Store.list_resumable_for_cwd(cwd)
 
     text =
       case sessions do
@@ -198,12 +198,13 @@ defmodule Arvo.TUI do
 
   defp do_slash(state, "resume", arg) do
     cwd = Application.get_env(:arvo, :cwd) || Arvo.cwd()
-    sessions = Arvo.Session.Store.list_for_cwd(cwd)
+    sessions = Arvo.Session.Store.list_resumable_for_cwd(cwd)
 
     path =
       case Integer.parse(String.trim(arg)) do
         {n, _} when n >= 1 -> Enum.at(sessions, n - 1)
         _ ->
+          # Full path still works for any file (including empty shells).
           if String.ends_with?(arg, ".jsonl"), do: String.trim(arg), else: nil
       end
 

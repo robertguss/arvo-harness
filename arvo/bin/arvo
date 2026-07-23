@@ -4,7 +4,15 @@ set -euo pipefail
 
 export ARVO_CWD="${ARVO_CWD:-$PWD}"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve PATH symlinks (BASH_SOURCE is the invoke path, e.g. ~/.local/bin/arvo).
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+# bin/arvo lives in the mix project root's bin/; checkout = parent of bin.
 CHECKOUT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 cd "${CHECKOUT}"

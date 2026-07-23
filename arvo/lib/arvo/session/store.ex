@@ -160,6 +160,25 @@ defmodule Arvo.Session.Store do
     end
   end
 
+  @doc """
+  Sessions worth resuming: newest first, excluding empty shells (meta-only).
+
+  Boot used to `open_new` before any chat; those empty files sorted as #1 and
+  made `/resume 1` useless. Index picker uses this list; path resume still
+  accepts any file.
+  """
+  def list_resumable_for_cwd(cwd) do
+    cwd
+    |> list_for_cwd()
+    |> Enum.filter(&has_message_entries?/1)
+  end
+
+  defp has_message_entries?(path) do
+    path
+    |> read_all()
+    |> Enum.any?(fn e -> e["type"] == "message" end)
+  end
+
   def new_id do
     Base.encode16(:crypto.strong_rand_bytes(12), case: :lower)
   end

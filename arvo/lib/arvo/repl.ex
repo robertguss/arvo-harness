@@ -9,7 +9,8 @@ defmodule Arvo.Repl do
   """
   def run(device \\ :stdio) do
     cwd = Application.get_env(:arvo, :cwd) || Arvo.cwd()
-    ensure_session(cwd)
+    # Do not open_new here: an empty boot session becomes /resume 1 and steals
+    # the previous chat. Session is created lazily on first chat (run_chat/2).
     IO.puts(device, "arvo 0.1 — cwd=#{cwd} (type /help, chat, or quit)")
     loop(device)
   end

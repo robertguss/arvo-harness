@@ -4,6 +4,10 @@ defmodule Arvo.Plugins.Registry do
   """
   use GenServer
 
+  # Flagship plugins compiled into the arvo app (NIF otp_app: :arvo).
+  # External mix plugins still load from ~/.arvo/plugins or project .arvo/plugins.
+  @bundled %{"fff" => Fff.Plugin}
+
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
@@ -17,7 +21,27 @@ defmodule Arvo.Plugins.Registry do
     GenServer.call(__MODULE__, {:register_loaded, name, mod})
   end
 
-  def activate(name), do: GenServer.call(__MODULE__, {:activate, name})
+  @doc """
+  Ensure plugin `name` is loaded into the registry (not necessarily active).
+
+  Resolution order:
+  1. already registered
+  2. bundled in-app module (e.g. fff → Fff.Plugin)
+  3. `~/.arvo/plugins/<name>/` mix project
+  4. `<cwd>/.arvo/plugins/<name>/` when project is trusted
+  """
+  def ensure_loaded(name) when is_binary(name) do
+    GenServer.call(__MODULE__, {:ensure_loaded, name}, 120_000)
+  end
+
+  @doc "Load if needed, then activate. Surfaces load errors as activate failures."
+  def activate(name) when is_binary(name) do
+    case ensure_loaded(name) do
+      :ok -> GenServer.call(__MODULE__, {:activate, name})
+      {:error, _} = err -> err
+    end
+  end
+
   def deactivate(name), do: GenServer.call(__MODULE__, {:deactivate, name})
   def set_profile(name), do: GenServer.call(__MODULE__, {:set_profile, name})
 
@@ -65,20 +89,16 @@ defmodule Arvo.Plugins.Registry do
   end
 
   def handle_call({:register_loaded, name, mod}, _from, state) do
-    case Arvo.Plugins.Loader.read_manifest(mod) do
-      {:ok, manifest} ->
-        entry = %{
-          name: name,
-          module: mod,
-          manifest: manifest,
-          dir: nil,
-          status: :loaded
-        }
+    case put_loaded(state, name, mod, nil) do
+      {:ok, state} -> {:reply, :ok, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
 
-        {:reply, :ok, put_in(state, [:plugins, name], entry)}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
+  def handle_call({:ensure_loaded, name}, _from, state) do
+    case do_ensure_loaded(state, name) do
+      {:ok, state} -> {:reply, :ok, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
@@ -86,6 +106,10 @@ defmodule Arvo.Plugins.Registry do
     case Map.get(state.plugins, name) do
       nil ->
         {:reply, {:error, :not_loaded}, state}
+
+      %{status: :active} ->
+        # Already active — idempotent success (profile re-switch / set-diff edge).
+        {:reply, :ok, state}
 
       entry ->
         ctx = %{cwd: Application.get_env(:arvo, :cwd)}
@@ -127,6 +151,73 @@ defmodule Arvo.Plugins.Registry do
 
   def handle_call({:set_profile, name}, _from, state) do
     {:reply, :ok, %{state | profile: name}}
+  end
+
+  defp do_ensure_loaded(state, name) do
+    cond do
+      Map.has_key?(state.plugins, name) ->
+        {:ok, state}
+
+      (bundled = Map.get(@bundled, name)) && match?({:module, _}, Code.ensure_loaded(bundled)) ->
+        put_loaded(state, name, bundled, :bundled)
+
+      (dir = resolve_plugin_dir(name)) != nil ->
+        case Arvo.Plugins.Loader.load(dir) do
+          {:ok, mod, manifest} ->
+            entry = %{
+              name: name,
+              module: mod,
+              manifest: manifest,
+              dir: Path.expand(dir),
+              status: :loaded
+            }
+
+            {:ok, put_in(state, [:plugins, name], entry)}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      true ->
+        {:error, {:not_found, name}}
+    end
+  end
+
+  defp put_loaded(state, name, mod, dir) do
+    case Arvo.Plugins.Loader.read_manifest(mod) do
+      {:ok, manifest} ->
+        entry = %{
+          name: name,
+          module: mod,
+          manifest: manifest,
+          dir: dir,
+          status: :loaded
+        }
+
+        {:ok, put_in(state, [:plugins, name], entry)}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp resolve_plugin_dir(name) do
+    home = System.get_env("HOME") || System.user_home!()
+    cwd = Application.get_env(:arvo, :cwd) || Arvo.cwd()
+
+    global = Path.join([home, ".arvo", "plugins", name])
+    project = Path.join([cwd, ".arvo", "plugins", name])
+
+    cond do
+      File.dir?(global) ->
+        global
+
+      File.dir?(project) and Arvo.Plugins.Trust.trusted?(cwd) ->
+        project
+
+      true ->
+        nil
+    end
   end
 
   defp core_tool_map do

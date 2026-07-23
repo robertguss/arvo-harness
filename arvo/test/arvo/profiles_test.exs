@@ -42,10 +42,20 @@ defmodule Arvo.ProfilesTest do
     assert "toy_plugin" in r1.added
     assert :ets.member(activated, "toy_plugin")
 
-    assert {:ok, r2} = Arvo.Profiles.switch("python", r1.active, opts)
+    # Stubs do not mutate Registry; pass logical active set for the next set-diff.
+    assert {:ok, r2} = Arvo.Profiles.switch("python", ["base", "toy_plugin"], opts)
     assert "toy_plugin" in r2.removed
     assert :ets.member(deactivated, "toy_plugin")
-    refute "toy_plugin" in r2.active
+  end
+
+  test "switch surfaces activate failure (no silent success)" do
+    opts = [
+      activate: fn _ -> {:error, :boom} end,
+      deactivate: fn _ -> :ok end
+    ]
+
+    assert {:error, {:activate, "toy_plugin", :boom}} =
+             Arvo.Profiles.switch("rust", ["base"], opts)
   end
 
   test "project auto-activate requires trust", %{tmp: tmp} do

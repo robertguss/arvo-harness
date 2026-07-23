@@ -50,8 +50,8 @@ defmodule Arvo.Profiles do
 
   @doc """
   Switch workflow profile via set-diff against currently active (non-base) plugins.
-  `activate_fun` / `deactivate_fun` receive plugin names.
-  Returns `{:ok, %{added, removed, active}}`.
+  `activate_fun` / `deactivate_fun` receive plugin names and must return `:ok` or `{:error, reason}`.
+  Returns `{:ok, %{added, removed, active}}` with **actual** active set, or `{:error, reason}`.
   """
   def switch(new_profile, current_active, opts \\ []) do
     activate_fun = Keyword.get(opts, :activate, &Arvo.Plugins.Registry.activate/1)
@@ -59,25 +59,44 @@ defmodule Arvo.Profiles do
 
     with {:ok, profile} <- load(new_profile) do
       desired = MapSet.new(profile.plugins)
+
       current =
         current_active
         |> Enum.reject(&(&1 == "base"))
         |> MapSet.new()
 
-      removed = MapSet.difference(current, desired)
-      added = MapSet.difference(desired, current)
+      removed = MapSet.difference(current, desired) |> MapSet.to_list()
+      added = MapSet.difference(desired, current) |> MapSet.to_list()
 
-      Enum.each(removed, deactivate_fun)
-      Enum.each(added, activate_fun)
-      _ = Arvo.Plugins.Registry.set_profile(new_profile)
+      with :ok <- apply_each(removed, deactivate_fun, :deactivate),
+           :ok <- apply_each(added, activate_fun, :activate) do
+        _ = Arvo.Plugins.Registry.set_profile(new_profile)
+        actual = Arvo.Plugins.Registry.list_active()
 
-      {:ok,
-       %{
-         added: MapSet.to_list(added),
-         removed: MapSet.to_list(removed),
-         active: ["base" | profile.plugins]
-       }}
+        {:ok,
+         %{
+           added: added,
+           removed: removed,
+           active: actual
+         }}
+      end
     end
+  end
+
+  defp apply_each(names, fun, op) do
+    Enum.reduce_while(names, :ok, fn name, :ok ->
+      case fun.(name) do
+        :ok ->
+          {:cont, :ok}
+
+        {:error, reason} ->
+          {:halt, {:error, {op, name, reason}}}
+
+        other ->
+          # Test stubs often return :ets.insert truthy or ignore return value.
+          if other == false, do: {:halt, {:error, {op, name, other}}}, else: {:cont, :ok}
+      end
+    end)
   end
 
   @doc "Auto-activate profile from project config if trusted."

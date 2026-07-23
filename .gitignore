@@ -4,3 +4,11 @@
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# bv (beads viewer) local config and caches
+.bv/
+
+# Rust (ore workspace)
+ore/target/
+**/*.rs.bk
+

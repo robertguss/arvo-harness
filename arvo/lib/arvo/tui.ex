@@ -126,11 +126,15 @@ defmodule Arvo.TUI do
   defp reduce_event(state, _), do: state
 
   defp do_slash(state, "help", _) do
+    # SPEC §7 slash surface — keep in sync with do_slash clauses below.
     text = """
     Commands:
       /help              this help
       /model [spec]      show or set model (req_llm string, e.g. xai:grok-4.5)
+      /profile [name]    list profiles, or switch workflow profile
       /login [provider]  device-flow login (default grok)
+      /resume [n|path]   list sessions, or resume by index/path
+      /compact [focus]   summarize older turns (optional focus text)
       /quit              exit
     """
 

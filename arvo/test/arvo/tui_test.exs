@@ -25,6 +25,11 @@ defmodule Arvo.TUITest do
   test "slash /model /help /quit" do
     assert {:ok, :handled, help} = Arvo.TUI.slash("help")
     assert help =~ "/model"
+    assert help =~ "/profile"
+    assert help =~ "/login"
+    assert help =~ "/resume"
+    assert help =~ "/compact"
+    assert help =~ "/quit"
 
     assert {:ok, :handled, _} = Arvo.TUI.slash("model", "xai:grok-test")
     assert Arvo.TUI.model() == "xai:grok-test"

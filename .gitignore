@@ -12,3 +12,7 @@
 ore/target/
 **/*.rs.bk
 
+
+# Harbor run artifacts (local)
+evals/jobs/
+evals/**/__pycache__/

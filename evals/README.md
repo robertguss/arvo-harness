@@ -18,12 +18,24 @@ Measures flagship **search profile** + `fff_search` plugin quality and agent use
 |------|------------|----------------|-------|
 | `ore-fff-locate-then-edit` | Find unique token in multi-module crate, fix nearby bug | `cargo test` green + API intact; logs `fff_search` hits | `ffy.1.2` |
 | `ore-fff-prefer-plugin` | Tool-choice doctrine: locate token → `answer.txt` | Correct path **and** `fff_search` if agent sessions exist | `ffy.1.3` |
+| `ore-fff-fuzzy-path` | Typo-resistant fuzzy path (`shcema_loader` → `schema_loader.rs`) | Correct path **and** `fff_search` if sessions exist | `ffy.1.4` |
+| `ore-fff-gitignore` | Skip `target/`, `node_modules/`, gitignored `vendor/` | Source path only; reject noise paths; `fff_search` if sessions | `ffy.1.4` |
 
-**Engine unit baselines** (no Harbor): `cargo test -p ore-plugin-fff` — nested content, path hit, limit, multi-word, skip dirs, sandbox, scoped path, fuzzy path typo.
+**Engine unit baselines** (no Harbor): `cargo test -p ore-plugin-fff` — nested content, path hit, limit, multi-word, skip dirs, sandbox, scoped path, fuzzy path typo. Integration smoke: `cargo test -p ore-plugin-fff --test harbor_fixture_smoke`.
 
-**Engine:** native `fff-search` 0.9.6 (shipped with `cg8`). Advanced Harbor tasks (`ffy.1.4`) still optional for agent-level fuzzy/ranking scenarios.
+**Engine:** native `fff-search` 0.9.6 (shipped with `cg8`). Frecency/ranking is **not** a separate Harbor task: the plugin does not expose rank/frecency signals beyond hit order, so agent-level scoring would be noisy; unit + fuzzy/ignore cover measurable quality.
 
 Epic: `coding-agent-harness-ffy.1`.
+
+### Job configs
+
+Reusable Harbor job JSON under `evals/jobs-config/ore-fff-*-{oracle,nop,ore}.json`. Example:
+
+```bash
+export PYTHONPATH=$PWD${PYTHONPATH:+:$PYTHONPATH}
+harbor run -c evals/jobs-config/ore-fff-fuzzy-path-oracle.json -y
+harbor run -c evals/jobs-config/ore-fff-gitignore-oracle.json -y
+```
 
 ## Prerequisites
 

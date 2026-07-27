@@ -100,6 +100,54 @@ defmodule Arvo.TUITest do
     assert src =~ "frame == last_frame"
   end
 
+  test "system/slash multi-line text wraps instead of truncating to one width line" do
+    help = """
+    Commands:
+      /help              this help
+      /model [spec]      show or set model
+      /quit              exit
+    Keys (Focus): Enter send · Esc cancel
+    """
+
+    st = %{
+      model: "xai:g",
+      profile: "base",
+      tokens: %{cumulative: 0, window: 100},
+      status: :idle,
+      transcript: [%{kind: :system, text: help}],
+      buffer: "",
+      streaming: false,
+      input: "",
+      last_error: nil
+    }
+
+    frame = Arvo.TUI.Render.frame(st, width: 40, height: 20)
+    # Prior bug: only first ~40 chars ("Commands:\\n  /help…") survived as one line.
+    assert frame =~ "/model"
+    assert frame =~ "/quit"
+    assert frame =~ "Esc"
+
+    lines = Arvo.TUI.Render.wrap_text(help, 40)
+    assert length(lines) > 1
+    assert Enum.any?(lines, &String.contains?(&1, "/model"))
+  end
+
+  test "Focus.run halts VM on quit when enabled (injectable)" do
+    test_pid = self()
+    Application.put_env(:arvo, :halt_on_focus_quit, true)
+    Application.put_env(:arvo, :focus_halt_fun, fn code -> send(test_pid, {:halt, code}) end)
+
+    on_exit(fn ->
+      Application.put_env(:arvo, :halt_on_focus_quit, false)
+      Application.delete_env(:arvo, :focus_halt_fun)
+    end)
+
+    {:ok, device} = StringIO.open("quit\n")
+
+    assert :ok = Arvo.TUI.Focus.run(mode: :line, device: device)
+    assert_receive {:halt, 0}, 500
+  end
+
   test "boot/source contract: default interactive path is Focus not Repl dual-start" do
     app = File.read!(Path.expand("../../lib/arvo/application.ex", __DIR__))
     assert app =~ "Arvo.TUI.Focus"

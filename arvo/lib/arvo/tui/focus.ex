@@ -23,6 +23,19 @@ defmodule Arvo.TUI.Focus do
       :raw -> run_raw(opts)
       :line -> run_line(Keyword.get(opts, :device, :stdio))
     end
+
+    # Product path runs under `mix run --no-halt`. Leaving after Focus returns
+    # without stopping the VM leaves a zombie BEAM with no UI (same as Repl).
+    # Tests set `:halt_on_focus_quit` false (see config/config.exs :test).
+    halt_after_focus()
+    :ok
+  end
+
+  defp halt_after_focus do
+    if Application.get_env(:arvo, :halt_on_focus_quit, true) do
+      fun = Application.get_env(:arvo, :focus_halt_fun, &System.stop/1)
+      fun.(0)
+    end
   end
 
   defp default_mode do

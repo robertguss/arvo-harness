@@ -112,15 +112,48 @@ defmodule Arvo.TUI.Render do
   end
 
   defp wrap_entry(%{kind: :error, text: t}, width) do
-    [Theme.error("! " <> String.slice(to_string(t), 0, width - 2))]
+    w = max(width - 2, 1)
+
+    t
+    |> to_string()
+    |> wrap_text(w)
+    |> Enum.map(fn line -> Theme.error("! " <> line) end)
   end
 
   defp wrap_entry(%{kind: :system, text: t}, width) do
-    [Theme.dim(String.slice(to_string(t), 0, width))]
+    w = max(width, 1)
+
+    t
+    |> to_string()
+    |> wrap_text(w)
+    |> Enum.map(&Theme.dim/1)
   end
 
-  defp wrap_entry(other, width) when is_binary(other), do: [String.slice(other, 0, width)]
+  defp wrap_entry(other, width) when is_binary(other), do: wrap_text(other, max(width, 1))
   defp wrap_entry(_, _), do: []
+
+  @doc false
+  # Hard-wrap on grapheme boundaries; preserve explicit newlines (incl. blank lines).
+  def wrap_text(text, width) when is_binary(text) and is_integer(width) and width >= 1 do
+    text
+    |> String.split("\n")
+    |> Enum.flat_map(&chunk_line(&1, width))
+  end
+
+  defp chunk_line(line, width) do
+    if line == "" do
+      [""]
+    else
+      do_chunk(line, width, [])
+    end
+  end
+
+  defp do_chunk("", _width, acc), do: Enum.reverse(acc)
+
+  defp do_chunk(line, width, acc) do
+    {left, right} = String.split_at(line, width)
+    do_chunk(right, width, [left | acc])
+  end
 
   defp status_label(%{status: :running, tool_name: n}) when is_binary(n), do: "tool:#{n}"
   defp status_label(%{status: :running, spinner: true}), do: "thinking"

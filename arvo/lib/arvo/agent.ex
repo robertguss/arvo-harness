@@ -109,7 +109,8 @@ defmodule Arvo.Agent do
           {tool_msgs, results} = run_tools_sequential(tool_calls, tools, ctx, event_fun)
           messages = messages ++ tool_msgs
           event_fun.({:turn_end, %{turn: turn, tool_calls: length(tool_calls), results: results}})
-          {messages, steering} = drain_steering(messages, steering)
+          # Drain initial context steering + any mid-turn Session.steer queue (product path R4)
+          {messages, steering} = drain_steering(messages, steering ++ pull_session_steering())
 
           turn_loop(
             messages,
@@ -209,6 +210,20 @@ defmodule Arvo.Agent do
   defp drain_steering(messages, steering) do
     user_msgs = Enum.map(steering, fn text -> %{role: "user", content: text} end)
     {messages ++ user_msgs, []}
+  end
+
+  defp pull_session_steering do
+    try do
+      if Process.whereis(Arvo.Session) do
+        Arvo.Session.take_steering()
+      else
+        []
+      end
+    rescue
+      _ -> []
+    catch
+      _, _ -> []
+    end
   end
 
   defp tool_ctx(ctx) do

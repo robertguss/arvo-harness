@@ -2,6 +2,9 @@ defmodule Arvo.Session do
   @moduledoc """
   Current session GenServer: history, steering queue, supervised turn Tasks,
   JSONL persistence + token accounting (SPEC §9).
+
+  Product interactive turns are owned here: `start_turn` → Agent Task →
+  Session-owned persist/usage on success → idle. Surfaces only dispatch.
   """
   use GenServer
 
@@ -54,12 +57,17 @@ defmodule Arvo.Session do
     GenServer.call(__MODULE__, :take_steering)
   end
 
-  @doc "Start agent turn as a supervised Task. Returns task pid/ref."
+  @doc """
+  Start agent turn as a supervised Task. Returns `{:ok, task}` or `{:error, :turn_in_progress}`.
+
+  On success the Session persists new assistant/tool rows and records usage.
+  Cancel forbids success persist.
+  """
   def start_turn(context, config, event_fun) when is_function(event_fun, 1) do
     GenServer.call(__MODULE__, {:start_turn, context, config, event_fun})
   end
 
-  @doc "Cancel current turn Task (brutal kill)."
+  @doc "Cancel current turn Task (brutal kill). No success persist."
   def cancel_turn do
     GenServer.call(__MODULE__, :cancel_turn)
   end
@@ -68,8 +76,50 @@ defmodule Arvo.Session do
     GenServer.call(__MODULE__, :await_turn, timeout + 1_000)
   end
 
+  @doc """
+  Persist only **new** assistant/tool messages from an agent result.
+
+  `prior_len` is the number of non-system messages supplied to the agent
+  (session history). Agent result messages are `[system | prior... | new...]`.
+  """
+  def persist_agent_result(%{messages: messages}, prior_len)
+      when is_list(messages) and is_integer(prior_len) and prior_len >= 0 do
+    GenServer.call(__MODULE__, {:persist_agent_result, messages, prior_len})
+  end
+
+  def persist_agent_result(_, _), do: 0
+
+  @doc "Record usage from agent result into Session + TUI."
+  def maybe_record_usage(%{usage: usage}) when is_map(usage) do
+    input =
+      usage["prompt_tokens"] || usage[:prompt_tokens] || usage["input_tokens"] ||
+        usage[:input_tokens] || 0
+
+    output =
+      usage["completion_tokens"] || usage[:completion_tokens] || usage["output_tokens"] ||
+        usage[:output_tokens] || 0
+
+    if input + output > 0 do
+      case record_usage(%{input_tokens: input, output_tokens: output}) do
+        {:ok, tokens} ->
+          turn = tokens.turn_input + tokens.turn_output
+          _ = Arvo.TUI.put_tokens(turn, tokens.cumulative_total)
+          {:ok, tokens}
+
+        other ->
+          other
+      end
+    else
+      {:ok, :noop}
+    end
+  end
+
+  def maybe_record_usage(_), do: {:ok, :noop}
+
   @impl true
   def init(_opts) do
+    Process.flag(:trap_exit, true)
+
     {:ok,
      %{
        id: nil,
@@ -80,6 +130,9 @@ defmodule Arvo.Session do
        steering: [],
        turn_task: nil,
        turn_result: nil,
+       turn_prior_len: nil,
+       turn_generation: 0,
+       cancelled_generation: nil,
        tokens: Arvo.Session.Tokens.new()
      }}
   end
@@ -174,6 +227,9 @@ defmodule Arvo.Session do
   end
 
   def handle_call({:steer, text}, _from, state) do
+    # Mid-turn steering: inject into running context via Agent drain, and keep queue
+    # for start_turn merge. Agent pulls via Session.take_steering between model steps
+    # only when context.steering is drained — product path also queues here for next step.
     {:reply, :ok, %{state | steering: state.steering ++ [text]}}
   end
 
@@ -187,16 +243,38 @@ defmodule Arvo.Session do
     else
       steering = state.steering
       context = Map.put(context, :steering, Map.get(context, :steering, []) ++ steering)
+      prior_len = Map.get(context, :prior_len) || length(List.wrap(Map.get(context, :messages)))
+      gen = state.turn_generation + 1
       parent = self()
+
+      # Safe event_fun: never raise into the turn Task
+      safe_event = fn event ->
+        try do
+          event_fun.(event)
+        rescue
+          _ -> :ok
+        catch
+          _, _ -> :ok
+        end
+      end
 
       task =
         Task.async(fn ->
-          result = Arvo.Agent.run(context, config, event_fun)
-          send(parent, {:turn_done, result})
+          result = Arvo.Agent.run(context, config, safe_event)
+          send(parent, {:turn_done, gen, result})
           result
         end)
 
-      {:reply, {:ok, task}, %{state | turn_task: task, turn_result: nil, steering: []}}
+      {:reply, {:ok, task},
+       %{
+         state
+         | turn_task: task,
+           turn_result: nil,
+           turn_prior_len: prior_len,
+           turn_generation: gen,
+           cancelled_generation: nil,
+           steering: []
+       }}
     end
   end
 
@@ -205,7 +283,17 @@ defmodule Arvo.Session do
       %Task{pid: pid} = task ->
         Task.shutdown(task, :brutal_kill)
         if Process.alive?(pid), do: Process.exit(pid, :kill)
-        {:reply, :ok, %{state | turn_task: nil, turn_result: {:error, :cancelled}}}
+
+        state = %{
+          state
+          | turn_task: nil,
+            turn_result: {:error, :cancelled},
+            cancelled_generation: state.turn_generation,
+            turn_prior_len: nil
+        }
+
+        state = reply_await(state, {:error, :cancelled})
+        {:reply, :ok, state}
 
       _ ->
         {:reply, :ok, state}
@@ -222,23 +310,166 @@ defmodule Arvo.Session do
     end
   end
 
-  @impl true
-  def handle_info({:turn_done, result}, state) do
-    state = %{state | turn_result: result, turn_task: nil}
+  def handle_call({:persist_agent_result, messages, prior_len}, _from, state) do
+    if is_nil(state.path) do
+      {:reply, 0, state}
+    else
+      {count, state} = do_persist_messages(state, messages, prior_len)
+      {:reply, count, state}
+    end
+  end
 
-    case Map.get(state, :await_from) do
-      nil ->
+  @impl true
+  def handle_info({:turn_done, gen, result}, state) do
+    cond do
+      state.cancelled_generation == gen ->
+        # Late result after cancel — do not persist success
         {:noreply, state}
 
-      from ->
-        GenServer.reply(from, result)
-        {:noreply, Map.delete(%{state | turn_result: nil}, :await_from)}
+      state.turn_generation != gen ->
+        {:noreply, state}
+
+      true ->
+        state = apply_turn_result(state, result)
+        state = reply_await(state, normalize_await_result(result))
+        {:noreply, %{state | turn_task: nil}}
+    end
+  end
+
+  # Task.async EXIT when trap_exit is true — ignore normal completion (turn_done owns result)
+  def handle_info({:EXIT, _pid, :normal}, state), do: {:noreply, state}
+  def handle_info({:EXIT, _pid, :shutdown}, state), do: {:noreply, state}
+
+  def handle_info({:EXIT, pid, reason}, state) do
+    case state.turn_task do
+      %Task{pid: ^pid} ->
+        if state.cancelled_generation == state.turn_generation do
+          {:noreply, %{state | turn_task: nil}}
+        else
+          result = {:error, {:exit, reason}}
+          state = %{state | turn_result: result, turn_task: nil, turn_prior_len: nil}
+          state = reply_await(state, result)
+          {:noreply, state}
+        end
+
+      _ ->
+        {:noreply, state}
     end
   end
 
   def handle_info({ref, _result}, state) when is_reference(ref), do: {:noreply, state}
   def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, state}
   def handle_info(_msg, state), do: {:noreply, state}
+
+  defp apply_turn_result(state, {:ok, result}) when is_map(result) do
+    prior_len = state.turn_prior_len || 0
+    {_, state} = do_persist_messages(state, Map.get(result, :messages) || [], prior_len)
+    _ = usage_from_result(result)
+    tokens = maybe_add_usage_tokens(state.tokens, result)
+    state = %{state | tokens: tokens, turn_result: {:ok, result}, turn_prior_len: nil}
+    state = do_maybe_auto_compact(state, [])
+    # Mirror TUI tokens when usage present
+    if tokens.turn_input + tokens.turn_output > 0 do
+      turn = tokens.turn_input + tokens.turn_output
+      _ = Arvo.TUI.put_tokens(turn, tokens.cumulative_total)
+    end
+
+    state
+  end
+
+  defp apply_turn_result(state, {:error, _} = err) do
+    %{state | turn_result: err, turn_prior_len: nil}
+  end
+
+  defp apply_turn_result(state, other) do
+    %{state | turn_result: other, turn_prior_len: nil}
+  end
+
+  defp normalize_await_result({:ok, result}), do: {:ok, result}
+  defp normalize_await_result({:error, _} = err), do: err
+  defp normalize_await_result(other), do: other
+
+  defp reply_await(state, result) do
+    case Map.get(state, :await_from) do
+      nil ->
+        %{state | turn_result: result}
+
+      from ->
+        GenServer.reply(from, result)
+        state |> Map.delete(:await_from) |> Map.put(:turn_result, nil)
+    end
+  end
+
+  defp do_persist_messages(state, messages, prior_len) when is_list(messages) do
+    new_msgs = Enum.drop(messages, prior_len + 1)
+
+    Enum.reduce(new_msgs, {0, state}, fn m, {n, st} ->
+      role = m[:role] || m["role"]
+
+      if role in ["assistant", "tool"] do
+        entry = message_to_attrs(m)
+        entry = Map.put(entry, "parent_id", st.last_id)
+        written = Arvo.Session.Store.append!(st.path, entry)
+        st = %{st | last_id: written["id"], history: st.history ++ [written]}
+        {n + 1, st}
+      else
+        {n, st}
+      end
+    end)
+  end
+
+  defp do_persist_messages(state, _, _), do: {0, state}
+
+  defp message_to_attrs(m) do
+    role = m[:role] || m["role"]
+    content = m[:content] || m["content"] || ""
+
+    attrs = %{
+      "type" => "message",
+      "role" => role,
+      "content" => content
+    }
+
+    attrs =
+      case m[:tool_call_id] || m["tool_call_id"] do
+        nil ->
+          attrs
+
+        id ->
+          Map.merge(attrs, %{
+            "tool_call_id" => id,
+            "name" => m[:name] || m["name"],
+            "is_error" => m[:is_error] || m["is_error"] || false
+          })
+      end
+
+    case m[:tool_calls] || m["tool_calls"] do
+      nil -> attrs
+      [] -> attrs
+      tcs -> Map.put(attrs, "tool_calls", tcs)
+    end
+  end
+
+  defp usage_from_result(%{usage: usage}) when is_map(usage), do: usage
+  defp usage_from_result(_), do: %{}
+
+  defp maybe_add_usage_tokens(tokens, %{usage: usage}) when is_map(usage) do
+    input =
+      usage["prompt_tokens"] || usage[:prompt_tokens] || usage["input_tokens"] ||
+        usage[:input_tokens] || 0
+
+    output =
+      usage["completion_tokens"] || usage[:completion_tokens] || usage["output_tokens"] ||
+        usage[:output_tokens] || 0
+
+    if input + output > 0 do
+      Arvo.Session.Tokens.add(tokens, %{input_tokens: input, output_tokens: output})
+    else
+      tokens
+    end
+  end
+
+  defp maybe_add_usage_tokens(tokens, _), do: tokens
 
   defp do_maybe_auto_compact(state, opts) do
     window = Keyword.get(opts, :window, 500_000)
@@ -276,4 +507,3 @@ defmodule Arvo.Session do
     end
   end
 end
-

@@ -90,10 +90,188 @@ defmodule Arvo.ProductPathTest do
       refute src =~ "tool_calls: []\n         }}\n\n      {:error"
     end
 
-    test "Repl chat path starts Agent.run" do
-      src = File.read!(Path.expand("../../lib/arvo/repl.ex", __DIR__))
-      assert src =~ "Arvo.Agent.run"
-      assert src =~ "Arvo.TUI.slash"
+    test "product chat path uses Session.start_turn not bare Agent.run" do
+      repl_src = File.read!(Path.expand("../../lib/arvo/repl.ex", __DIR__))
+      assert repl_src =~ "Arvo.Session.start_turn"
+      assert repl_src =~ "Arvo.TUI.slash"
+      # Product chat must not call Agent.run inline (library path only)
+      refute repl_src =~ "Arvo.Agent.run"
+    end
+
+    test "turn context assembly always includes skills key" do
+      src = File.read!(Path.expand("../../lib/arvo/turn_context.ex", __DIR__))
+      assert src =~ "skills"
+      ctx = Arvo.TurnContext.build(messages: [%{role: "user", content: "hi"}], tools: [])
+      assert Map.has_key?(ctx, :skills)
+      assert is_list(ctx.skills)
+    end
+  end
+
+  describe "Session-owned product turn spine" do
+    setup do
+      tmp = Path.join(System.tmp_dir!(), "arvo-spine-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      old = System.get_env("HOME")
+      System.put_env("HOME", tmp)
+      Application.put_env(:arvo, :cwd, tmp)
+
+      on_exit(fn ->
+        if old, do: System.put_env("HOME", old)
+        File.rm_rf!(tmp)
+      end)
+
+      {:ok, path} = Arvo.Session.open_new(tmp)
+      %{tmp: tmp, path: path}
+    end
+
+    test "chat turn completes with Session-owned persist", %{path: path} do
+      complete_fun = fn _, _, _ ->
+        {:ok, %{role: "assistant", content: "hello back", tool_calls: []}}
+      end
+
+      {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "hello"})
+      ctx = Arvo.TurnContext.build()
+      assert ctx.prior_len == 1
+      assert Map.has_key?(ctx, :skills)
+
+      {:ok, _task} =
+        Arvo.Session.start_turn(ctx, %{complete_fun: complete_fun, model: "xai:test"}, fn _ ->
+          :ok
+        end)
+
+      assert {:ok, result} = Arvo.Session.await_turn(5_000)
+      assert result.stop_reason == :end_turn
+
+      # Idle: no turn task
+      sess = Arvo.Session.get()
+      assert is_nil(sess.turn_task)
+
+      entries = Arvo.Session.Store.read_all(path)
+      assistants = Enum.filter(entries, &(&1["role"] == "assistant"))
+      assert Enum.any?(assistants, &(&1["content"] == "hello back"))
+    end
+
+    test "Esc mid-turn: Task dead, Session alive, no complete assistant success", %{path: path} do
+      complete_fun = fn _, _, _ ->
+        Process.sleep(10_000)
+        {:ok, %{role: "assistant", content: "should not persist", tool_calls: []}}
+      end
+
+      {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "slow"})
+      ctx = Arvo.TurnContext.build()
+
+      {:ok, task} =
+        Arvo.Session.start_turn(ctx, %{complete_fun: complete_fun}, fn _ -> :ok end)
+
+      assert Process.alive?(task.pid)
+      :ok = Arvo.Session.cancel_turn()
+      Process.sleep(50)
+      refute Process.alive?(task.pid)
+      assert is_pid(Process.whereis(Arvo.Session))
+
+      sess = Arvo.Session.get()
+      assert is_nil(sess.turn_task)
+
+      entries = Arvo.Session.Store.read_all(path)
+      refute Enum.any?(entries, &(&1["role"] == "assistant" && &1["content"] == "should not persist"))
+    end
+
+    test "cancel after tool_call_start does not claim success", %{path: path} do
+      parent = self()
+      call_count = :atomics.new(1, signed: false)
+
+      complete_with_tool = fn _messages, _tools_spec, _config ->
+        n = :atomics.add_get(call_count, 1, 1)
+
+        if n == 1 do
+          {:ok,
+           %{
+             role: "assistant",
+             content: "",
+             tool_calls: [%{id: "t1", name: "read", arguments: %{"path" => "x"}}]
+           }}
+        else
+          Process.sleep(10_000)
+          {:ok, %{role: "assistant", content: "done", tool_calls: []}}
+        end
+      end
+
+      {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "use tool"})
+      ctx = Arvo.TurnContext.build(tools: [Arvo.TestSupport.SlowReadTool])
+
+      event_fun = fn
+        {:tool_call_start, _} = ev ->
+          send(parent, ev)
+          :ok
+
+        _ ->
+          :ok
+      end
+
+      {:ok, _task} =
+        Arvo.Session.start_turn(ctx, %{complete_fun: complete_with_tool, max_turns: 5}, event_fun)
+
+      assert_receive {:tool_call_start, %{name: "read"}}, 2_000
+      :ok = Arvo.Session.cancel_turn()
+      Process.sleep(50)
+
+      entries = Arvo.Session.Store.read_all(path)
+      refute Enum.any?(entries, &(&1["role"] == "assistant" && &1["content"] == "done"))
+    end
+
+    test "agent exception mid-turn leaves Session alive and idle", %{path: _path} do
+      complete_fun = fn _, _, _ ->
+        raise "boom-turn"
+      end
+
+      {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "explode"})
+      ctx = Arvo.TurnContext.build()
+
+      {:ok, _task} =
+        Arvo.Session.start_turn(ctx, %{complete_fun: complete_fun}, fn _ -> :ok end)
+
+      result = Arvo.Session.await_turn(5_000)
+      assert match?({:error, _}, result)
+      assert is_pid(Process.whereis(Arvo.Session))
+      sess = Arvo.Session.get()
+      assert is_nil(sess.turn_task)
+    end
+
+    test "steering queued during turn appears on next model step after tools" do
+      parent = self()
+      call_count = :atomics.new(1, signed: false)
+
+      complete_fun = fn messages, _, _ ->
+        n = :atomics.add_get(call_count, 1, 1)
+
+        cond do
+          n == 1 ->
+            {:ok,
+             %{
+               role: "assistant",
+               content: "",
+               tool_calls: [%{id: "c1", name: "read", arguments: %{"path" => "a"}}]
+             }}
+
+          true ->
+            users = Enum.filter(messages, &((&1[:role] || &1["role"]) == "user"))
+            send(parent, {:second_complete, users})
+            {:ok, %{role: "assistant", content: "after-steer", tool_calls: []}}
+        end
+      end
+
+      {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "go"})
+      ctx = Arvo.TurnContext.build(tools: [Arvo.TestSupport.FakeReadTool])
+
+      {:ok, _task} =
+        Arvo.Session.start_turn(ctx, %{complete_fun: complete_fun, max_turns: 5}, fn _ -> :ok end)
+
+      :ok = Arvo.Session.steer("steer-me")
+      assert {:ok, result} = Arvo.Session.await_turn(5_000)
+      assert result.stop_reason == :end_turn
+
+      assert_receive {:second_complete, users}, 1_000
+      assert Enum.any?(users, fn m -> (m[:content] || m["content"] || "") =~ "steer-me" end)
     end
   end
 end

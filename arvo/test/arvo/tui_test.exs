@@ -87,6 +87,17 @@ defmodule Arvo.TUITest do
     assert frame =~ "›" or frame =~ "hello"
     assert frame =~ "Esc"
     assert frame =~ "Enter"
+    # Stable height so overwrite paints (no clear_screen) do not leave ghosts
+    assert length(String.split(frame, "\n")) == 12
+  end
+
+  test "Focus raw loop does not clear_screen on every poll (jitter regression)" do
+    src = File.read!(Path.expand("../../lib/arvo/tui/focus.ex", __DIR__))
+    # Only the initial alt-screen setup may clear; the loop paints by overwrite.
+    clears = Regex.scan(~r/Termite\.Screen\.clear_screen/, src)
+    assert length(clears) == 1
+    assert src =~ "paint_frame"
+    assert src =~ "frame == last_frame"
   end
 
   test "boot/source contract: default interactive path is Focus not Repl dual-start" do

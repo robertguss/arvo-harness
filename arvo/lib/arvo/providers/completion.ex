@@ -154,22 +154,32 @@ defmodule Arvo.Providers.Completion do
   end
 
   @doc false
-  def default_http_stream(url, bearer, body, on_delta \\ fn _ -> :ok end) do
-    case Req.post(url,
-           auth: {:bearer, bearer},
-           json: body,
-           receive_timeout: 120_000,
-           connect_timeout: 30_000,
-           decode_body: false,
-           into: fn
-             {:data, chunk}, {req, resp} when is_binary(chunk) ->
-               acc = if is_map(resp.body), do: resp.body, else: empty_sse_acc()
-               acc = feed_sse_chunk(acc, chunk, on_delta)
-               {:cont, {req, %{resp | body: acc}}}
+  # Req 0.5+/0.6 options: connect timeout lives under :connect_options, not :connect_timeout.
+  def stream_req_options(opts \\ []) do
+    [
+      receive_timeout: Keyword.get(opts, :receive_timeout, 120_000),
+      connect_options: Keyword.get(opts, :connect_options, timeout: 30_000),
+      decode_body: false
+    ]
+  end
 
-             _other, acc ->
-               {:cont, acc}
-           end
+  @doc false
+  def default_http_stream(url, bearer, body, on_delta \\ fn _ -> :ok end) do
+    case Req.post(
+           url,
+           [
+             auth: {:bearer, bearer},
+             json: body,
+             into: fn
+               {:data, chunk}, {req, resp} when is_binary(chunk) ->
+                 acc = if is_map(resp.body), do: resp.body, else: empty_sse_acc()
+                 acc = feed_sse_chunk(acc, chunk, on_delta)
+                 {:cont, {req, %{resp | body: acc}}}
+
+               _other, acc ->
+                 {:cont, acc}
+             end
+           ] ++ stream_req_options()
          ) do
       {:ok, %Req.Response{status: status, body: acc}} when is_map(acc) ->
         parsed = finalize_sse_acc(acc)

@@ -58,7 +58,7 @@ defmodule Arvo.TUI.Focus do
       |> Termite.Terminal.write(Termite.Screen.escape_sequence(:cursor_hide))
 
     try do
-      raw_loop(term, %{input: "", multiline: false})
+      raw_loop(term, %{input: "", multiline: false}, nil)
     after
       try do
         term
@@ -70,21 +70,24 @@ defmodule Arvo.TUI.Focus do
     end
   end
 
-  defp raw_loop(term, local) do
+  # Paint only when the frame changes. Full clear_screen on every 80ms poll was
+  # causing continuous flicker (shaky/jittery UI) even when idle.
+  defp raw_loop(term, local, last_frame) do
     st = Arvo.TUI.state()
     st = Map.put(st, :input, local.input)
     {w, h} = size(term)
     frame = Render.frame(st, width: w, height: h)
 
-    term =
-      term
-      |> Termite.Screen.clear_screen()
-      |> Termite.Screen.cursor_position(0, 0)
-      |> Termite.Terminal.write(frame)
+    {term, last_frame} =
+      if frame == last_frame do
+        {term, last_frame}
+      else
+        {paint_frame(term, frame), frame}
+      end
 
     case Termite.Terminal.poll(term, 80) do
       :timeout ->
-        raw_loop(term, local)
+        raw_loop(term, local, last_frame)
 
       {:data, data} when is_binary(data) ->
         case handle_keys(data, local, st) do
@@ -92,14 +95,29 @@ defmodule Arvo.TUI.Focus do
             :ok
 
           {:cont, local2} ->
-            raw_loop(term, local2)
+            raw_loop(term, local2, last_frame)
         end
 
       other ->
         # Unknown message — keep looping
         _ = other
-        raw_loop(term, local)
+        raw_loop(term, local, last_frame)
     end
+  end
+
+  # Home cursor + overwrite (no screen_clear). Frame lines include EL so short
+  # lines do not leave ghost glyphs from the previous paint.
+  defp paint_frame(term, frame) when is_binary(frame) do
+    el = Termite.Screen.escape_code() <> "K"
+
+    painted =
+      frame
+      |> String.split("\n")
+      |> Enum.map_join("\n", fn line -> line <> el end)
+
+    term
+    |> Termite.Screen.cursor_position(1, 1)
+    |> Termite.Terminal.write(painted)
   end
 
   defp size(%{size: %{width: w, height: h}}) when is_integer(w) and is_integer(h), do: {w, h}

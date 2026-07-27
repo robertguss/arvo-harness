@@ -1,11 +1,13 @@
 # Arvo: Overnight Product Charter, BEAM Bets, and Compaction
 
-**Date:** 2026-07-27  
-**Status:** Working notes from ideation + follow-on product discussion (not a requirements plan; not a bead backlog yet).  
+**Date:** 2026-07-27 (updated same day: TUI-first overnight list)  
+**Status:** Working notes + **canonical overnight feature list** (§5). Not a requirements plan; beads not created yet.  
 **Related:** `docs/ideation/2026-07-27-arvo-elixir-harness-ideation.html` (ranked ideation artifact)  
 **Subject:** Arvo — the Elixir/BEAM coding-agent harness (`arvo/`), twin of Rust Ore.
 
-This document captures the full thread so nothing is lost before brainstorming, bead creation, or overnight runs: grounding, ranked ideas, overnight ambition, sequencing, BEAM-native features, a hard filter against feature bloat, and an extended treatment of **compaction**.
+This document captures the full thread so nothing is lost before brainstorming, bead creation, or overnight runs: grounding, ranked ideas, overnight ambition, sequencing, BEAM-native features, a hard filter against feature bloat, compaction/handoff discussion, and the **TUI-first overnight feature list**.
+
+**Canonical build order for overnight:** §5 only. Earlier spine-only orderings in chat are superseded.
 
 ---
 
@@ -101,17 +103,23 @@ Full cards live in the HTML artifact. One-line index:
 
 ### 3.2 Revised notion of ambition
 
-**Ambition = depth on scarce seams**, not surface feature count.
+**Ambition = depth on scarce seams + a TUI you love**, not surface feature count.
 
 | Layer | Meaning |
 |-------|---------|
-| **Spine** | Product path is true (turn owner, stream, Esc/steer, HEAD, resume honesty, profile wire-up) |
-| **Deep BEAM** | Things that are structurally better because OTP exists |
-| **Compaction** | Attention product: immortal cold, structured warm, budgeted hot |
+| **TUI / delight** | Why you open Arvo tomorrow — input, chrome, stream feel, aesthetics |
+| **Spine / trust** | Thin true loop (turn owner, stream, Esc) so delight isn’t a lie |
+| **Session / attention** | HEAD, handoff (not silent compact), resume honesty — after love lands |
+| **Deep BEAM** | Process-native power later; not the overnight center |
+| **Power features** | Full profile product, multi-agent, NDJSON — after daily-driver love |
 
-**Charter sentence (working):**
+**Charter sentence (canonical):**
 
-> Overnight we make Arvo’s *attention and process model* real: immortal session DAG, honest cancel, and multi-ring compaction under OTP — not more agent gimmicks.
+> Overnight we ship a TUI you’d choose again — on a true stream/cancel path. Trust enables love; love makes the daily driver. Power features wait until you’re delighted.
+
+**Principle:**
+
+> Arvo will probably never be a daily driver without solid UI/UX TUI. Correctness alone is not enough — you have to love using it.
 
 ### 3.3 Feature filter (anti-bloat)
 
@@ -148,7 +156,20 @@ Before a feature earns work, ask:
 | Mid-turn steering on product path | “Live” is otherwise fake |
 | Sequential default tools; optional pure parallel | Latency without multi-agent theater |
 
-### Job 2 — Don’t lose the workshop
+### Job 2 — Love the surface (daily-driver gate)
+
+| Feature | Why product-needed |
+|---------|-------------------|
+| Raw-mode TUI owns the terminal | Line `IO.gets` will never delight |
+| Layout: transcript + input + status strip | App feel, not REPL toy |
+| Live stream rendering | Dead wait = hate |
+| Esc with instant chrome feedback | Philosophy + feel |
+| Multiline input, history, paste that works | Daily typing comfort |
+| Tool blocks readable / de-emphasized | Scrollback not trash |
+| Intentional theme tokens | Looks finished |
+| Slash palette from TUI | Discoverable power |
+
+### Job 3 — Don’t lose the workshop
 
 | Feature | Why product-needed |
 |---------|-------------------|
@@ -157,132 +178,184 @@ Before a feature earns work, ask:
 | Cancel-as-fork | Esc must not punish |
 | Resume rehydrates tokens + model + profile | Lying resume is anti-product |
 | Same-cwd continuity policy | `/resume` ceremony is discontinuity with extra steps |
-| Auto-compact + one retry on length error | Long sessions are the product |
+| **Handoff over silent compact** | Explicit new session + work-delta packet; no in-place rewrite |
 
-### Job 3 — Profile is the product unit
+### Job 4 — Profile is the product unit
 
 | Feature | Why product-needed |
 |---------|-------------------|
 | Progressive skills on the wire | Profile without skills is a tool bag |
 | Namespaced plugin slash | User surface without core growth |
 | Observe-only hooks on events | Side effects without permission rails / MCP |
-| Profile constitution v0 | model, max_turns, compact knobs, skill set in one switch |
+| Profile constitution v0 | model, max_turns, handoff threshold, skill set |
 | At least one honest non-fff package | Proves packages aren’t vapor |
 
-### Job 4 — Surfaces share one brain
-
-| Feature | Why product-needed |
-|---------|-------------------|
-| Versioned event schema | Dual Repl IO + TUI mutation will rot |
-| Headless NDJSON mode | Scripts, overnight agents, multi-attach |
-| Ambient strip (model/profile/tokens/tool/status) | Minimal polish without multi-month painter |
-
-### Job 5 — Docs match reality
+### Job 5 — Surfaces share one brain / docs
 
 | Feature | Why |
 |---------|-----|
+| Versioned event schema | Dual Repl IO + TUI mutation will rot; feeds TUI |
+| Headless NDJSON (stretch) | Scripts after interactive love lands |
 | README + short D1 note | Stop “Pre-code” lies; morning handoff |
 
 ---
 
-## 5. Milestone sketch: “Arvo D1 — Workshop Continuity”
+## 5. Canonical overnight feature list (TUI-first)
 
-**Working name:** Arvo D1 — Workshop Continuity  
+**Working name:** Arvo D1 — Daily Driver Delight  
 
-**Wake-up demo (definition of done for a human, not purity theater):**
+**Supersedes:** earlier spine-first bead order (session/profile before TUI). Historical BEAM/compaction notes in §6–7 remain useful; **build order is this section.**
 
-1. `bin/arvo` in a repo → continues or clearly offers last session for that cwd  
-2. Chat streams tokens; tools show live  
-3. Mid-turn Esc kills the turn; Session lives; next message works  
-4. Mid-turn steer lands on next model step  
-5. After a bad path, `/rewind` (or equivalent) forks from an earlier node  
-6. Long chat: length overflow auto-compacts once and retries (or compact is clearly better than today)  
-7. `/profile …` changes **tools + skills + slash help**, not just tools  
-8. Tests lock the **product path**, not only unit paths  
+### 5.0 Layers
 
-### 5.1 Track topology
+| Priority | Layer | Role |
+|----------|--------|------|
+| 1 | **TUI / delight** | Why you open Arvo |
+| 2 | **Thin trust spine** | Stream + Session turn + Esc (delight isn’t a lie) |
+| 3 | **Session / attention** | HEAD, handoff, resume — after love |
+| 4 | **Profile power** | After daily-driver love |
+| 5 | **Stretch** | Parallel tools, NDJSON, explore spawn, telemetry |
 
 ```
-          ┌─────────────────────────────┐
-          │  CRITICAL PATH (serial)     │
-          │  T0 Turn spine + product    │
-          │     path + Esc + steering   │
-          │     + streaming             │
-          └──────────────┬──────────────┘
-                         │
-        ┌────────────────┼────────────────┐
-        ▼                ▼                ▼
-   Track S            Track P          Track E
-   Session            Profile          Events
-   memory +           product          + headless
-   compaction         (parallel)       (parallel)
+Thin T0 (stream + start_turn + Esc)
+    → TUI shell (raw mode, layout, theme)
+    → stream + tools + strip + input delight
+    → polish pass
+    → session / handoff / profile (only if TUI already feels good)
 ```
 
-**Cut order if time runs short:** stretch packages / telemetry polish → parallel tools → strip chrome → same-cwd auto-resume (keep HEAD/rewind).  
-**Never cut:** T0, streaming, HEAD/rewind or cancel-as-fork, skills+slash on profile switch, product-path Esc test, compaction honesty (at least length-error path + non-stupid summarizer).
+### 5.1 Delight checklist (definition of “solid TUI”)
 
-### 5.2 Illustrative bead DAG (for later `bd` creation — not created yet)
+**Input:** raw mode; multiline; history; paste doesn’t break; Esc cancels *now*; clear interrupt policy.  
+**Chrome:** model · profile · tokens · status · active tool; live spinner/cursor; instant cancel feedback.  
+**Transcript:** user/assistant/tool blocks glanceable; tools folded or de-emphasized; errors loud; soft wrap.  
+**Speed:** key echo instant; real token stream; no full-clear jank; cold start not dreaded.  
+**Identity:** one visual language; intentional colors; slash help teaches without a manual.  
 
-#### Phase T0 — Critical path (serial)
+**Out of love v1:** mouse-heavy UI, image previews, marketplace, plan mode panes, Claude-clone chrome.
 
-1. Product chat only via `Session.start_turn`  
-2. Esc cancels product-path turn Task; Session survives (product/integration test)  
-3. Steering on product path mid-turn  
-4. Finish ADR-0002: req_llm streaming + Registry base_url/auth  
-5. Esc aborts stream promptly; no false complete assistant row  
-6. Turn pipeline locked by tests (tests are the contract)
+### 5.2 Wake-up demo (night succeeds only if #7 is true)
 
-#### Phase S — Workshop memory + compaction spine
+1. Open `arvo` → looks *finished*, not a REPL toy  
+2. Type and paste comfortably (multiline + history)  
+3. Tokens stream live; tools don’t trash scrollback  
+4. Esc → immediate calm idle; Session still up  
+5. Status strip always tells truth  
+6. Slash palette feels designed  
+7. **You think: “I’ll use this again tonight”**  
+8. (Bonus) Product-path tests lock stream/cancel, not only unit paths  
 
-7. Explicit HEAD in session meta / store API  
-8. `/rewind` / fork-at-tip (append-only)  
-9. Cancel-as-fork: cancel leaf + coherent HEAD  
-10. Resume rehydrates cumulative tokens from JSONL (or ledger)  
-11. Resume rehydrates model + active profile (set-diff reapply)  
-12. Same-cwd boot continuity policy (single rule locked in tests)  
-13. Length-error → one compact → one auto-retry  
-14. `/usage` and token chrome honest after resume  
-15. Replace crude default summarizer with structural prune + minimal warm digest (see §7)
+If #7 fails, the night failed — even if HEAD/rewind shipped.
 
-#### Phase P — Profile is the product
+### 5.3 Must ship (ordered)
 
-16. Wire skills into Agent context (progressive: name+desc)  
-17. Skill body only on demand (no bulk inject)  
-18. Namespaced plugin slash from manifest commands  
-19. Observe-only hooks on turn/tool/cancel events  
-20. Profile constitution v0: model, max_turns, compact knobs in TOML  
-21. Ship profile package(s) that exercise constitution  
-22. Product test: `/profile X` changes tools + skills + slash help  
+#### Phase T0 — Thin trust (serial; unblocks delight)
 
-#### Phase E — Multi-surface thin
+1. **All chat via `Session.start_turn`** — Repl/TUI never bypass with bare `Agent.run`  
+2. **Real streaming (ADR-0002)** — Registry-backed; kill hardcoded non-stream xAI blob  
+3. **Esc cancels product-path turn** — Task dead, Session up; product test  
+4. **Esc aborts mid-stream** — no fake complete assistant after cancel  
+5. **Mid-turn steering** on product path (even if chrome is minimal at first)  
 
-23. Versioned event schema from Session/Agent only  
-24. Repl printer as pure fold of events  
-25. Ambient strip fields  
-26. Headless NDJSON mode  
-27. Same turn → same event sequence for Repl + NDJSON  
+#### Phase U — TUI delight (bulk of the night)
 
-#### Phase X — BEAM payoff + honesty
+6. **Raw-mode TUI owns the terminal** — product default is not line `IO.gets`  
+7. **Layout v1** — transcript + input + status strip  
+8. **Theme tokens** — bg/fg/accent/error/muted (intentional, not default soup)  
+9. **Live stream rendering** into transcript (real deltas)  
+10. **Tool presentation** — start/end, name, short result or fold; errors loud  
+11. **Status strip** — model, profile, tokens/context, status, active tool  
+12. **Multiline input + history** — at least one solid paste/history path  
+13. **Slash palette from TUI** — `/help`, `/model`, `/profile`, core set; discoverable  
+14. **Cancel chrome** — visible running → idle on Esc; no ambiguity  
+15. **Performance pass** — region/differential updates; no full-clear spam  
+16. **Polish pass** — empty state, spacing, contrast, follow-tail while streaming  
 
-28. Parallel pure tools under Task.Supervisor; Esc kills group  
-29. README + short D1 note match shipped behavior  
+#### Phase S — Session truth (after U feels good)
 
-#### Optional stretch
+17. **Explicit HEAD** on JSONL tree  
+18. **`/rewind` / fork-at-tip** — append-only  
+19. **Cancel-as-fork** — Esc leaves coherent history  
+20. **Resume rehydrates tokens + model**  
+21. **Resume rehydrates active profile** (set-diff reapply)  
+22. **Same-cwd continuity** — one rule locked in tests (auto-resume *or* clear prompt)  
 
-30. Profile package share/export  
-31. Model summarizer for length-error backup only  
-32. `/branch` list variations  
-33. Telemetry sink for compact/cancel latency  
-34. Keeper process for huge tool bodies (see §6–7)
+#### Phase A — Attention (no silent compact)
 
-### 5.3 Freezes for overnight agents
+23. **`compaction: none` default** — no in-place history rewrite  
+24. **On context limit / length-error: `/handoff`** — structured work-delta packet → **new** session; old intact  
+25. **`/usage` honest** after resume / handoff  
+26. **Handoff UX in TUI** — edit/confirm packet, not a homework string only  
 
-1. **HEAD format:** append-only JSONL; HEAD in meta; never rewrite history.  
+#### Phase P — Profile (thin, after love)
+
+27. **Skills on the wire** — name+desc progressive; no bulk inject  
+28. **Namespaced plugin slash** from manifest  
+29. **`/profile X` product test** — tools + skills + slash help all change  
+30. **Constitution v0 (optional same night)** — model, max_turns, handoff threshold in TOML  
+
+#### Phase X — Close
+
+31. **README / short D1 note** matches shipped TUI + path  
+
+### 5.4 Should ship (if green early)
+
+32. Collapsible tools / pin last error  
+33. `/theme` or config colors  
+34. Steering visible as queued line mid-turn  
+35. Observe-only hooks on turn/tool/cancel  
+36. Event schema cleanup so TUI is pure projector (if not already done in U)  
+
+### 5.5 Stretch only
+
+37. Parallel pure tools (Read/search); Write/Bash serial; Esc kills group  
+38. Headless NDJSON mode  
+39. Readonly `explore` spawn (one child profile + schema return) — experiment, not center  
+40. Deterministic handoff auto-fill from tool trace  
+41. Second profile package beyond search/fff  
+42. Telemetry (TTFT, cancel latency)  
+
+### 5.6 Explicitly not tonight
+
+| Park | Why |
+|------|-----|
+| Orchestrator-as-default / multi-implementer | Unproven; pair-agent + love first |
+| In-place LLM compaction | Distrusted; handoff instead |
+| Worktrees / spawn depth > 1 | Complexity before delight proven |
+| Claude-clone chrome, MCP, plan mode, todo | Philosophy / bloat |
+| Keepers / full multi-ring compact product | After handoff + love |
+| Provider marketplace | Not the bet |
+
+### 5.7 Cut order if slow
+
+**Cut first:** stretch (37–42) → constitution (30) → same-cwd auto-resume (22) → full handoff polish (26) → rewind (18) if HEAD+cancel-as-fork exist.  
+
+**Never cut:** T0 (1–5), raw-mode TUI + layout + theme (6–8), live stream + strip + Esc chrome (9–11, 14), multiline/slash (12–13), polish pass (16), wake-up demo #7.
+
+### 5.8 Freezes for overnight agents
+
+1. **Delight gate:** if TUI isn’t lovable, do not burn the night on profile/multi-agent.  
 2. **Streaming:** xAI first; Registry-backed; real stream; tool calls still work.  
-3. **Constitution scope:** model, max_turns, compact threshold/reserve, skills allowlist — no themes/keybinds yet.  
-4. **TUI:** strip + events only; no cell-diff painter night.  
-5. **Ore parity:** don’t port Ore for its own sake; Arvo-native OTP bets can lead.  
-6. **Philosophy refusals:** non-negotiable.
+3. **Turn path:** product interactive path = Session-owned Task only.  
+4. **JSONL:** append-only; HEAD in meta when Phase S starts; never rewrite history.  
+5. **Attention:** no in-place compact; handoff = explicit packet + new session.  
+6. **TUI stack:** choose path most likely to ship beautiful defaults overnight (hand-roll on events *or* thin Elixir TUI dep); event model still feeds the view.  
+7. **Philosophy refusals:** non-negotiable.  
+8. **Single writer:** no parallel implement agents.  
+9. **Ore parity:** don’t port for its own sake.  
+
+### 5.9 Stack note (decide before sleep / first agent)
+
+| Path | Pros | Cons |
+|------|------|------|
+| Hand-roll on events (ADR-0001) | Fits architecture | Easy to ship “meh” if under-scoped |
+| Thin TUI library | Faster “app” feel | Dep weight; live-reload tradeoffs |
+
+Overnight rule: **optimize for love by morning**, not purity. Curriculum can still own the event model underneath.
+
+### 5.10 Historical note
+
+An earlier D1 sketch prioritized session/profile/compaction rings before TUI. That ordering is **rejected for overnight**: a correct loop you don’t love won’t become a daily driver. §6–7 still document BEAM bets and compaction theory for later.
 
 ---
 
@@ -562,14 +635,16 @@ On-brand with speed / minimal UX / no lying chrome.
 
 ## 9. Principles for overnight runners (when beads exist)
 
+- Follow **§5** build order (TUI-first)  
 - No permission popups, shell approval, write confirm, plan mode, todo tool, MCP in core  
-- Esc is the only brake  
+- Esc is the only brake — and chrome must show it  
+- **Delight gate:** lovable TUI before power features  
 - Hooks observe-only  
 - Profile is the unit; plugins never own the agent loop  
 - Own experimental seams only (ADR-0002)  
 - Prefer failing **product** tests over new abstractions  
 - Prefer **deleting dual paths** over adding flags  
-- Compaction never means “delete cold history”  
+- No silent in-place compact; handoff is explicit  
 - Do not invent Claude Code feature parity for its own sake  
 
 ---
@@ -578,14 +653,15 @@ On-brand with speed / minimal UX / no lying chrome.
 
 Capture so future sessions don’t re-litigate silently:
 
-- [ ] Final night goal name (e.g. “Arvo D1 — Workshop Continuity” vs compaction-primary charter)  
+- [x] Overnight center: **TUI delight + thin trust** (§5), not multi-agent / compact-first  
+- [ ] TUI stack: hand-roll vs thin library (§5.9)  
 - [ ] Same-cwd policy: auto-resume vs prompt-once  
-- [ ] Deep bet priority: multi-ring compaction vs profile-as-tree vs both thin  
-- [ ] Warm-first strategy: confirm deterministic work-delta default  
-- [ ] Whether Keepers are in first overnight or D1.5  
-- [ ] Whether model `recall` tool is ever allowed  
+- [ ] Deep bet later: multi-ring vs handoff-only vs profile-as-tree  
+- [ ] Warm/handoff packet: deterministic work-delta default (lean yes)  
+- [ ] Keepers: not overnight  
+- [ ] Model `recall` / explore spawn: stretch only  
 - [ ] How much README/SPEC work is in-scope vs post-ship  
-- [ ] Parallelism level of overnight agents (serial beads vs multi-track after T0)  
+- [ ] Parallelism of overnight agents after T0+U  
 
 ---
 
@@ -602,8 +678,9 @@ Capture so future sessions don’t re-litigate silently:
 ## 12. Provenance
 
 - **Ideation run:** ce-ideate focus `arvo the elixir harness` (2026-07-27), artifact `docs/ideation/2026-07-27-arvo-elixir-harness-ideation.html`, scratch run id `438bc25c`.  
-- **Follow-on discussion:** overnight ambition recalibration; anti-bloat filter; BEAM-native features; extended compaction design.  
-- **This file:** full capture of that discussion for continuity across sessions/agents.
+- **Follow-on discussion:** overnight ambition; anti-bloat; BEAM-native features; compaction vs handoff; adversarial multi-agent; **TUI-first daily-driver reframing.**  
+- **§5:** canonical overnight feature list (TUI-first D1), merged 2026-07-27.  
+- **This file:** full capture for continuity across sessions/agents.
 
 ---
 

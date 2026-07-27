@@ -34,7 +34,17 @@ defmodule Arvo.TurnContext do
         end
       end)
 
-    skills = Keyword.get(opts, :skills, [])
+    skills =
+      Keyword.get_lazy(opts, :skills, fn ->
+        try do
+          Arvo.Plugins.Registry.skills()
+        rescue
+          _ -> []
+        catch
+          _, _ -> []
+        end
+      end)
+
     session_id = Keyword.get(opts, :session_id, sess[:id])
 
     %{

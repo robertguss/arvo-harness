@@ -31,9 +31,14 @@ defmodule Arvo.Providers.Completion do
     provider = Keyword.get(opts, :provider, "grok")
     on_delta = Keyword.get(opts, :on_delta, fn _ -> :ok end)
 
-    Arvo.Auth.TokenManager.with_bearer(provider, fn bearer ->
-      chat_via_http(messages, tools_spec, model, bearer, on_delta, opts)
-    end)
+    # Injected stream bodies skip network/auth (unit tests)
+    if Keyword.has_key?(opts, :stream_body) do
+      chat_via_http(messages, tools_spec, model, "test-token", on_delta, opts)
+    else
+      Arvo.Auth.TokenManager.with_bearer(provider, fn bearer ->
+        chat_via_http(messages, tools_spec, model, bearer, on_delta, opts)
+      end)
+    end
   end
 
   @doc """

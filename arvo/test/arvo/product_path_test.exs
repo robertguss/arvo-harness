@@ -252,6 +252,47 @@ defmodule Arvo.ProductPathTest do
       assert is_nil(sess.turn_task)
     end
 
+    test "profile switch exposes skills+tools+slash on next start_turn (AE5)" do
+      # Register toy plugin
+      :ok = Arvo.Plugins.Registry.register_loaded("toy_plugin", Toy.Plugin)
+      _ = Arvo.Plugins.Registry.deactivate("toy_plugin")
+
+      assert {:ok, :handled, _} = Arvo.TUI.slash("profile", "base")
+
+      # Manual activate as set-diff target
+      assert :ok = Arvo.Plugins.Registry.activate("toy_plugin")
+
+      skills = Arvo.Plugins.Registry.skills()
+      assert Enum.any?(skills, &((&1[:name] || &1["name"]) == "toy-skill"))
+
+      skill = Enum.find(skills, &((&1[:name] || &1["name"]) == "toy-skill"))
+      desc = skill[:description] || skill["description"] || ""
+      assert desc =~ "progressive"
+      # progressive: name+desc, not full body inject into skill map
+      refute Map.has_key?(skill, :body)
+
+      cmds = Arvo.Plugins.Registry.commands()
+      assert Map.has_key?(cmds, "toy_plugin:ping") or Map.has_key?(cmds, "ping")
+
+      assert {:ok, :handled, help} = Arvo.TUI.slash("help")
+      assert help =~ "toy_plugin:ping" or help =~ "ping"
+
+      ctx = Arvo.TurnContext.build()
+      assert Enum.any?(ctx.skills, &((&1[:name] || &1["name"]) == "toy-skill"))
+      tool_names = Enum.map(ctx.tools, & &1.spec().name)
+      assert "toy_echo" in tool_names
+
+
+      prompt = Arvo.Prompt.assemble(skills: ctx.skills, tools: ctx.tools)
+      assert prompt =~ "toy-skill"
+      refute prompt =~ "FULL_SKILL_BODY_SHOULD_NOT_APPEAR"
+
+      # Deactivate removes surface
+      assert :ok = Arvo.Plugins.Registry.deactivate("toy_plugin")
+      refute Enum.any?(Arvo.Plugins.Registry.skills(), &((&1[:name] || &1["name"]) == "toy-skill"))
+      refute Map.has_key?(Arvo.Plugins.Registry.commands(), "toy_plugin:ping")
+    end
+
     test "steering queued during turn appears on next model step after tools" do
       parent = self()
       call_count = :atomics.new(1, signed: false)

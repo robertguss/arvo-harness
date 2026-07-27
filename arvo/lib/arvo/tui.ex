@@ -251,6 +251,22 @@ defmodule Arvo.TUI do
   end
 
   defp do_slash(state, "help", _) do
+    plugin_cmds =
+      case Arvo.Plugins.Registry.commands() do
+        map when map_size(map) > 0 ->
+          names =
+            map
+            |> Map.keys()
+            |> Enum.filter(&String.contains?(&1, ":"))
+            |> Enum.sort()
+            |> Enum.map_join("\n", &("      /" <> &1))
+
+          if names == "", do: "", else: "\n  Plugin commands:\n#{names}\n"
+
+        _ ->
+          ""
+      end
+
     text = """
     Commands:
       /help              this help
@@ -261,8 +277,7 @@ defmodule Arvo.TUI do
       /rewind [n]        move HEAD back n steps (default 1); next msg forks
       /handoff           new session with work-delta packet (no silent compact)
       /compact [focus]   power: summarize older turns (optional focus text)
-      /quit              exit
-
+      /quit              exit#{plugin_cmds}
     Keys (Focus): Enter send · Esc cancel turn · / for slash
     """
 
@@ -298,15 +313,26 @@ defmodule Arvo.TUI do
   end
 
   defp do_slash(state, "profile", name) do
-    name = String.trim(name)
-    active = Arvo.Plugins.Registry.list_active()
+    # Idle-only: reject while turn in progress (KTD 13)
+    sess = Arvo.Session.get()
 
-    case Arvo.Profiles.switch(name, active) do
-      {:ok, result} ->
-        {{:ok, :handled, "switched to #{name}: #{inspect(result)}"}, Map.put(state, :profile, name)}
+    if sess.turn_task && is_map(sess.turn_task) && Map.get(sess.turn_task, :pid) &&
+         Process.alive?(sess.turn_task.pid) do
+      {{:ok, :handled, "profile switch rejected: turn in progress (idle-only)"}, state}
+    else
+      name = String.trim(name)
+      active = Arvo.Plugins.Registry.list_active()
 
-      {:error, reason} ->
-        {{:ok, :handled, "profile error: #{inspect(reason)}"}, state}
+      case Arvo.Profiles.switch(name, active) do
+        {:ok, result} ->
+          Application.put_env(:arvo, :active_profile, name)
+
+          {{:ok, :handled, "switched to #{name}: #{inspect(result)}"},
+           Map.put(state, :profile, name)}
+
+        {:error, reason} ->
+          {{:ok, :handled, "profile error: #{inspect(reason)}"}, state}
+      end
     end
   end
 
@@ -415,8 +441,27 @@ defmodule Arvo.TUI do
     {{:ok, :handled, "compacted: kept #{length(result.kept_messages)} messages"}, state}
   end
 
-  defp do_slash(state, other, _) do
-    {{:ok, :unknown, "unknown command: /#{other}"}, state}
+  defp do_slash(state, other, args) do
+    cmds = Arvo.Plugins.Registry.commands()
+
+    case Map.get(cmds, other) || Map.get(cmds, String.trim("#{other}")) do
+      nil ->
+        {{:ok, :unknown, "unknown command: /#{other}"}, state}
+
+      %{handler: handler} = cmd when is_function(handler, 1) ->
+        result = handler.(args)
+        {{:ok, :handled, "plugin #{cmd.plugin}:#{cmd.name}: #{inspect(result)}"}, state}
+
+      %{handler: handler} = cmd when is_function(handler, 0) ->
+        result = handler.()
+        {{:ok, :handled, "plugin #{cmd.plugin}:#{cmd.name}: #{inspect(result)}"}, state}
+
+      %{name: n, plugin: p} ->
+        {{:ok, :handled, "plugin command /#{p}:#{n} (no handler; acknowledged)"}, state}
+
+      _ ->
+        {{:ok, :unknown, "unknown command: /#{other}"}, state}
+    end
   end
 
   defp rehydrate_from_resume(state, resumed) do
@@ -438,10 +483,20 @@ defmodule Arvo.TUI do
       end
 
     case resumed[:profile] || resumed["profile"] do
-      p when is_binary(p) -> Map.put(state, :profile, p)
-      _ -> state
+      p when is_binary(p) and p != "" and p != "base" ->
+        active = Arvo.Plugins.Registry.list_active()
+        _ = Arvo.Profiles.switch(p, active)
+        Application.put_env(:arvo, :active_profile, p)
+        Map.put(state, :profile, p)
+
+      p when is_binary(p) ->
+        Map.put(state, :profile, p)
+
+      _ ->
+        state
     end
   end
+
 
   defp normalize_key(:esc), do: :esc
   defp normalize_key("\e"), do: :esc

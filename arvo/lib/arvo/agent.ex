@@ -72,6 +72,19 @@ defmodule Arvo.Agent do
     event_fun.({:turn_start, %{turn: turn}})
     tools_spec = Enum.map(tools, & &1.spec())
 
+    # Wire streaming deltas into the event bus during complete (not post-hoc full body)
+    streamed_count = :atomics.new(1, signed: false)
+    on_delta = fn chunk when is_binary(chunk) ->
+      if chunk != "" do
+        :atomics.add(streamed_count, 1, 1)
+        event_fun.({:message_delta, %{text: chunk}})
+      end
+
+      :ok
+    end
+
+    config = Map.put(config, :on_delta, on_delta)
+
     case complete_fun.(messages, tools_spec, config) do
       {:error, reason} ->
         event_fun.({:agent_error, %{error: reason}})
@@ -82,8 +95,10 @@ defmodule Arvo.Agent do
         tool_calls = Map.get(assistant, :tool_calls) || Map.get(assistant, "tool_calls") || []
         turn_usage = Map.get(assistant, :usage) || Map.get(assistant, "usage") || %{}
         usage = merge_usage(usage, turn_usage)
+        streamed? = Map.get(assistant, :streamed?) == true or :atomics.get(streamed_count, 1) > 0
 
-        if content != "" do
+        # Only emit a post-hoc full-body delta when the complete_fun did not stream
+        if content != "" and not streamed? do
           event_fun.({:message_delta, %{text: content}})
         end
 
@@ -246,22 +261,35 @@ defmodule Arvo.Agent do
     model = Map.get(config, :model) || "xai:grok-4.5"
     on_delta = Map.get(config, :on_delta, fn _ -> :ok end)
 
+    opts =
+      [model: model, on_delta: on_delta]
+      |> maybe_kw(config, :provider)
+      |> maybe_kw(config, :stream_body)
+      |> maybe_kw(config, :http_fun)
+      |> maybe_kw(config, :base_url)
+
     # Drop system-less edge: complete_turn sends full message list including system.
-    case Arvo.Providers.Completion.complete_turn(messages, tools_spec,
-           model: model,
-           on_delta: on_delta
-         ) do
+    case Arvo.Providers.Completion.complete_turn(messages, tools_spec, opts) do
       {:ok, assistant} ->
         {:ok,
          %{
            role: "assistant",
            content: assistant.content || "",
            tool_calls: assistant.tool_calls || [],
-           usage: Map.get(assistant, :usage)
+           usage: Map.get(assistant, :usage),
+           streamed?: Map.get(assistant, :streamed?, false)
          }}
 
       {:error, reason} ->
         {:error, reason}
     end
   end
+
+  defp maybe_kw(opts, config, key) do
+    case Map.get(config, key) do
+      nil -> opts
+      val -> Keyword.put(opts, key, val)
+    end
+  end
 end
+

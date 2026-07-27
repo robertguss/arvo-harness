@@ -27,7 +27,7 @@ defmodule Arvo.Application do
       {:ok, _pid} ->
         # After Registry+TUI are up: apply project profile plugins (SPEC §5).
         _ = maybe_auto_activate_profile()
-        maybe_start_repl()
+        maybe_start_interactive()
         result
 
       other ->
@@ -57,10 +57,19 @@ defmodule Arvo.Application do
     end
   end
 
-  defp maybe_start_repl do
-    # Interactive line REPL only when launched via the wrapper / mix run (not under test).
-    if Application.get_env(:arvo, :start_repl, true) do
-      Task.start(fn -> Arvo.Repl.run() end)
+  defp maybe_start_interactive do
+    # Product default: Focus owns the terminal (not Repl). Repl remains library/fallback.
+    # Under test, both stay off unless explicitly enabled.
+    cond do
+      Application.get_env(:arvo, :start_focus, true) and not Application.get_env(:arvo, :start_repl, false) ->
+        Task.start(fn -> Arvo.TUI.Focus.run() end)
+
+      Application.get_env(:arvo, :start_repl, false) ->
+        Task.start(fn -> Arvo.Repl.run() end)
+
+      true ->
+        :ok
     end
   end
 end
+

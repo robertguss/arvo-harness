@@ -2,24 +2,50 @@ defmodule Arvo.TUITest do
   use ExUnit.Case, async: false
 
   test "state derives only from events — no agent logic" do
-    :ok = Arvo.TUI.handle_event({:agent_start, %{}})
+    :ok = Arvo.TUI.handle_event_sync({:agent_start, %{}})
     st = Arvo.TUI.state()
     assert st.status == :running
     assert st.spinner
 
-    :ok = Arvo.TUI.handle_event({:message_delta, %{text: "hi"}})
+    :ok = Arvo.TUI.handle_event_sync({:message_delta, %{text: "hi"}})
     st = Arvo.TUI.state()
     assert st.buffer == "hi"
     assert st.streaming
 
-    :ok = Arvo.TUI.handle_event({:tool_call_start, %{name: "bash"}})
+    :ok = Arvo.TUI.handle_event_sync({:tool_call_start, %{name: "bash"}})
     st = Arvo.TUI.state()
     assert st.tool_name == "bash"
     assert st.spinner
+    assert Enum.any?(st.transcript, &(&1.kind == :tool && &1.name == "bash"))
 
-    :ok = Arvo.TUI.handle_event({:agent_end, %{}})
+    :ok = Arvo.TUI.handle_event_sync({:agent_end, %{}})
     st = Arvo.TUI.state()
     assert st.status == :idle
+  end
+
+  test "tool_end folds tool line; agent_error is loud idle chrome" do
+    :ok = Arvo.TUI.handle_event_sync({:agent_start, %{}})
+    :ok = Arvo.TUI.handle_event_sync({:tool_call_start, %{name: "read"}})
+    :ok = Arvo.TUI.handle_event_sync({:tool_call_end, %{name: "read", is_error: false, text: "ok"}})
+    st = Arvo.TUI.state()
+    tool = Enum.find(st.transcript, &(&1.kind == :tool && &1.name == "read"))
+    assert tool.folded == true
+    assert tool.text == "ok"
+
+    :ok = Arvo.TUI.handle_event_sync({:agent_error, %{error: "boom"}})
+    st = Arvo.TUI.state()
+    assert st.status == :idle
+    assert st.last_error == "boom"
+    assert st.spinner == false
+  end
+
+  test "message_delta accumulates without requiring full redraw" do
+    :ok = Arvo.TUI.handle_event_sync({:agent_start, %{}})
+    :ok = Arvo.TUI.handle_event_sync({:message_delta, %{text: "a"}})
+    :ok = Arvo.TUI.handle_event_sync({:message_delta, %{text: "b"}})
+    st = Arvo.TUI.state()
+    assert st.buffer == "ab"
+    assert st.streaming
   end
 
   test "slash /model /help /quit" do
@@ -30,6 +56,7 @@ defmodule Arvo.TUITest do
     assert help =~ "/resume"
     assert help =~ "/compact"
     assert help =~ "/quit"
+    assert help =~ "Esc"
 
     assert {:ok, :handled, _} = Arvo.TUI.slash("model", "xai:grok-test")
     assert Arvo.TUI.model() == "xai:grok-test"
@@ -38,6 +65,37 @@ defmodule Arvo.TUITest do
     assert m =~ "xai:grok-test"
 
     assert {:ok, :quit, _} = Arvo.TUI.slash("quit")
+  end
+
+  test "Focus render has ghost strip, input, footer" do
+    st = %{
+      model: "xai:g",
+      profile: "base",
+      tokens: %{cumulative: 10, window: 100},
+      status: :idle,
+      transcript: [%{kind: :user, text: "hi"}],
+      buffer: "",
+      streaming: false,
+      input: "hello",
+      last_error: nil
+    }
+
+    frame = Arvo.TUI.Render.frame(st, width: 60, height: 12)
+    assert frame =~ "xai:g"
+    assert frame =~ "base"
+    assert frame =~ "ctx"
+    assert frame =~ "›" or frame =~ "hello"
+    assert frame =~ "Esc"
+    assert frame =~ "Enter"
+  end
+
+  test "boot/source contract: default interactive path is Focus not Repl dual-start" do
+    app = File.read!(Path.expand("../../lib/arvo/application.ex", __DIR__))
+    assert app =~ "Arvo.TUI.Focus"
+    assert app =~ "start_focus"
+    # Repl is fallback only — not started when Focus is default
+    assert app =~ "start_repl"
+    refute app =~ "maybe_start_repl"
   end
 
   test "/login runs DeviceFlow (mocked, outside GenServer)" do
@@ -97,11 +155,14 @@ defmodule Arvo.TUITest do
         fn ev -> Arvo.TUI.handle_event(ev) end
       )
 
-    :ok = Arvo.TUI.handle_event({:agent_start, %{}})
+    :ok = Arvo.TUI.handle_event_sync({:agent_start, %{}})
     assert :cancelled = Arvo.TUI.key(:esc)
     Process.sleep(30)
     refute Process.alive?(task.pid)
     assert Process.alive?(Process.whereis(Arvo.Supervisor))
+    st = Arvo.TUI.state()
+    assert st.status == :idle
+    assert st.spinner == false
   end
 
   test "parse commands" do

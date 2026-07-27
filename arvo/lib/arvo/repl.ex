@@ -1,11 +1,13 @@
 defmodule Arvo.Repl do
   @moduledoc """
-  Line-IO loop (SPEC §12 / §6 / §7): slash commands via TUI, chat via Agent + tools.
+  Line-IO loop (SPEC §12 / §6 / §7): slash commands via TUI, chat via Session turns.
+
+  Product chat always goes through `Session.start_turn` (never bare `Agent.run`).
   """
 
   @doc """
   Read lines from `device` (default `:stdio`).
-  Slash commands delegated to `Arvo.TUI.slash/2`. Non-slash lines run `Arvo.Agent`.
+  Slash commands delegated to `Arvo.TUI.slash/2`. Non-slash lines run a Session turn.
   """
   def run(device \\ :stdio) do
     cwd = Application.get_env(:arvo, :cwd) || Arvo.cwd()
@@ -38,62 +40,20 @@ defmodule Arvo.Repl do
   @doc """
   Persist only **new** assistant/tool messages from an agent result.
 
-  `prior_len` is the number of non-system messages supplied to `Arvo.Agent.run/3`
-  (session history). Agent result messages are `[system | prior... | new...]`.
+  Delegates to Session (product-owned persist path). Kept for test compatibility.
   """
-  def persist_agent_result(%{messages: messages}, prior_len)
-      when is_list(messages) and is_integer(prior_len) and prior_len >= 0 do
-    # Drop system (index 0) + prior history; only write this run's assistant/tool rows.
-    new_msgs = Enum.drop(messages, prior_len + 1)
-
-    Enum.each(new_msgs, fn m ->
-      role = m[:role] || m["role"]
-
-      if role in ["assistant", "tool"] do
-        _ = Arvo.Session.record_message(message_to_attrs(m))
-      end
-    end)
-
-    length(new_msgs)
+  def persist_agent_result(result, prior_len) do
+    Arvo.Session.persist_agent_result(result, prior_len)
   end
 
-  def persist_agent_result(_, _), do: 0
-
-  @doc "Rebuild chat messages from open session history (tool fields preserved)."
+  @doc "Rebuild chat messages from open session HEAD chain (tool fields preserved)."
   def session_messages do
     sess = Arvo.Session.get()
-    Arvo.Session.Store.messages_from_history(sess.history || [])
+    Arvo.Session.Store.messages_to_head(sess.history || [])
   end
 
   @doc "Record usage from agent result into Session + TUI."
-  def maybe_record_usage(%{usage: usage}) when is_map(usage) do
-    input =
-      usage["prompt_tokens"] || usage[:prompt_tokens] || usage["input_tokens"] ||
-        usage[:input_tokens] || 0
-
-    output =
-      usage["completion_tokens"] || usage[:completion_tokens] || usage["output_tokens"] ||
-        usage[:output_tokens] || 0
-
-    if input + output > 0 do
-      case Arvo.Session.record_usage(%{
-             input_tokens: input,
-             output_tokens: output
-           }) do
-        {:ok, tokens} ->
-          turn = tokens.turn_input + tokens.turn_output
-          _ = Arvo.TUI.put_tokens(turn, tokens.cumulative_total)
-          {:ok, tokens}
-
-        other ->
-          other
-      end
-    else
-      {:ok, :noop}
-    end
-  end
-
-  def maybe_record_usage(_), do: {:ok, :noop}
+  def maybe_record_usage(result), do: Arvo.Session.maybe_record_usage(result)
 
   defp loop(device) do
     case IO.gets(device, "> ") do
@@ -146,22 +106,7 @@ defmodule Arvo.Repl do
       _ = Arvo.Session.record_message(%{role: "user", content: text})
       _ = Arvo.Session.maybe_auto_compact()
 
-      tools =
-        case Arvo.Plugins.Registry.tools() do
-          list when is_list(list) and list != [] -> list
-          _ -> Arvo.Tool.core_tools()
-        end
-
-      history_msgs = session_messages()
-      prior_len = length(history_msgs)
-
-      context = %{
-        messages: history_msgs,
-        cwd: Application.get_env(:arvo, :cwd) || Arvo.cwd(),
-        tools: tools,
-        session_id: Map.get(Arvo.Session.get(), :id)
-      }
-
+      context = Arvo.TurnContext.build()
       model = Arvo.TUI.model()
 
       event_fun = fn event ->
@@ -186,46 +131,25 @@ defmodule Arvo.Repl do
         end
       end
 
-      case Arvo.Agent.run(context, %{model: model}, event_fun) do
-        {:ok, result} ->
-          _ = persist_agent_result(result, prior_len)
-          _ = maybe_record_usage(result)
-          _ = Arvo.Session.maybe_auto_compact()
-          IO.puts(device, "")
+      case Arvo.Session.start_turn(context, %{model: model}, event_fun) do
+        {:ok, _task} ->
+          case Arvo.Session.await_turn() do
+            {:ok, _result} ->
+              IO.puts(device, "")
 
-        {:error, reason} ->
-          IO.puts(device, "error: #{format(reason)}")
+            {:error, :cancelled} ->
+              IO.puts(device, "\n(cancelled)")
+
+            {:error, reason} ->
+              IO.puts(device, "error: #{format(reason)}")
+
+            other ->
+              IO.puts(device, "error: #{format(other)}")
+          end
+
+        {:error, :turn_in_progress} ->
+          IO.puts(device, "error: turn already in progress")
       end
-    end
-  end
-
-  defp message_to_attrs(m) do
-    role = m[:role] || m["role"]
-    content = m[:content] || m["content"] || ""
-
-    attrs = %{
-      "type" => "message",
-      "role" => role,
-      "content" => content
-    }
-
-    attrs =
-      case m[:tool_call_id] || m["tool_call_id"] do
-        nil ->
-          attrs
-
-        id ->
-          Map.merge(attrs, %{
-            "tool_call_id" => id,
-            "name" => m[:name] || m["name"],
-            "is_error" => m[:is_error] || m["is_error"] || false
-          })
-      end
-
-    case m[:tool_calls] || m["tool_calls"] do
-      nil -> attrs
-      [] -> attrs
-      tcs -> Map.put(attrs, "tool_calls", tcs)
     end
   end
 

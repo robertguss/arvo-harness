@@ -23,6 +23,11 @@ bd close <id>         # Complete work
 bd dolt push          # Push beads data to remote
 ```
 
+## Documented solutions and vocabulary
+
+- `docs/solutions/` — documented solutions to past problems (bugs, practices, patterns), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`). Relevant when implementing or debugging in documented areas.
+- `CONCEPTS.md` — shared domain vocabulary (entities, named processes, status concepts). Relevant when orienting to the codebase or discussing domain concepts.
+
 ## Non-Interactive Shell Commands
 
 **ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.

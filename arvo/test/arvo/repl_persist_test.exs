@@ -182,8 +182,8 @@ defmodule Arvo.ReplPersistTest do
     _ = Arvo.Repl.maybe_record_usage(r2)
 
     entries = Arvo.Session.Store.read_all(path)
-    # growth is only user2 + assistant done2 — not a full replay of turn 1
-    assert length(entries) == n1 + 2
+    # growth: user2 + assistant done2 + usage ledger — not a full replay of turn 1
+    assert length(entries) == n1 + 3
 
     contents =
       entries
@@ -192,6 +192,7 @@ defmodule Arvo.ReplPersistTest do
 
     assert Enum.count(contents, &(&1 == "done1")) == 1
     assert Enum.count(contents, &(&1 == "done2")) == 1
+
 
     # usage accumulated on session
     tokens = Arvo.Session.tokens()

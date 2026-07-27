@@ -49,6 +49,31 @@ defmodule Arvo.Profiles do
   end
 
   @doc """
+  Re-apply a profile by name using the current Registry active set.
+
+  Used by auto-resume and TUI resume rehydrate. Failures are logged, not raised.
+  """
+  def reapply(name) when is_binary(name) and name != "" do
+    active = Arvo.Plugins.Registry.list_active()
+
+    case switch(name, active) do
+      {:ok, _} = ok ->
+        Application.put_env(:arvo, :active_profile, name)
+        ok
+
+      {:error, reason} = err ->
+        require Logger
+        Logger.warning("Arvo: profile reapply failed for #{name}: #{inspect(reason)}")
+        err
+    end
+  rescue
+    e ->
+      require Logger
+      Logger.warning("Arvo: profile reapply crashed for #{name}: #{Exception.message(e)}")
+      {:error, Exception.message(e)}
+  end
+
+  @doc """
   Switch workflow profile via set-diff against currently active (non-base) plugins.
   `activate_fun` / `deactivate_fun` receive plugin names and must return `:ok` or `{:error, reason}`.
   Returns `{:ok, %{added, removed, active}}` with **actual** active set, or `{:error, reason}`.

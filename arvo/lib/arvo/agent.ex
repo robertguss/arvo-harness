@@ -72,6 +72,19 @@ defmodule Arvo.Agent do
     event_fun.({:turn_start, %{turn: turn}})
     tools_spec = Enum.map(tools, & &1.spec())
 
+    # Wire streaming deltas into the event bus during complete (not post-hoc full body)
+    streamed_count = :atomics.new(1, signed: false)
+    on_delta = fn chunk when is_binary(chunk) ->
+      if chunk != "" do
+        :atomics.add(streamed_count, 1, 1)
+        event_fun.({:message_delta, %{text: chunk}})
+      end
+
+      :ok
+    end
+
+    config = Map.put(config, :on_delta, on_delta)
+
     case complete_fun.(messages, tools_spec, config) do
       {:error, reason} ->
         event_fun.({:agent_error, %{error: reason}})
@@ -82,8 +95,10 @@ defmodule Arvo.Agent do
         tool_calls = Map.get(assistant, :tool_calls) || Map.get(assistant, "tool_calls") || []
         turn_usage = Map.get(assistant, :usage) || Map.get(assistant, "usage") || %{}
         usage = merge_usage(usage, turn_usage)
+        streamed? = Map.get(assistant, :streamed?) == true or :atomics.get(streamed_count, 1) > 0
 
-        if content != "" do
+        # Only emit a post-hoc full-body delta when the complete_fun did not stream
+        if content != "" and not streamed? do
           event_fun.({:message_delta, %{text: content}})
         end
 
@@ -109,7 +124,8 @@ defmodule Arvo.Agent do
           {tool_msgs, results} = run_tools_sequential(tool_calls, tools, ctx, event_fun)
           messages = messages ++ tool_msgs
           event_fun.({:turn_end, %{turn: turn, tool_calls: length(tool_calls), results: results}})
-          {messages, steering} = drain_steering(messages, steering)
+          # Drain initial context steering + any mid-turn Session.steer queue (product path R4)
+          {messages, steering} = drain_steering(messages, steering ++ pull_session_steering())
 
           turn_loop(
             messages,
@@ -132,15 +148,10 @@ defmodule Arvo.Agent do
   end
 
   defp merge_usage(acc, add) when is_map(acc) and is_map(add) do
-    p =
-      (acc["prompt_tokens"] || acc[:prompt_tokens] || acc["input_tokens"] || acc[:input_tokens] || 0) +
-        (add["prompt_tokens"] || add[:prompt_tokens] || add["input_tokens"] || add[:input_tokens] || 0)
-
-    c =
-      (acc["completion_tokens"] || acc[:completion_tokens] || acc["output_tokens"] ||
-         acc[:output_tokens] || 0) +
-        (add["completion_tokens"] || add[:completion_tokens] || add["output_tokens"] ||
-           add[:output_tokens] || 0)
+    a = Arvo.Session.Tokens.input_output(acc)
+    b = Arvo.Session.Tokens.input_output(add)
+    p = a.input_tokens + b.input_tokens
+    c = a.output_tokens + b.output_tokens
 
     %{
       "prompt_tokens" => p,
@@ -211,6 +222,20 @@ defmodule Arvo.Agent do
     {messages ++ user_msgs, []}
   end
 
+  defp pull_session_steering do
+    try do
+      if Process.whereis(Arvo.Session) do
+        Arvo.Session.take_steering()
+      else
+        []
+      end
+    rescue
+      _ -> []
+    catch
+      _, _ -> []
+    end
+  end
+
   defp tool_ctx(ctx) do
     %{
       cwd: Map.get(ctx, :cwd) || Arvo.cwd(),
@@ -231,22 +256,35 @@ defmodule Arvo.Agent do
     model = Map.get(config, :model) || "xai:grok-4.5"
     on_delta = Map.get(config, :on_delta, fn _ -> :ok end)
 
+    opts =
+      [model: model, on_delta: on_delta]
+      |> maybe_kw(config, :provider)
+      |> maybe_kw(config, :stream_body)
+      |> maybe_kw(config, :http_fun)
+      |> maybe_kw(config, :base_url)
+
     # Drop system-less edge: complete_turn sends full message list including system.
-    case Arvo.Providers.Completion.complete_turn(messages, tools_spec,
-           model: model,
-           on_delta: on_delta
-         ) do
+    case Arvo.Providers.Completion.complete_turn(messages, tools_spec, opts) do
       {:ok, assistant} ->
         {:ok,
          %{
            role: "assistant",
            content: assistant.content || "",
            tool_calls: assistant.tool_calls || [],
-           usage: Map.get(assistant, :usage)
+           usage: Map.get(assistant, :usage),
+           streamed?: Map.get(assistant, :streamed?, false)
          }}
 
       {:error, reason} ->
         {:error, reason}
     end
   end
+
+  defp maybe_kw(opts, config, key) do
+    case Map.get(config, key) do
+      nil -> opts
+      val -> Keyword.put(opts, key, val)
+    end
+  end
 end
+

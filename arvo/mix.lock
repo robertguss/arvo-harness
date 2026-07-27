@@ -20,6 +20,7 @@
   "server_sent_events": {:hex, :server_sent_events, "1.1.0", "54606238b9182ba673a10ce90bd95f81a0939c1baa91cdf86b66acc04edd1832", [:mix], [], "hexpm", "8e164db8e295a2d869a8faafbf4a1eeaa749b62fe93f66271adff6394d93ce15"},
   "splode": {:hex, :splode, "0.3.1", "9843c54f84f71b7833fec3f0be06c3cfb5be6b35960ee195ea4fad84b1c25030", [:mix], [], "hexpm", "8f2309b6ec2ecbb01435656429ed1d9ed04ba28797a3280c3b0d1217018ecfbd"},
   "telemetry": {:hex, :telemetry, "1.4.2", "a0cb522801dffb1c49fe6e30561badffc7b6d0e180db1300df759faa22062855", [:rebar3], [], "hexpm", "928f6495066506077862c0d1646609eed891a4326bee3126ba54b60af61febb1"},
+  "termite": {:hex, :termite, "0.4.3", "013cc484312153b9d9aa8bec532b5620a978ec086fbfe4fc19442ac66fe159a8", [:mix], [], "hexpm", "5dcf47991ad180f070ee84dd0086d31ee98869ff2e1b93c5a7a87196d4ef7557"},
   "texture": {:hex, :texture, "1.2.0", "aa9097e0709652044ba500de817d60ce8a48dc0b4ffd92232fd33459a20282f6", [:mix], [{:abnf_parsec, "~> 2.0", [hex: :abnf_parsec, repo: "hexpm", optional: false]}], "hexpm", "f250de468cfe35f404faf232429f40114f83f73430e0f7086a9cc251865642e2"},
   "toml": {:hex, :toml, "0.7.0", "fbcd773caa937d0c7a02c301a1feea25612720ac3fa1ccb8bfd9d30d822911de", [:mix], [], "hexpm", "0690246a2478c1defd100b0c9b89b4ea280a22be9a7b313a8a058a2408a2fa70"},
   "websockex": {:hex, :websockex, "0.5.1", "9de28d37bbe34f371eb46e29b79c94c94fff79f93c960d842fbf447253558eb4", [:mix], [{:telemetry, "~> 1.0", [hex: :telemetry, repo: "hexpm", optional: false]}], "hexpm", "8ef39576ed56bc3804c9cd8626f8b5d6b5721848d2726c0ccd4f05385a3c9f14"},

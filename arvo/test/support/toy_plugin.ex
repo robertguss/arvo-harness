@@ -6,9 +6,17 @@ defmodule Toy.Plugin do
     %{
       api: 1,
       tools: [Toy.EchoTool],
-      skills: [],
+      skills: [
+        %{
+          name: "toy-skill",
+          description: "A progressive toy skill (name+desc only)",
+          path: "/tmp/toy-skill/SKILL.md"
+        }
+      ],
       children: [{Toy.Worker, []}],
-      commands: [],
+      commands: [
+        {"ping", fn _args -> :pong end}
+      ],
       hooks: []
     }
   end

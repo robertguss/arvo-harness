@@ -27,7 +27,7 @@ defmodule Arvo.Application do
       {:ok, _pid} ->
         # After Registry+TUI are up: apply project profile plugins (SPEC §5).
         _ = maybe_auto_activate_profile()
-        maybe_start_repl()
+        maybe_start_interactive()
         result
 
       other ->
@@ -57,10 +57,64 @@ defmodule Arvo.Application do
     end
   end
 
-  defp maybe_start_repl do
-    # Interactive line REPL only when launched via the wrapper / mix run (not under test).
-    if Application.get_env(:arvo, :start_repl, true) do
-      Task.start(fn -> Arvo.Repl.run() end)
+  defp maybe_start_interactive do
+    # Product default: Focus owns the terminal (not Repl). Repl remains library/fallback.
+    # Under test, both stay off unless explicitly enabled.
+    _ = maybe_auto_resume()
+
+    cond do
+      Application.get_env(:arvo, :start_focus, true) and not Application.get_env(:arvo, :start_repl, false) ->
+        Task.start(fn -> Arvo.TUI.Focus.run() end)
+
+      Application.get_env(:arvo, :start_repl, false) ->
+        Task.start(fn -> Arvo.Repl.run() end)
+
+      true ->
+        :ok
+    end
+  end
+
+  @doc """
+  Same-cwd auto-resume last resumable session by HEAD (R14).
+  Skips empty shells via `list_resumable_for_cwd`. No-op when none.
+  """
+  def maybe_auto_resume(cwd \\ nil) do
+    if Application.get_env(:arvo, :auto_resume, true) do
+      cwd = cwd || Application.get_env(:arvo, :cwd) || Arvo.cwd()
+
+      case Arvo.Session.Store.list_resumable_for_cwd(cwd) do
+        [path | _] ->
+          case Arvo.Session.resume(path) do
+            {:ok, resumed} = ok ->
+              reapply_profile_from_resume(resumed)
+              ok
+
+            other ->
+              Logger.warning(
+                "Arvo: same-cwd auto-resume failed for #{path}: #{inspect(other)}"
+              )
+
+              other
+          end
+
+        [] ->
+          :noop
+      end
+    else
+      :noop
+    end
+  end
+
+  # R13/AE2: session meta.profile is a name only; re-run Profiles.switch so tools/skills match.
+  defp reapply_profile_from_resume(resumed) do
+    case resumed[:profile] || resumed["profile"] do
+      p when is_binary(p) and p != "" ->
+        Arvo.Profiles.reapply(p)
+
+      _ ->
+        :ok
     end
   end
 end
+
+

@@ -28,7 +28,9 @@ defmodule Arvo.CompactionTest do
     assert hd(result.messages).content =~ "compacted summary"
   end
 
-  test "length error suggests /compact" do
-    assert Arvo.Session.Compaction.length_error_message() =~ "/compact"
+  test "length error suggests handoff (and mentions compact as power path)" do
+    msg = Arvo.Session.Compaction.length_error_message()
+    assert msg =~ "/handoff"
+    assert msg =~ "/compact" or msg =~ "compact"
   end
 end

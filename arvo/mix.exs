@@ -28,7 +28,9 @@ defmodule Arvo.MixProject do
       {:jido_action, "~> 2.3"},
       {:req, "~> 0.5"},
       {:req_llm, "~> 1.17"},
+      {:termite, "~> 0.4.3"},
       {:rustler, "~> 0.36", runtime: false}
     ]
   end
+
 end

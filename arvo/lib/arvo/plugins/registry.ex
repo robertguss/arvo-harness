@@ -14,6 +14,9 @@ defmodule Arvo.Plugins.Registry do
 
   def list_active, do: GenServer.call(__MODULE__, :list_active)
   def tools, do: GenServer.call(__MODULE__, :tools)
+  def skills, do: GenServer.call(__MODULE__, :skills)
+  def commands, do: GenServer.call(__MODULE__, :commands)
+  def profile, do: GenServer.call(__MODULE__, :profile)
   def load_plugin(dir, opts \\ []), do: GenServer.call(__MODULE__, {:load_plugin, dir, opts}, 120_000)
 
   @doc "Test/helper: register an already-loaded entry module without mix compile."
@@ -53,6 +56,7 @@ defmodule Arvo.Plugins.Registry do
        active: MapSet.new(["base"]),
        tools: core_tool_map(),
        skills: [],
+       commands: %{},
        profile: "base",
        child_pids: %{}
      }}
@@ -65,6 +69,18 @@ defmodule Arvo.Plugins.Registry do
 
   def handle_call(:tools, _from, state) do
     {:reply, Map.values(state.tools), state}
+  end
+
+  def handle_call(:skills, _from, state) do
+    {:reply, state.skills, state}
+  end
+
+  def handle_call(:commands, _from, state) do
+    {:reply, state.commands, state}
+  end
+
+  def handle_call(:profile, _from, state) do
+    {:reply, state.profile, state}
   end
 
   def handle_call({:load_plugin, dir, opts}, _from, state) do
@@ -118,9 +134,20 @@ defmodule Arvo.Plugins.Registry do
           :ok ->
             state = start_children(state, name, entry.manifest.children)
             tools = register_tools(state.tools, entry.manifest.tools)
+            skills = register_skills(state.skills, name, entry)
+            commands = register_commands(state.commands, name, entry.manifest.commands)
             active = MapSet.put(state.active, name)
             entry = %{entry | status: :active}
-            state = %{state | plugins: Map.put(state.plugins, name, entry), active: active, tools: tools}
+
+            state = %{
+              state
+              | plugins: Map.put(state.plugins, name, entry),
+                active: active,
+                tools: tools,
+                skills: skills,
+                commands: commands
+            }
+
             {:reply, :ok, state}
 
           {:error, reason} ->
@@ -141,9 +168,20 @@ defmodule Arvo.Plugins.Registry do
           _ = entry.module.deactivate(%{})
           state = stop_children(state, name)
           tools = unregister_tools(state.tools, entry.manifest.tools)
+          skills = unregister_skills(state.skills, name)
+          commands = unregister_commands(state.commands, name)
           active = MapSet.delete(state.active, name)
           entry = %{entry | status: :deactivated}
-          state = %{state | plugins: Map.put(state.plugins, name, entry), active: active, tools: tools}
+
+          state = %{
+            state
+            | plugins: Map.put(state.plugins, name, entry),
+              active: active,
+              tools: tools,
+              skills: skills,
+              commands: commands
+          }
+
           {:reply, :ok, state}
       end
     end
@@ -235,6 +273,74 @@ defmodule Arvo.Plugins.Registry do
     Enum.reduce(mods, tools, fn mod, acc ->
       Map.delete(acc, mod.spec().name)
     end)
+  end
+
+  defp register_skills(skills, plugin_name, entry) do
+    discovered =
+      cond do
+        is_binary(entry.dir) and File.dir?(entry.dir) ->
+          Arvo.Skills.skills_in_dir(Path.join(entry.dir, "priv/skills"))
+
+        true ->
+          []
+      end
+
+    # Manifest may list skill names/maps already
+    from_manifest =
+      Enum.flat_map(entry.manifest.skills || [], fn
+        s when is_map(s) ->
+          [
+            %{
+              name: s[:name] || s["name"],
+              description: s[:description] || s["description"] || "",
+              path: s[:path] || s["path"],
+              plugin: plugin_name
+            }
+          ]
+
+        s when is_binary(s) ->
+          [%{name: s, description: "", path: nil, plugin: plugin_name}]
+
+        _ ->
+          []
+      end)
+
+    (skills ++ Enum.map(discovered, &Map.put(&1, :plugin, plugin_name)) ++ from_manifest)
+    |> Enum.uniq_by(&{&1[:name] || &1["name"], &1[:plugin]})
+  end
+
+  defp unregister_skills(skills, plugin_name) do
+    Enum.reject(skills, fn s -> (s[:plugin] || s["plugin"]) == plugin_name end)
+  end
+
+  defp register_commands(commands, plugin_name, cmd_list) when is_list(cmd_list) do
+    Enum.reduce(cmd_list, commands, fn cmd, acc ->
+      {name, handler} =
+        case cmd do
+          {n, h} when is_binary(n) -> {n, h}
+          %{name: n, run: h} -> {n, h}
+          %{"name" => n, "run" => h} -> {n, h}
+          n when is_binary(n) -> {n, nil}
+          _ -> {nil, nil}
+        end
+
+      if is_binary(name) do
+        # Namespaced: plugin:cmd and bare cmd when unambiguous
+        key = "#{plugin_name}:#{name}"
+        acc = Map.put(acc, key, %{plugin: plugin_name, name: name, handler: handler})
+        Map.put_new(acc, name, %{plugin: plugin_name, name: name, handler: handler})
+      else
+        acc
+      end
+    end)
+  end
+
+  defp register_commands(commands, _, _), do: commands
+
+  defp unregister_commands(commands, plugin_name) do
+    commands
+    |> Enum.reject(fn {_k, v} -> v[:plugin] == plugin_name end)
+    |> Map.new()
   end
 
   defp start_children(state, name, children) do

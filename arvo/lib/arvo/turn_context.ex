@@ -22,7 +22,8 @@ defmodule Arvo.TurnContext do
 
     messages =
       Keyword.get_lazy(opts, :messages, fn ->
-        Arvo.Session.Store.messages_from_history(sess.history || [])
+        # Product hot context = root → HEAD only (KTD 11). Full-file flatten is non-product.
+        Arvo.Session.Store.messages_to_head(sess.history || [])
       end)
 
     tools =

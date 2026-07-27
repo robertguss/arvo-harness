@@ -67,13 +67,27 @@ defmodule Arvo.Session do
     GenServer.call(__MODULE__, {:start_turn, context, config, event_fun})
   end
 
-  @doc "Cancel current turn Task (brutal kill). No success persist."
+  @doc "Cancel current turn Task (brutal kill). No success persist; writes cancel leaf."
   def cancel_turn do
     GenServer.call(__MODULE__, :cancel_turn)
   end
 
   def await_turn(timeout \\ 60_000) do
     GenServer.call(__MODULE__, :await_turn, timeout + 1_000)
+  end
+
+  @doc """
+  Move HEAD to an earlier node (append-only `head_move`). Next messages parent from new HEAD.
+
+  Steps: positive integer of parent hops from current HEAD (default 1).
+  """
+  def rewind(steps \\ 1) when is_integer(steps) and steps >= 1 do
+    GenServer.call(__MODULE__, {:rewind, steps})
+  end
+
+  @doc "Current HEAD entry id (explicit pointer, not necessarily file tip)."
+  def head_id do
+    GenServer.call(__MODULE__, :head_id)
   end
 
   @doc """
@@ -175,20 +189,66 @@ defmodule Arvo.Session do
       {:reply, {:error, :no_session}, state}
     else
       entries = Arvo.Session.Store.read_all(path)
-      tip = List.last(entries)
+      tip = Arvo.Session.Store.tip(path)
       meta = List.first(entries)
+      head = Arvo.Session.Store.resolve_head(entries)
 
       state = %{
         state
         | id: meta && meta["id"],
           path: path,
-          last_id: tip && tip["id"],
+          last_id: head,
           cwd: (meta && meta["cwd"]) || state.cwd,
           history: entries
       }
 
-      messages = Arvo.Session.Store.messages_to_tip(path)
-      {:reply, {:ok, %{path: path, messages: messages, tip: tip}}, state}
+      messages = Arvo.Session.Store.messages_to_head(entries)
+      {:reply, {:ok, %{path: path, messages: messages, tip: tip, head_id: head}}, state}
+    end
+  end
+
+  def handle_call(:head_id, _from, state), do: {:reply, state.last_id, state}
+
+  def handle_call({:rewind, steps}, _from, state) do
+    if is_nil(state.path) do
+      {:reply, {:error, :no_session}, state}
+    else
+      by_id = Map.new(state.history, &{&1["id"], &1})
+      start = by_id[state.last_id]
+
+      target =
+        Enum.reduce_while(1..steps, start, fn _, cur ->
+          case cur do
+            nil ->
+              {:halt, nil}
+
+            %{"parent_id" => nil} ->
+              {:halt, cur}
+
+            %{"parent_id" => pid} ->
+              case by_id[pid] do
+                nil -> {:halt, cur}
+                parent -> {:cont, parent}
+              end
+          end
+        end)
+
+      case target do
+        %{"id" => new_head} ->
+          written =
+            Arvo.Session.Store.append_head_move!(state.path, new_head, parent_id: state.last_id)
+
+          state = %{
+            state
+            | last_id: new_head,
+              history: state.history ++ [written]
+          }
+
+          {:reply, {:ok, %{head_id: new_head}}, state}
+
+        _ ->
+          {:reply, {:error, :cannot_rewind}, state}
+      end
     end
   end
 
@@ -283,6 +343,9 @@ defmodule Arvo.Session do
       %Task{pid: pid} = task ->
         Task.shutdown(task, :brutal_kill)
         if Process.alive?(pid), do: Process.exit(pid, :kill)
+
+        # Cancel-as-fork: incomplete leaf so HEAD stays coherent; never claim complete success
+        state = append_cancel_leaf(state)
 
         state = %{
           state
@@ -470,6 +533,33 @@ defmodule Arvo.Session do
   end
 
   defp maybe_add_usage_tokens(tokens, _), do: tokens
+
+  defp append_cancel_leaf(state) do
+    if is_binary(state.path) and File.exists?(state.path) do
+      entry = %{
+        "type" => "message",
+        "role" => "assistant",
+        "content" => "",
+        "parent_id" => state.last_id,
+        "incomplete" => true,
+        "stop_reason" => "cancelled"
+      }
+
+      try do
+        written = Arvo.Session.Store.append!(state.path, entry)
+
+        %{
+          state
+          | last_id: written["id"],
+            history: state.history ++ [written]
+        }
+      rescue
+        _ -> state
+      end
+    else
+      state
+    end
+  end
 
   defp do_maybe_auto_compact(state, opts) do
     window = Keyword.get(opts, :window, 500_000)

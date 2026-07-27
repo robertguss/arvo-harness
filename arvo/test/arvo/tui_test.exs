@@ -143,14 +143,30 @@ defmodule Arvo.TUITest do
   end
 
   test "Esc mid-turn cancels Session task" do
+    tmp = Path.join(System.tmp_dir!(), "arvo-esc-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(tmp)
+    old = System.get_env("HOME")
+    System.put_env("HOME", tmp)
+    Application.put_env(:arvo, :cwd, tmp)
+
+    on_exit(fn ->
+      if old, do: System.put_env("HOME", old)
+      File.rm_rf!(tmp)
+    end)
+
+    {:ok, _path} = Arvo.Session.open_new(tmp)
+    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "slow"})
+
     complete_fun = fn _, _, _ ->
       Process.sleep(10_000)
       {:ok, %{role: "assistant", content: "x", tool_calls: []}}
     end
 
+    ctx = Arvo.TurnContext.build()
+
     {:ok, task} =
       Arvo.Session.start_turn(
-        %{messages: [%{role: "user", content: "slow"}], cwd: File.cwd!()},
+        ctx,
         %{complete_fun: complete_fun},
         fn ev -> Arvo.TUI.handle_event(ev) end
       )

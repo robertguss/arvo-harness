@@ -116,19 +116,131 @@ defmodule Arvo.Session.Store do
     end
   end
 
-  @doc "Tip entry: last entry in file (resume-from-tip)."
+  @doc "Tip entry: last non-head_move entry in file (EOF tip — may differ from HEAD)."
   def tip(path) do
     case read_all(path) do
       [] -> nil
-      entries -> List.last(entries)
+      entries -> last_content_entry(entries)
     end
   end
 
-  @doc "Reconstruct chat messages along the path from root to tip."
+  @doc """
+  Resolve explicit HEAD id from entries.
+
+  Last valid `head_move` sets a rewind base. HEAD is then the latest content
+  entry that is that base or a descendant of it (fork after rewind). Otherwise
+  HEAD is the last non-`head_move` entry. Corrupt head_id falls back to tip.
+  """
+  def resolve_head(entries) when is_list(entries) do
+    by_id = Map.new(entries, &{&1["id"], &1})
+
+    case last_head_move(entries) do
+      {%{"head_id" => base}, idx} when is_binary(base) ->
+        if Map.has_key?(by_id, base) do
+          subsequent = Enum.drop(entries, idx + 1)
+
+          tip_on_branch =
+            subsequent
+            |> Enum.reject(&(&1["type"] == "head_move"))
+            |> Enum.filter(fn e -> e["id"] == base or descendant_of?(by_id, e["id"], base) end)
+            |> List.last()
+
+          case tip_on_branch do
+            %{"id" => id} -> id
+            _ -> base
+          end
+        else
+          case last_content_entry(entries) do
+            %{"id" => id} -> id
+            _ -> nil
+          end
+        end
+
+      _ ->
+        case last_content_entry(entries) do
+          %{"id" => id} -> id
+          _ -> nil
+        end
+    end
+  end
+
+  def resolve_head(path) when is_binary(path), do: resolve_head(read_all(path))
+
+  defp last_head_move(entries) do
+    entries
+    |> Enum.with_index()
+    |> Enum.filter(fn {e, _} -> e["type"] == "head_move" end)
+    |> List.last()
+  end
+
+  defp descendant_of?(_by_id, id, ancestor_id) when id == ancestor_id, do: true
+
+  defp descendant_of?(by_id, id, ancestor_id) do
+    case by_id[id] do
+      %{"parent_id" => ^ancestor_id} ->
+        true
+
+      %{"parent_id" => pid} when is_binary(pid) ->
+        descendant_of?(by_id, pid, ancestor_id)
+
+      _ ->
+        false
+    end
+  end
+
+  @doc "Entry map for current HEAD (or nil)."
+  def head_entry(entries) when is_list(entries) do
+    case resolve_head(entries) do
+      nil -> nil
+      id -> Enum.find(entries, &(&1["id"] == id))
+    end
+  end
+
+  def head_entry(path) when is_binary(path), do: head_entry(read_all(path))
+
+  @doc """
+  Append-only HEAD move. Does not rewrite prior lines.
+  `parent_id` on the head_move record is the previous HEAD (audit trail).
+  """
+  def append_head_move!(path, head_id, opts \\ []) when is_binary(path) and is_binary(head_id) do
+    parent = Keyword.get(opts, :parent_id)
+
+    append!(path, %{
+      "type" => "head_move",
+      "parent_id" => parent,
+      "head_id" => head_id,
+      "at" => DateTime.utc_now() |> DateTime.to_iso8601()
+    })
+  end
+
+  @doc "Reconstruct chat messages along root → HEAD (product path)."
+  def messages_to_head(path) when is_binary(path) do
+    messages_to_head(read_all(path))
+  end
+
+  def messages_to_head(entries) when is_list(entries) do
+    by_id = Map.new(entries, &{&1["id"], &1})
+    head_id = resolve_head(entries)
+
+    if is_nil(head_id) do
+      []
+    else
+      chain =
+        Stream.unfold(by_id[head_id], fn
+          nil -> nil
+          e -> {e, by_id[e["parent_id"]]}
+        end)
+        |> Enum.reverse()
+
+      Enum.flat_map(chain, &entry_to_messages/1)
+    end
+  end
+
+  @doc "Reconstruct chat messages along the path from root to tip (EOF). Prefer `messages_to_head/1` for product."
   def messages_to_tip(path) do
     entries = read_all(path)
     by_id = Map.new(entries, &{&1["id"], &1})
-    tip = List.last(entries)
+    tip = last_content_entry(entries)
 
     if is_nil(tip) do
       []
@@ -142,6 +254,12 @@ defmodule Arvo.Session.Store do
 
       Enum.flat_map(chain, &entry_to_messages/1)
     end
+  end
+
+  defp last_content_entry(entries) do
+    entries
+    |> Enum.reject(&(&1["type"] in ["head_move"]))
+    |> List.last()
   end
 
   @doc "List session files for a cwd, newest first."

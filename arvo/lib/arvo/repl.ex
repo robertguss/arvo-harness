@@ -46,10 +46,10 @@ defmodule Arvo.Repl do
     Arvo.Session.persist_agent_result(result, prior_len)
   end
 
-  @doc "Rebuild chat messages from open session history (tool fields preserved)."
+  @doc "Rebuild chat messages from open session HEAD chain (tool fields preserved)."
   def session_messages do
     sess = Arvo.Session.get()
-    Arvo.Session.Store.messages_from_history(sess.history || [])
+    Arvo.Session.Store.messages_to_head(sess.history || [])
   end
 
   @doc "Record usage from agent result into Session + TUI."

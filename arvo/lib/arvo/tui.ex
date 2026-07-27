@@ -258,6 +258,7 @@ defmodule Arvo.TUI do
       /profile [name]    list profiles, or switch workflow profile
       /login [provider]  device-flow login (default grok)
       /resume [n|path]   list sessions, or resume by index/path
+      /rewind [n]        move HEAD back n steps (default 1); next msg forks
       /compact [focus]   summarize older turns (optional focus text)
       /quit              exit
 
@@ -346,6 +347,22 @@ defmodule Arvo.TUI do
 
       _ ->
         {{:ok, :handled, "could not resume: #{arg}"}, state}
+    end
+  end
+
+  defp do_slash(state, "rewind", args) do
+    steps =
+      case Integer.parse(String.trim(args || "")) do
+        {n, _} when n >= 1 -> n
+        _ -> 1
+      end
+
+    case Arvo.Session.rewind(steps) do
+      {:ok, %{head_id: hid}} ->
+        {{:ok, :handled, "rewound #{steps} step(s); HEAD=#{String.slice(hid, 0, 8)}…"}, state}
+
+      {:error, reason} ->
+        {{:ok, :handled, "rewind failed: #{inspect(reason)}"}, state}
     end
   end
 

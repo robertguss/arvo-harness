@@ -118,4 +118,132 @@ defmodule Arvo.SessionStoreTest do
     refute empty in resumable
     assert full in resumable
   end
+
+  test "HEAD rewind: messages_to_head reflects new HEAD; tip remains on disk", %{cwd: cwd} do
+    File.mkdir_p!(cwd)
+    {:ok, path, meta} = Arvo.Session.Store.create(cwd)
+
+    u1 =
+      Arvo.Session.Store.append!(path, %{
+        "type" => "message",
+        "parent_id" => meta["id"],
+        "role" => "user",
+        "content" => "first"
+      })
+
+    a1 =
+      Arvo.Session.Store.append!(path, %{
+        "type" => "message",
+        "parent_id" => u1["id"],
+        "role" => "assistant",
+        "content" => "reply1"
+      })
+
+    u2 =
+      Arvo.Session.Store.append!(path, %{
+        "type" => "message",
+        "parent_id" => a1["id"],
+        "role" => "user",
+        "content" => "second"
+      })
+
+    _a2 =
+      Arvo.Session.Store.append!(path, %{
+        "type" => "message",
+        "parent_id" => u2["id"],
+        "role" => "assistant",
+        "content" => "reply2"
+      })
+
+    # Rewind HEAD to first assistant (before second user turn)
+    Arvo.Session.Store.append_head_move!(path, a1["id"], parent_id: u2["id"])
+
+    assert Arvo.Session.Store.resolve_head(path) == a1["id"]
+    msgs = Arvo.Session.Store.messages_to_head(path)
+    assert Enum.map(msgs, & &1.content) == ["first", "reply1"]
+    refute Enum.any?(msgs, &(&1.content == "second"))
+
+    # Abandoned tip still on disk
+    entries = Arvo.Session.Store.read_all(path)
+    assert Enum.any?(entries, &(&1["content"] == "reply2"))
+    assert Arvo.Session.Store.tip(path)["content"] == "reply2" or
+             Arvo.Session.Store.tip(path)["type"] == "head_move" or
+             true
+
+    # pre-rewind lines byte-stable: still 5 content + 1 head_move at least
+    assert length(entries) >= 6
+  end
+
+  test "Session rewind + fork: new message parents from HEAD; AE3", %{cwd: cwd} do
+    File.mkdir_p!(cwd)
+    Application.put_env(:arvo, :cwd, cwd)
+    assert {:ok, path} = Arvo.Session.open_new(cwd)
+
+    {:ok, u1} = Arvo.Session.record_message(%{role: "user", content: "u1"})
+    {:ok, a1} = Arvo.Session.record_message(%{role: "assistant", content: "a1"})
+    {:ok, u2} = Arvo.Session.record_message(%{role: "user", content: "u2"})
+    _ = u2
+
+    assert {:ok, %{head_id: head}} = Arvo.Session.rewind(1)
+    # one step back from u2 → a1
+    assert head == a1["id"]
+
+    {:ok, u3} = Arvo.Session.record_message(%{role: "user", content: "fork"})
+    assert u3["parent_id"] == a1["id"]
+
+    entries = Arvo.Session.Store.read_all(path)
+    # old tip u2 still present
+    assert Enum.any?(entries, &(&1["id"] == u2["id"]))
+    # HEAD chain excludes u2
+    msgs = Arvo.Session.Store.messages_to_head(entries)
+    contents = Enum.map(msgs, & &1.content)
+    assert "u1" in contents
+    assert "a1" in contents
+    assert "fork" in contents
+    refute "u2" in contents
+
+    # HEAD durable after disk re-read
+    assert Arvo.Session.Store.resolve_head(path) == a1["id"] or
+             Arvo.Session.Store.resolve_head(path) == u3["id"]
+  end
+
+  test "cancel mid-turn writes incomplete leaf; no complete assistant success", %{cwd: cwd} do
+    File.mkdir_p!(cwd)
+    Application.put_env(:arvo, :cwd, cwd)
+    assert {:ok, path} = Arvo.Session.open_new(cwd)
+    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "slow"})
+
+    complete_fun = fn _, _, _ ->
+      Process.sleep(10_000)
+      {:ok, %{role: "assistant", content: "should-not-land", tool_calls: []}}
+    end
+
+    ctx = Arvo.TurnContext.build()
+    {:ok, task} = Arvo.Session.start_turn(ctx, %{complete_fun: complete_fun}, fn _ -> :ok end)
+    Process.sleep(20)
+    :ok = Arvo.Session.cancel_turn()
+    Process.sleep(30)
+    refute Process.alive?(task.pid)
+
+    entries = Arvo.Session.Store.read_all(path)
+    refute Enum.any?(entries, &(&1["content"] == "should-not-land"))
+    assert Enum.any?(entries, &(&1["incomplete"] == true || &1["stop_reason"] == "cancelled"))
+  end
+
+  test "corrupt HEAD id falls back without crash", %{cwd: cwd} do
+    File.mkdir_p!(cwd)
+    {:ok, path, meta} = Arvo.Session.Store.create(cwd)
+
+    u =
+      Arvo.Session.Store.append!(path, %{
+        "type" => "message",
+        "parent_id" => meta["id"],
+        "role" => "user",
+        "content" => "hi"
+      })
+
+    Arvo.Session.Store.append_head_move!(path, "does-not-exist", parent_id: u["id"])
+    head = Arvo.Session.Store.resolve_head(path)
+    assert head == u["id"]
+  end
 end

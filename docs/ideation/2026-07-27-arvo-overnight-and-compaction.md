@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-27 (updated same day: TUI-first overnight list)  
 **Status:** Working notes + **canonical overnight feature list** (§5). Not a requirements plan; beads not created yet.  
-**Related:** `docs/ideation/2026-07-27-arvo-elixir-harness-ideation.html` (ranked ideation artifact)  
+**Related:** `docs/ideation/2026-07-27-arvo-elixir-harness-ideation.html` (ranked ideation); `docs/ideation/2026-07-27-elixir-cli-tui-landscape.md` (CLI/TUI stack research)  
 **Subject:** Arvo — the Elixir/BEAM coding-agent harness (`arvo/`), twin of Rust Ore.
 
 This document captures the full thread so nothing is lost before brainstorming, bead creation, or overnight runs: grounding, ranked ideas, overnight ambition, sequencing, BEAM-native features, a hard filter against feature bloat, compaction/handoff discussion, and the **TUI-first overnight feature list**.
@@ -344,14 +344,36 @@ If #7 fails, the night failed — even if HEAD/rewind shipped.
 8. **Single writer:** no parallel implement agents.  
 9. **Ore parity:** don’t port for its own sake.  
 
-### 5.9 Stack note (decide before sleep / first agent)
+### 5.9 TUI stack recommendation (from landscape research)
 
-| Path | Pros | Cons |
-|------|------|------|
-| Hand-roll on events (ADR-0001) | Fits architecture | Easy to ship “meh” if under-scoped |
-| Thin TUI library | Faster “app” feel | Dep weight; live-reload tradeoffs |
+**Research capture:** `docs/ideation/2026-07-27-elixir-cli-tui-landscape.md`  
+(sibling-pane inventory: Ratatouille / Garnish / ElementTui / ex_ratatui / term_ui / Termite / Owl / args.)
 
-Overnight rule: **optimize for love by morning**, not purity. Curriculum can still own the event model underneath.
+| Need | Prefer (landscape tree) |
+|------|-------------------------|
+| Full-screen pure BEAM, modern | **term_ui** (or Termite + custom) |
+| Widget density / ratatui ecosystem | **ex_ratatui** (Rustler) |
+| SSH into BEAM node | **Garnish** (or ex_ratatui SSH) |
+| Non-fullscreen CLI polish | **Owl** |
+| Learn TEA only | Ratatouille (do **not** greenfield long-term base) |
+
+**Arvo overnight recommendation:**
+
+1. **Primary full-screen:** **`term_ui`** — pure BEAM, TEA, widgets, differential ~60fps; best match for §5.1 (layout, stream redraw, no full-clear spam) and ADR-0001 curriculum (OTP/live tweak without another C/Rust TUI stack). Event bus (Session/Agent) remains source of truth; term_ui is the projector.  
+2. **Fallback if term_ui is too immature for love-by-morning:** **Termite** (NIF-free, OTP 26+) + thin custom layout on Arvo events — more work, still pure BEAM.  
+3. **Escape hatch if pure-BEAM path can’t delight:** **ex_ratatui** — widget density and proven ratatui feel; costs Rustler/NIF + dual toolchain (already used for fff, so not forbidden — just not the curriculum-first default).  
+4. **CLI / headless polish (not product main):** **Owl** for tables/progress/boxes on print/status paths; stdlib `OptionParser` or maintained Optimus fork for args.  
+5. **Do not:** base greenfield Arvo on **Ratatouille** alone (frozen ~2020). **Garnish** is out of overnight scope unless “SSH into the node” becomes a product goal (multi-attach later).
+
+**Product answers (default for overnight):**
+
+| Question | Default |
+|----------|---------|
+| Local full-screen vs CLI vs SSH-cluster | **Local full-screen** is the daily driver; CLI print secondary; SSH later |
+| NIFs vs pure BEAM | **Prefer pure BEAM TUI**; NIFs already exist for tools (fff), not required for chrome |
+| OTP 26+ (Termite) | Acceptable if fallback path chosen; confirm CI/runtime |
+
+Overnight rule: **optimize for love by morning.** Event model still owned by Arvo core; library is view/runtime only.
 
 ### 5.10 Historical note
 
@@ -654,7 +676,8 @@ On-brand with speed / minimal UX / no lying chrome.
 Capture so future sessions don’t re-litigate silently:
 
 - [x] Overnight center: **TUI delight + thin trust** (§5), not multi-agent / compact-first  
-- [ ] TUI stack: hand-roll vs thin library (§5.9)  
+- [x] TUI stack lean: **term_ui** primary; Termite+custom fallback; ex_ratatui escape hatch; Owl for CLI-only (§5.9 + landscape doc)  
+
 - [ ] Same-cwd policy: auto-resume vs prompt-once  
 - [ ] Deep bet later: multi-ring vs handoff-only vs profile-as-tree  
 - [ ] Warm/handoff packet: deterministic work-delta default (lean yes)  

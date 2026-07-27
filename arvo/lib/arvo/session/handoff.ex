@@ -10,36 +10,7 @@ defmodule Arvo.Session.Handoff do
 
   @doc "Build handoff packet map from current session history (deterministic v0)."
   def build_packet(opts \\ []) do
-    sess = Arvo.Session.get()
-    history = sess.history || []
-    messages = Arvo.Session.Store.messages_to_head(history)
-
-    users = Enum.filter(messages, &((&1[:role] || &1["role"]) == "user"))
-    assts = Enum.filter(messages, &((&1[:role] || &1["role"]) == "assistant"))
-
-    goal =
-      Keyword.get(opts, :goal) ||
-        case List.last(users) do
-          nil -> "continue work"
-          m -> String.slice(to_string(m[:content] || m["content"] || ""), 0, 200)
-        end
-
-    last_asst =
-      case List.last(assts) do
-        nil -> ""
-        m -> String.slice(to_string(m[:content] || m["content"] || ""), 0, 400)
-      end
-
-    %{
-      "goal" => goal,
-      "done" => Keyword.get(opts, :done) || summarize_done(assts),
-      "not_done" => Keyword.get(opts, :not_done) || goal,
-      "paths" => Keyword.get(opts, :paths) || [],
-      "last_error" => Keyword.get(opts, :last_error) || last_error(sess),
-      "next_steps" => Keyword.get(opts, :next_steps) || "Continue from handoff packet.",
-      "parent_session_id" => sess.id,
-      "last_assistant_excerpt" => last_asst
-    }
+    build_packet_from(Arvo.Session.get(), opts)
   end
 
   @doc """
@@ -48,8 +19,8 @@ defmodule Arvo.Session.Handoff do
   Returns `{:ok, %{path, parent_path, packet}}` or `{:error, reason}`.
   """
   def perform(opts \\ []) do
-    # Entire handoff runs under Session GenServer so start_turn cannot interleave
-    # between idle check, child create, marker, and rebind (closes TOCTOU).
+    # Entire handoff under Session GenServer so start_turn cannot interleave
+    # (create/seed/marker/rebind must be atomic vs turn start).
     Arvo.Session.handoff(opts)
   end
 
@@ -60,6 +31,7 @@ defmodule Arvo.Session.Handoff do
     cwd = sess.cwd || Application.get_env(:arvo, :cwd) || Arvo.cwd()
     model = sess.model || Application.get_env(:arvo, :default_model) || "xai:grok-4.5"
     profile = sess.profile || "base"
+    parent_entry_count = length(sess.history || [])
 
     try do
       {:ok, child_path, meta} =
@@ -80,27 +52,30 @@ defmodule Arvo.Session.Handoff do
       written = Arvo.Session.Store.append!(child_path, seed)
       child_entries = [meta, written]
 
-      # Optional parent marker (append-only)
-      if is_binary(parent_path) and File.exists?(parent_path) do
-        _ =
-          Arvo.Session.Store.append!(parent_path, %{
-            "type" => "handoff_marker",
-            "parent_id" => sess.last_id,
-            "child_path" => child_path,
-            "child_session_id" => meta["id"]
-          })
-      end
+      # Parent marker is best-effort append-only (ignore missing parent file)
+      if is_binary(parent_path) do
+        try do
+          _ =
+            Arvo.Session.Store.append!(parent_path, %{
+              "type" => "handoff_marker",
+              "parent_id" => sess.last_id,
+              "child_path" => child_path,
+              "child_session_id" => meta["id"]
+            })
 
-      parent_now = Arvo.Session.Store.read_all(parent_path)
+          :ok
+        rescue
+          _ -> :ok
+        end
+      end
 
       {:ok,
        %{
          path: child_path,
          parent_path: parent_path,
          packet: packet,
-         parent_entry_count: length(parent_now),
+         parent_entry_count: parent_entry_count + 1,
          child_messages: Arvo.Session.Store.messages_to_head(child_entries),
-         rehydrate_tui: true,
          rebind: %{
            id: meta["id"],
            path: child_path,
@@ -109,48 +84,13 @@ defmodule Arvo.Session.Handoff do
            cwd: cwd,
            model: meta["model"],
            profile: meta["profile"],
-           tokens: Arvo.Session.Tokens.new(),
-           steering: [],
-           turn_task: nil,
-           turn_result: nil
+           tokens: Arvo.Session.Tokens.new()
          }
        }}
     rescue
       e ->
         {:error, Exception.message(e)}
     end
-  end
-
-  defp build_packet_from(sess, opts) do
-    history = sess.history || []
-    messages = Arvo.Session.Store.messages_to_head(history)
-
-    users = Enum.filter(messages, &((&1[:role] || &1["role"]) == "user"))
-    assts = Enum.filter(messages, &((&1[:role] || &1["role"]) == "assistant"))
-
-    goal =
-      Keyword.get(opts, :goal) ||
-        case List.last(users) do
-          nil -> "continue work"
-          m -> String.slice(to_string(m[:content] || m["content"] || ""), 0, 200)
-        end
-
-    last_asst =
-      case List.last(assts) do
-        nil -> ""
-        m -> String.slice(to_string(m[:content] || m["content"] || ""), 0, 400)
-      end
-
-    %{
-      "goal" => goal,
-      "done" => Keyword.get(opts, :done) || summarize_done(assts),
-      "not_done" => Keyword.get(opts, :not_done) || goal,
-      "paths" => Keyword.get(opts, :paths) || [],
-      "last_error" => Keyword.get(opts, :last_error) || "",
-      "next_steps" => Keyword.get(opts, :next_steps) || "Continue from handoff packet.",
-      "parent_session_id" => sess.id,
-      "last_assistant_excerpt" => last_asst
-    }
   end
 
   def packet_blob(packet) when is_map(packet) do
@@ -168,6 +108,29 @@ defmodule Arvo.Session.Handoff do
 
   def packet_keys, do: @packet_keys
 
+  defp build_packet_from(sess, opts) do
+    messages = Arvo.Session.Store.messages_to_head(sess.history || [])
+    users = Enum.filter(messages, &((&1[:role] || &1["role"]) == "user"))
+    assts = Enum.filter(messages, &((&1[:role] || &1["role"]) == "assistant"))
+
+    goal =
+      Keyword.get(opts, :goal) ||
+        case List.last(users) do
+          nil -> "continue work"
+          m -> String.slice(to_string(m[:content] || m["content"] || ""), 0, 200)
+        end
+
+    %{
+      "goal" => goal,
+      "done" => Keyword.get(opts, :done) || summarize_done(assts),
+      "not_done" => Keyword.get(opts, :not_done) || goal,
+      "paths" => Keyword.get(opts, :paths) || [],
+      "last_error" => Keyword.get(opts, :last_error) || "",
+      "next_steps" => Keyword.get(opts, :next_steps) || "Continue from handoff packet.",
+      "parent_session_id" => sess.id
+    }
+  end
+
   defp summarize_done(assts) do
     assts
     |> Enum.take(-3)
@@ -175,7 +138,4 @@ defmodule Arvo.Session.Handoff do
       String.slice(to_string(m[:content] || m["content"] || ""), 0, 80)
     end)
   end
-
-  defp last_error(_sess), do: ""
 end
-

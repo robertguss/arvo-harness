@@ -151,7 +151,8 @@ defmodule Arvo.TUI do
   end
 
   def handle_call(:try_begin_turn, _from, state) do
-    if state.status == :running or Arvo.Session.turn_in_progress?() do
+    # Local claim only — Session.start_turn is the real mutex.
+    if state.status == :running do
       {:reply, {:error, :busy}, state}
     else
       {:reply, :ok, %{state | status: :running, spinner: true, buffer: "", last_error: nil}}
@@ -195,8 +196,8 @@ defmodule Arvo.TUI do
   defp reduce_event(state, {:turn_start, _}), do: %{state | spinner: true, tool_name: nil}
 
   defp reduce_event(state, {:message_delta, %{text: t}}) do
-    # Neutralize CSI/OSC from model output before TTY paint (Focus writes buffer raw)
-    t = sanitize_terminal_text(t)
+    # Defer full sanitize to agent_end/paint (per-token regex is hot-path bloat)
+    t = String.replace(t, "\e", "")
     %{state | streaming: true, buffer: state.buffer <> t, spinner: false}
   end
 
@@ -227,7 +228,8 @@ defmodule Arvo.TUI do
   defp reduce_event(state, {:agent_end, _}) do
     transcript =
       if state.buffer != "" do
-        state.transcript ++ [%{kind: :assistant, text: state.buffer}]
+        text = sanitize_terminal_text(state.buffer)
+        state.transcript ++ [%{kind: :assistant, text: text}]
       else
         state.transcript
       end
@@ -497,9 +499,7 @@ defmodule Arvo.TUI do
 
     case resumed[:profile] || resumed["profile"] do
       p when is_binary(p) and p != "" and p != "base" ->
-        active = Arvo.Plugins.Registry.list_active()
-        _ = Arvo.Profiles.switch(p, active)
-        Application.put_env(:arvo, :active_profile, p)
+        _ = Arvo.Profiles.reapply(p)
         Map.put(state, :profile, p)
 
       p when is_binary(p) ->

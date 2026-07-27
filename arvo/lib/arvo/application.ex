@@ -109,25 +109,11 @@ defmodule Arvo.Application do
   defp reapply_profile_from_resume(resumed) do
     case resumed[:profile] || resumed["profile"] do
       p when is_binary(p) and p != "" ->
-        active = Arvo.Plugins.Registry.list_active()
-
-        case Arvo.Profiles.switch(p, active) do
-          {:ok, _} ->
-            Application.put_env(:arvo, :active_profile, p)
-            :ok
-
-          {:error, reason} ->
-            Logger.warning("Arvo: auto-resume profile switch failed for #{p}: #{inspect(reason)}")
-            :ok
-        end
+        Arvo.Profiles.reapply(p)
 
       _ ->
         :ok
     end
-  rescue
-    e ->
-      Logger.warning("Arvo: auto-resume profile reapply crashed: #{Exception.message(e)}")
-      :ok
   end
 end
 

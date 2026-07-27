@@ -48,39 +48,12 @@ defmodule Arvo.Providers.Completion do
   and unit tests (no network).
   """
   def parse_sse_stream(body, on_delta \\ fn _ -> :ok end) when is_binary(body) do
-    {events, decode_fails} =
-      body
-      |> String.split("\n")
-      |> Enum.reduce({[], 0}, fn line, {acc, fails} ->
-        line = String.trim(line)
+    acc = feed_sse_chunk(empty_sse_acc(), body <> "\n", on_delta)
 
-        cond do
-          line == "" ->
-            {acc, fails}
-
-          String.starts_with?(line, "data:") ->
-            data = line |> String.trim_leading("data:") |> String.trim()
-
-            if data == "[DONE]" do
-              {acc, fails}
-            else
-              case Jason.decode(data) do
-                {:ok, map} -> {[map | acc], fails}
-                _ -> {acc, fails + 1}
-              end
-            end
-
-          true ->
-            {acc, fails}
-        end
-      end)
-
-    events = Enum.reverse(events)
-
-    if events == [] and decode_fails > 0 do
+    if acc.events == 0 and acc.decode_fails > 0 do
       {:error, "corrupt SSE stream (no valid events)"}
     else
-      reduce_sse_events(events, on_delta)
+      {:ok, finalize_sse_acc(acc)}
     end
   end
 
@@ -182,16 +155,6 @@ defmodule Arvo.Providers.Completion do
 
   @doc false
   def default_http_stream(url, bearer, body, on_delta \\ fn _ -> :ok end) do
-    start_acc = %{
-      raw: "",
-      line_buf: "",
-      content_parts: [],
-      tools: %{},
-      usage: %{},
-      decode_fails: 0,
-      events: 0
-    }
-
     case Req.post(url,
            auth: {:bearer, bearer},
            json: body,
@@ -200,7 +163,7 @@ defmodule Arvo.Providers.Completion do
            decode_body: false,
            into: fn
              {:data, chunk}, {req, resp} when is_binary(chunk) ->
-               acc = if is_map(resp.body), do: resp.body, else: start_acc
+               acc = if is_map(resp.body), do: resp.body, else: empty_sse_acc()
                acc = feed_sse_chunk(acc, chunk, on_delta)
                {:cont, {req, %{resp | body: acc}}}
 
@@ -209,36 +172,24 @@ defmodule Arvo.Providers.Completion do
            end
          ) do
       {:ok, %Req.Response{status: status, body: acc}} when is_map(acc) ->
-        content = IO.iodata_to_binary(acc.content_parts)
-        tool_calls = finalize_tool_calls(acc.tools)
+        parsed = finalize_sse_acc(acc)
 
         cond do
           status >= 400 ->
-            {:ok, %{status: status, body: acc.raw}}
+            # Keep a short error tail for classify_http_error callers
+            {:ok, %{status: status, body: acc.error_tail || ""}}
 
           acc.events == 0 and acc.decode_fails > 0 ->
             {:error, "corrupt SSE stream (no valid events)"}
 
-          content == "" and tool_calls == [] and acc.decode_fails > 0 ->
+          parsed.content == "" and parsed.tool_calls == [] and acc.decode_fails > 0 ->
             {:error, "corrupt SSE stream (decode failures, empty assistant)"}
 
           true ->
-            {:ok,
-             %{
-               status: status,
-               body: acc.raw,
-               parsed: %{
-                 role: "assistant",
-                 content: content,
-                 tool_calls: tool_calls,
-                 usage: acc.usage,
-                 streamed?: true
-               }
-             }}
+            {:ok, %{status: status, parsed: parsed}}
         end
 
       {:ok, %Req.Response{status: status, body: resp_body}} ->
-        # Fallback if into did not produce map body (non-stream edge)
         text =
           cond do
             is_binary(resp_body) -> resp_body
@@ -253,13 +204,38 @@ defmodule Arvo.Providers.Completion do
     end
   end
 
+  defp empty_sse_acc do
+    %{
+      line_buf: "",
+      # Prepended then reversed (O(1) per token delta)
+      content_parts: [],
+      tools: %{},
+      usage: %{},
+      decode_fails: 0,
+      events: 0,
+      # Only retained for HTTP error responses
+      error_tail: ""
+    }
+  end
+
+  defp finalize_sse_acc(acc) do
+    %{
+      role: "assistant",
+      content: acc.content_parts |> Enum.reverse() |> IO.iodata_to_binary(),
+      tool_calls: finalize_tool_calls(acc.tools),
+      usage: acc.usage,
+      streamed?: true
+    }
+  end
+
   defp feed_sse_chunk(acc, chunk, on_delta) do
-    raw = acc.raw <> chunk
     buf = acc.line_buf <> chunk
     lines = String.split(buf, "\n")
     {complete, rest} = Enum.split(lines, -1)
+    # Keep a short tail for 4xx bodies (not full success stream)
+    tail = binary_slice_tail(acc.error_tail <> chunk, 4000)
 
-    Enum.reduce(complete, %{acc | raw: raw, line_buf: List.first(rest) || ""}, fn line, a ->
+    Enum.reduce(complete, %{acc | line_buf: List.first(rest) || "", error_tail: tail}, fn line, a ->
       line = String.trim_trailing(line, "\r") |> String.trim()
 
       cond do
@@ -296,7 +272,7 @@ defmodule Arvo.Providers.Completion do
       case delta["content"] do
         t when is_binary(t) and t != "" ->
           if is_function(on_delta, 1), do: on_delta.(t)
-          {acc.content_parts ++ [t], acc.tools}
+          {[t | acc.content_parts], acc.tools}
 
         _ ->
           {acc.content_parts, acc.tools}
@@ -312,13 +288,17 @@ defmodule Arvo.Providers.Completion do
       case get_in(choice, ["message", "content"]) do
         t when is_binary(t) and t != "" and parts == [] ->
           if is_function(on_delta, 1), do: on_delta.(t)
-          {parts ++ [t], tools}
+          {[t | parts], tools}
 
         _ ->
           {parts, tools}
       end
 
     %{acc | content_parts: parts, tools: tools, usage: usage2, events: acc.events + 1}
+  end
+
+  defp binary_slice_tail(bin, max) when is_binary(bin) and is_integer(max) do
+    if byte_size(bin) <= max, do: bin, else: binary_part(bin, byte_size(bin) - max, max)
   end
 
   defp chat_completions_url(provider, opts) do
@@ -334,72 +314,6 @@ defmodule Arvo.Providers.Completion do
           end
 
         String.trim_trailing(base, "/") <> "/chat/completions"
-    end
-  end
-
-  defp reduce_sse_events(events, on_delta) do
-    {content_parts, tool_acc, usage, fails} =
-      Enum.reduce(events, {[], %{}, %{}, 0}, fn event, {parts, tools, usage, fails} ->
-        if not is_map(event) do
-          {parts, tools, usage, fails + 1}
-        else
-          usage2 = Map.merge(usage, event["usage"] || %{})
-          choice = get_in(event, ["choices", Access.at(0)]) || %{}
-          delta = choice["delta"] || %{}
-
-          parts2 =
-            case delta["content"] do
-              t when is_binary(t) and t != "" ->
-                if is_function(on_delta, 1), do: on_delta.(t)
-                parts ++ [t]
-
-              _ ->
-                parts
-            end
-
-          tools2 =
-            case delta["tool_calls"] do
-              list when is_list(list) -> merge_tool_deltas(tools, list)
-              _ -> tools
-            end
-
-          # Non-stream style message in a chunk (rare)
-          parts2 =
-            case get_in(choice, ["message", "content"]) do
-              t when is_binary(t) and t != "" and parts2 == [] ->
-                if is_function(on_delta, 1), do: on_delta.(t)
-                parts2 ++ [t]
-
-              _ ->
-                parts2
-            end
-
-          {parts2, tools2, usage2, fails}
-        end
-      end)
-
-    content = IO.iodata_to_binary(content_parts)
-    tool_calls = finalize_tool_calls(tool_acc)
-
-    if events == [] and fails == 0 and content == "" and tool_calls == [] do
-      # Empty body is still a valid empty assistant (provider finished with no tokens)
-      {:ok,
-       %{
-         role: "assistant",
-         content: content,
-         tool_calls: tool_calls,
-         usage: usage,
-         streamed?: true
-       }}
-    else
-      {:ok,
-       %{
-         role: "assistant",
-         content: content,
-         tool_calls: tool_calls,
-         usage: usage,
-         streamed?: true
-       }}
     end
   end
 

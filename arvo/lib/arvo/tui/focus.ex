@@ -117,14 +117,6 @@ defmodule Arvo.TUI.Focus do
       data in ["\r", "\n"] ->
         submit_input(local)
 
-      # Ctrl+J newline
-      data == "\n" and local.multiline ->
-        {:cont, %{local | input: local.input <> "\n"}}
-
-      data == "\x0a" or data == "\x0A" ->
-        # treat as submit unless we want ctrl+j — simple: Enter submits
-        submit_input(local)
-
       data == "\x7f" or data == "\b" ->
         {:cont, %{local | input: String.slice(local.input, 0..-2//1)}}
 

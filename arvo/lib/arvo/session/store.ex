@@ -125,11 +125,15 @@ defmodule Arvo.Session.Store do
   end
 
   @doc "Tip entry: last non-head_move entry in file (EOF tip — may differ from HEAD)."
-  def tip(path) do
+  def tip(path) when is_binary(path) do
     case read_all(path) do
       [] -> nil
-      entries -> last_content_entry(entries)
+      entries -> tip(entries)
     end
+  end
+
+  def tip(entries) when is_list(entries) do
+    last_content_entry(entries)
   end
 
   @doc """

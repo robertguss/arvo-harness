@@ -63,6 +63,7 @@ defmodule Arvo.TUI.Render do
     # Follow-tail while streaming: append live buffer as last assistant line
     lines =
       if state[:streaming] and is_binary(state[:buffer]) and state[:buffer] != "" do
+        # Live buffer already had ESC stripped; full sanitize at agent_end
         lines ++ [%{kind: :assistant, text: state[:buffer], streaming: true}]
       else
         lines

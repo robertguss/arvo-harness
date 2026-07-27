@@ -148,15 +148,10 @@ defmodule Arvo.Agent do
   end
 
   defp merge_usage(acc, add) when is_map(acc) and is_map(add) do
-    p =
-      (acc["prompt_tokens"] || acc[:prompt_tokens] || acc["input_tokens"] || acc[:input_tokens] || 0) +
-        (add["prompt_tokens"] || add[:prompt_tokens] || add["input_tokens"] || add[:input_tokens] || 0)
-
-    c =
-      (acc["completion_tokens"] || acc[:completion_tokens] || acc["output_tokens"] ||
-         acc[:output_tokens] || 0) +
-        (add["completion_tokens"] || add[:completion_tokens] || add["output_tokens"] ||
-           add[:output_tokens] || 0)
+    a = Arvo.Session.Tokens.input_output(acc)
+    b = Arvo.Session.Tokens.input_output(add)
+    p = a.input_tokens + b.input_tokens
+    c = a.output_tokens + b.output_tokens
 
     %{
       "prompt_tokens" => p,

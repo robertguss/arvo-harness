@@ -134,13 +134,7 @@ defmodule Arvo.Session do
 
   @doc "Record usage from agent result into Session + TUI."
   def maybe_record_usage(%{usage: usage}) when is_map(usage) do
-    input =
-      usage["prompt_tokens"] || usage[:prompt_tokens] || usage["input_tokens"] ||
-        usage[:input_tokens] || 0
-
-    output =
-      usage["completion_tokens"] || usage[:completion_tokens] || usage["output_tokens"] ||
-        usage[:output_tokens] || 0
+    %{input_tokens: input, output_tokens: output} = Arvo.Session.Tokens.input_output(usage)
 
     if input + output > 0 do
       case record_usage(%{input_tokens: input, output_tokens: output}) do
@@ -249,7 +243,7 @@ defmodule Arvo.Session do
 
         true ->
           entries = Arvo.Session.Store.read_all(path)
-          tip = Arvo.Session.Store.tip(path)
+          tip = Arvo.Session.Store.tip(entries)
           meta = List.first(entries)
           head = Arvo.Session.Store.resolve_head(entries)
           tokens = tokens_from_history(entries)
@@ -439,7 +433,7 @@ defmodule Arvo.Session do
             receive do
               {:turn_done, gen, result} when gen == state.turn_generation ->
                 state = apply_turn_result(state, result)
-                state = reply_await(state, normalize_await_result(result))
+                state = reply_await(state, result)
                 {:reply, :ok, %{state | turn_task: nil}}
             after
               0 ->
@@ -453,7 +447,7 @@ defmodule Arvo.Session do
               {:ok, result} ->
                 # Completed during shutdown — keep success, do not cancel-leaf
                 state = apply_turn_result(state, result)
-                state = reply_await(state, normalize_await_result(result))
+                state = reply_await(state, result)
                 {:reply, :ok, %{state | turn_task: nil}}
 
               _ ->
@@ -541,7 +535,7 @@ defmodule Arvo.Session do
 
       true ->
         state = apply_turn_result(state, result)
-        state = reply_await(state, normalize_await_result(result))
+        state = reply_await(state, result)
         {:noreply, %{state | turn_task: nil}}
     end
   end
@@ -578,12 +572,11 @@ defmodule Arvo.Session do
       prior_len = state.turn_prior_len || 0
       {_, state} = do_persist_messages(state, Map.get(result, :messages) || [], prior_len)
       usage = usage_from_result(result)
-      tokens = maybe_add_usage_tokens(state.tokens, result)
+      tokens = maybe_add_usage_tokens(state.tokens, usage)
       state = %{state | tokens: tokens, turn_result: {:ok, result}, turn_prior_len: nil}
-      state = maybe_append_usage_ledger(state, usage_for_ledger(usage), tokens)
+      state = maybe_append_usage_ledger(state, usage, tokens)
       state = do_maybe_auto_compact(state, [])
 
-      # Mirror TUI tokens when usage present
       if tokens.turn_input + tokens.turn_output > 0 do
         turn = tokens.turn_input + tokens.turn_output
         _ = Arvo.TUI.put_tokens(turn, tokens.cumulative_total)
@@ -600,10 +593,6 @@ defmodule Arvo.Session do
   defp apply_turn_result(state, other) do
     %{state | turn_result: other, turn_prior_len: nil}
   end
-
-  defp normalize_await_result({:ok, result}), do: {:ok, result}
-  defp normalize_await_result({:error, _} = err), do: err
-  defp normalize_await_result(other), do: other
 
   defp reply_await(state, result) do
     case Map.get(state, :await_from) do
@@ -673,38 +662,24 @@ defmodule Arvo.Session do
   defp usage_from_result(%{usage: usage}) when is_map(usage), do: usage
   defp usage_from_result(_), do: %{}
 
-  defp maybe_add_usage_tokens(tokens, %{usage: usage}) when is_map(usage) do
-    input =
-      usage["prompt_tokens"] || usage[:prompt_tokens] || usage["input_tokens"] ||
-        usage[:input_tokens] || 0
+  defp maybe_add_usage_tokens(tokens, usage) when is_map(usage) do
+    io = Arvo.Session.Tokens.input_output(usage)
 
-    output =
-      usage["completion_tokens"] || usage[:completion_tokens] || usage["output_tokens"] ||
-        usage[:output_tokens] || 0
-
-    if input + output > 0 do
-      Arvo.Session.Tokens.add(tokens, %{input_tokens: input, output_tokens: output})
+    if io.input_tokens + io.output_tokens > 0 do
+      Arvo.Session.Tokens.add(tokens, io)
     else
       tokens
     end
   end
-
-  defp maybe_add_usage_tokens(tokens, _), do: tokens
 
   defp profile_name do
     # Avoid GenServer.call into TUI while holding Session (deadlock risk).
     Application.get_env(:arvo, :active_profile) || "base"
   end
 
-  defp maybe_append_usage_ledger(state, usage, tokens) do
+  defp maybe_append_usage_ledger(state, usage, tokens) when is_map(usage) do
     if is_binary(state.path) do
-      input =
-        usage[:input_tokens] || usage["input_tokens"] || usage[:prompt_tokens] ||
-          usage["prompt_tokens"] || 0
-
-      output =
-        usage[:output_tokens] || usage["output_tokens"] || usage[:completion_tokens] ||
-          usage["completion_tokens"] || 0
+      %{input_tokens: input, output_tokens: output} = Arvo.Session.Tokens.input_output(usage)
 
       if input + output > 0 do
         entry = %{
@@ -728,10 +703,7 @@ defmodule Arvo.Session do
   defp tokens_from_history(entries) when is_list(entries) do
     Enum.reduce(entries, Arvo.Session.Tokens.new(), fn
       %{"type" => "usage"} = e, acc ->
-        Arvo.Session.Tokens.add(acc, %{
-          input_tokens: e["input_tokens"] || 0,
-          output_tokens: e["output_tokens"] || 0
-        })
+        Arvo.Session.Tokens.add(acc, e)
 
       _, acc ->
         acc
@@ -739,7 +711,7 @@ defmodule Arvo.Session do
   end
 
   defp append_cancel_leaf(state) do
-    if is_binary(state.path) and File.exists?(state.path) do
+    if is_binary(state.path) do
       entry = %{
         "type" => "message",
         "role" => "assistant",
@@ -802,22 +774,11 @@ defmodule Arvo.Session do
     end
   end
 
-  defp usage_for_ledger(usage) when is_map(usage) do
-    %{
-      input_tokens:
-        usage["prompt_tokens"] || usage[:prompt_tokens] || usage["input_tokens"] ||
-          usage[:input_tokens] || 0,
-      output_tokens:
-        usage["completion_tokens"] || usage[:completion_tokens] || usage["output_tokens"] ||
-          usage[:output_tokens] || 0
-    }
-  end
-
   defp elem_tag(event) when is_tuple(event) and tuple_size(event) > 0, do: elem(event, 0)
   defp elem_tag(other), do: other
 
   defp do_maybe_auto_compact(state, opts) do
-    # R15: no silent auto-compact on product path unless explicitly opted in
+    # R15: silent auto-compact is off unless force: true or :auto_compact env
     enabled? =
       Keyword.get(opts, :force, false) or
         Application.get_env(:arvo, :auto_compact, false)

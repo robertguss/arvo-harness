@@ -11,15 +11,26 @@ defmodule Arvo.Session.Tokens do
 
   def new, do: %__MODULE__{}
 
+  @doc """
+  Normalize a provider/session usage map to `%{input_tokens, output_tokens}`.
+
+  Accepts `input_tokens`/`output_tokens` or `prompt_tokens`/`completion_tokens`
+  (atom or string keys).
+  """
+  def input_output(usage) when is_map(usage) do
+    %{
+      input_tokens:
+        usage[:input_tokens] || usage["input_tokens"] || usage[:prompt_tokens] ||
+          usage["prompt_tokens"] || 0,
+      output_tokens:
+        usage[:output_tokens] || usage["output_tokens"] || usage[:completion_tokens] ||
+          usage["completion_tokens"] || 0
+    }
+  end
+
   @doc "Add a usage map (`input_tokens`/`output_tokens` or `prompt_tokens`/`completion_tokens`)."
   def add(%__MODULE__{} = acc, usage) when is_map(usage) do
-    input =
-      usage[:input_tokens] || usage["input_tokens"] || usage[:prompt_tokens] ||
-        usage["prompt_tokens"] || 0
-
-    output =
-      usage[:output_tokens] || usage["output_tokens"] || usage[:completion_tokens] ||
-        usage["completion_tokens"] || 0
+    %{input_tokens: input, output_tokens: output} = input_output(usage)
 
     %__MODULE__{
       turn_input: input,

@@ -103,6 +103,17 @@ defmodule Arvo.CompletionTest do
     assert msg =~ "/compact" or msg =~ "compact" or msg =~ "context"
   end
 
+  test "stream_req_options are valid Req 0.6 options (no connect_timeout)" do
+    opts = Arvo.Providers.Completion.stream_req_options()
+    refute Keyword.has_key?(opts, :connect_timeout)
+    assert Keyword.get(opts, :receive_timeout) == 120_000
+    assert Keyword.get(opts, :connect_options) == [timeout: 30_000]
+
+    # Req raises ArgumentError on unknown options — this is the prompt-error regression.
+    assert %Req.Request{} =
+             Req.new([method: :post, url: "https://example.com"] ++ opts)
+  end
+
   test "agent streams multiple deltas before agent_end (no single post-hoc body)" do
     body = """
     data: {"choices":[{"delta":{"content":"one"}}]}

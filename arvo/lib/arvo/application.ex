@@ -64,6 +64,7 @@ defmodule Arvo.Application do
 
     cond do
       Application.get_env(:arvo, :start_focus, true) and not Application.get_env(:arvo, :start_repl, false) ->
+        # Focus.run/0 stops the VM on quit when :halt_on_focus_quit is true (default).
         Task.start(fn -> Arvo.TUI.Focus.run() end)
 
       Application.get_env(:arvo, :start_repl, false) ->

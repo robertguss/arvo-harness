@@ -12,14 +12,18 @@ defmodule Arvo.TUI.Render do
     height = Keyword.get(opts, :height, 24)
 
     ghost = ghost_line(state, width)
-    footer = footer_line(state)
+    footer = footer_line(state, width)
     input = input_line(state, width)
 
-    reserved = 4
-    body_h = max(height - reserved, 3)
+    # Fixed chrome rows: ghost, blank, (body...), blank, input, footer → 5 non-body.
+    reserved = 5
+    body_h = max(height - reserved, 1)
     body = transcript_lines(state, body_h, width)
 
-    Enum.join([ghost, "" | body] ++ ["", input, footer], "\n")
+    # Exactly `height` rows so overwrite paints (no clear_screen) leave no ghosts.
+    rows = [ghost, "" | body] ++ ["", input, footer]
+    rows = Enum.take(rows ++ List.duplicate("", height), height)
+    Enum.join(rows, "\n")
   end
 
   def ghost_line(state, width \\ 80) do
@@ -31,15 +35,24 @@ defmodule Arvo.TUI.Render do
     status = status_label(state)
 
     line = " #{model} · #{profile} · ctx #{cum}/#{win} · #{status}"
-    Theme.dim(String.slice(line, 0, width))
+    Theme.dim(String.slice(line, 0, max(width, 1)))
   end
 
-  def footer_line(state) do
+  def footer_line(state, width \\ 80) do
     base = "Enter send · Ctrl+J newline · Esc cancel · / slash"
 
-    case state[:status] do
-      :running -> Theme.accent(" running · Esc cancels ") <> Theme.muted(base)
-      _ -> Theme.muted(base)
+    line =
+      case state[:status] do
+        :running -> Theme.accent(" running · Esc cancels ") <> Theme.muted(base)
+        _ -> Theme.muted(base)
+      end
+
+    # Visible-width truncate is approximate (ANSI); still prevents mid-word wrap
+    # on narrow panes when the bare text already exceeds width.
+    if String.length(base) > width do
+      Theme.muted(String.slice(base, 0, max(width, 1)))
+    else
+      line
     end
   end
 
@@ -99,15 +112,48 @@ defmodule Arvo.TUI.Render do
   end
 
   defp wrap_entry(%{kind: :error, text: t}, width) do
-    [Theme.error("! " <> String.slice(to_string(t), 0, width - 2))]
+    w = max(width - 2, 1)
+
+    t
+    |> to_string()
+    |> wrap_text(w)
+    |> Enum.map(fn line -> Theme.error("! " <> line) end)
   end
 
   defp wrap_entry(%{kind: :system, text: t}, width) do
-    [Theme.dim(String.slice(to_string(t), 0, width))]
+    w = max(width, 1)
+
+    t
+    |> to_string()
+    |> wrap_text(w)
+    |> Enum.map(&Theme.dim/1)
   end
 
-  defp wrap_entry(other, width) when is_binary(other), do: [String.slice(other, 0, width)]
+  defp wrap_entry(other, width) when is_binary(other), do: wrap_text(other, max(width, 1))
   defp wrap_entry(_, _), do: []
+
+  @doc false
+  # Hard-wrap on grapheme boundaries; preserve explicit newlines (incl. blank lines).
+  def wrap_text(text, width) when is_binary(text) and is_integer(width) and width >= 1 do
+    text
+    |> String.split("\n")
+    |> Enum.flat_map(&chunk_line(&1, width))
+  end
+
+  defp chunk_line(line, width) do
+    if line == "" do
+      [""]
+    else
+      do_chunk(line, width, [])
+    end
+  end
+
+  defp do_chunk("", _width, acc), do: Enum.reverse(acc)
+
+  defp do_chunk(line, width, acc) do
+    {left, right} = String.split_at(line, width)
+    do_chunk(right, width, [left | acc])
+  end
 
   defp status_label(%{status: :running, tool_name: n}) when is_binary(n), do: "tool:#{n}"
   defp status_label(%{status: :running, spinner: true}), do: "thinking"

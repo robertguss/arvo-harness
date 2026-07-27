@@ -60,6 +60,8 @@ defmodule Arvo.Application do
   defp maybe_start_interactive do
     # Product default: Focus owns the terminal (not Repl). Repl remains library/fallback.
     # Under test, both stay off unless explicitly enabled.
+    _ = maybe_auto_resume()
+
     cond do
       Application.get_env(:arvo, :start_focus, true) and not Application.get_env(:arvo, :start_repl, false) ->
         Task.start(fn -> Arvo.TUI.Focus.run() end)
@@ -71,5 +73,29 @@ defmodule Arvo.Application do
         :ok
     end
   end
+
+  @doc """
+  Same-cwd auto-resume last resumable session by HEAD (R14).
+  Skips empty shells via `list_resumable_for_cwd`. No-op when none.
+  """
+  def maybe_auto_resume(cwd \\ nil) do
+    if Application.get_env(:arvo, :auto_resume, true) do
+      cwd = cwd || Application.get_env(:arvo, :cwd) || Arvo.cwd()
+
+      case Arvo.Session.Store.list_resumable_for_cwd(cwd) do
+        [path | _] ->
+          case Arvo.Session.resume(path) do
+            {:ok, _} = ok -> ok
+            other -> other
+          end
+
+        [] ->
+          :noop
+      end
+    else
+      :noop
+    end
+  end
 end
+
 

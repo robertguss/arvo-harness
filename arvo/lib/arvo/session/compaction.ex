@@ -58,9 +58,9 @@ defmodule Arvo.Session.Compaction do
     }
   end
 
-  @doc "Format provider length error with /compact suggestion."
+  @doc "Format provider length error — prefer handoff (R16); /compact remains power path."
   def length_error_message do
-    "Context length exceeded. Run /compact to summarize older turns, then retry. (No automatic retry.)"
+    "Context length exceeded. Run /handoff for a clean session seeded with a work-delta packet (parent log intact). Power tool: /compact. (No automatic silent compact.)"
   end
 
   defp default_summarize(messages, instructions) do

@@ -90,6 +90,11 @@ defmodule Arvo.Session do
     GenServer.call(__MODULE__, :head_id)
   end
 
+  @doc "Rebind open session fields (handoff). Idle-only."
+  def rebind(state_fields) when is_map(state_fields) do
+    GenServer.call(__MODULE__, {:rebind, state_fields})
+  end
+
   @doc """
   Persist only **new** assistant/tool messages from an agent result.
 
@@ -141,6 +146,8 @@ defmodule Arvo.Session do
        last_id: nil,
        history: [],
        cwd: Application.get_env(:arvo, :cwd),
+       model: nil,
+       profile: nil,
        steering: [],
        turn_task: nil,
        turn_result: nil,
@@ -157,6 +164,17 @@ defmodule Arvo.Session do
   def handle_call(:tokens, _from, state), do: {:reply, state.tokens, state}
 
   def handle_call({:open_new, cwd, opts}, _from, state) do
+    opts =
+      opts
+      |> Keyword.put_new(
+        :model,
+        Keyword.get(opts, :model) ||
+          Application.get_env(:arvo, :default_model) ||
+          get_in(Application.get_env(:arvo, :config) || %{}, [:default_model]) ||
+          "xai:grok-4.5"
+      )
+      |> Keyword.put_new(:profile, Keyword.get(opts, :profile) || profile_name())
+
     {:ok, path, meta} = Arvo.Session.Store.create(cwd, opts)
 
     state = %{
@@ -166,6 +184,8 @@ defmodule Arvo.Session do
         last_id: meta["id"],
         cwd: cwd,
         history: [meta],
+        model: meta["model"],
+        profile: meta["profile"],
         tokens: Arvo.Session.Tokens.new()
     }
 
@@ -192,6 +212,7 @@ defmodule Arvo.Session do
       tip = Arvo.Session.Store.tip(path)
       meta = List.first(entries)
       head = Arvo.Session.Store.resolve_head(entries)
+      tokens = tokens_from_history(entries)
 
       state = %{
         state
@@ -199,11 +220,26 @@ defmodule Arvo.Session do
           path: path,
           last_id: head,
           cwd: (meta && meta["cwd"]) || state.cwd,
-          history: entries
+          history: entries,
+          model: meta && meta["model"],
+          profile: meta && meta["profile"],
+          tokens: tokens
       }
 
+      # Do not call TUI here — resume is often invoked from TUI.slash (deadlock).
       messages = Arvo.Session.Store.messages_to_head(entries)
-      {:reply, {:ok, %{path: path, messages: messages, tip: tip, head_id: head}}, state}
+
+      {:reply,
+       {:ok,
+        %{
+          path: path,
+          messages: messages,
+          tip: tip,
+          head_id: head,
+          tokens: tokens,
+          model: state.model,
+          profile: state.profile
+        }}, state}
     end
   end
 
@@ -276,6 +312,7 @@ defmodule Arvo.Session do
   def handle_call({:record_usage, usage}, _from, state) do
     tokens = Arvo.Session.Tokens.add(state.tokens, usage)
     state = %{state | tokens: tokens}
+    state = maybe_append_usage_ledger(state, usage, tokens)
     state = do_maybe_auto_compact(state, [])
     {:reply, {:ok, state.tokens}, state}
   end
@@ -379,6 +416,15 @@ defmodule Arvo.Session do
     else
       {count, state} = do_persist_messages(state, messages, prior_len)
       {:reply, count, state}
+    end
+  end
+
+  def handle_call({:rebind, fields}, _from, state) do
+    if state.turn_task && Process.alive?(state.turn_task.pid) do
+      {:reply, {:error, :turn_in_progress}, state}
+    else
+      state = Map.merge(state, fields)
+      {:reply, :ok, state}
     end
   end
 
@@ -534,6 +580,49 @@ defmodule Arvo.Session do
 
   defp maybe_add_usage_tokens(tokens, _), do: tokens
 
+  defp profile_name do
+    # Avoid GenServer.call into TUI while holding Session (deadlock risk).
+    Application.get_env(:arvo, :active_profile) || "base"
+  end
+
+  defp maybe_append_usage_ledger(state, usage, tokens) do
+    if is_binary(state.path) do
+      input =
+        usage[:input_tokens] || usage["input_tokens"] || usage[:prompt_tokens] ||
+          usage["prompt_tokens"] || 0
+
+      output =
+        usage[:output_tokens] || usage["output_tokens"] || usage[:completion_tokens] ||
+          usage["completion_tokens"] || 0
+
+      entry = %{
+        "type" => "usage",
+        "parent_id" => state.last_id,
+        "input_tokens" => input,
+        "output_tokens" => output,
+        "cumulative_total" => tokens.cumulative_total
+      }
+
+      written = Arvo.Session.Store.append!(state.path, entry)
+      %{state | history: state.history ++ [written]}
+    else
+      state
+    end
+  end
+
+  defp tokens_from_history(entries) when is_list(entries) do
+    Enum.reduce(entries, Arvo.Session.Tokens.new(), fn
+      %{"type" => "usage"} = e, acc ->
+        Arvo.Session.Tokens.add(acc, %{
+          input_tokens: e["input_tokens"] || 0,
+          output_tokens: e["output_tokens"] || 0
+        })
+
+      _, acc ->
+        acc
+    end)
+  end
+
   defp append_cancel_leaf(state) do
     if is_binary(state.path) and File.exists?(state.path) do
       entry = %{
@@ -562,10 +651,16 @@ defmodule Arvo.Session do
   end
 
   defp do_maybe_auto_compact(state, opts) do
+    # R15: no silent auto-compact on product path unless explicitly opted in
+    enabled? =
+      Keyword.get(opts, :force, false) or
+        Application.get_env(:arvo, :auto_compact, false)
+
     window = Keyword.get(opts, :window, 500_000)
     cum = state.tokens.cumulative_total
 
-    if is_binary(state.path) and Arvo.Session.Compaction.should_auto_compact?(cum, window) do
+    if enabled? and is_binary(state.path) and
+         Arvo.Session.Compaction.should_auto_compact?(cum, window) do
       messages =
         Enum.flat_map(state.history || [], fn e ->
           if e["type"] == "message" do

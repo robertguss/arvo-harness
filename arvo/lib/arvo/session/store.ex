@@ -32,15 +32,23 @@ defmodule Arvo.Session.Store do
     uuid = Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
     path = Path.join(dir, "#{ts}_#{uuid}.jsonl")
 
-    meta = %{
-      "id" => new_id(),
-      "parent_id" => nil,
-      "type" => "session_meta",
-      "version" => @version,
-      "cwd" => cwd,
-      "model" => model,
-      "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-    }
+    profile = Keyword.get(opts, :profile) || "base"
+    parent_session_id = Keyword.get(opts, :parent_session_id)
+
+    meta =
+      %{
+        "id" => new_id(),
+        "parent_id" => nil,
+        "type" => "session_meta",
+        "version" => @version,
+        "cwd" => cwd,
+        "model" => model,
+        "profile" => profile,
+        "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+      }
+      |> then(fn m ->
+        if parent_session_id, do: Map.put(m, "parent_session_id", parent_session_id), else: m
+      end)
 
     append!(path, meta)
     {:ok, path, meta}

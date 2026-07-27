@@ -33,12 +33,13 @@ defmodule Arvo.ProductPathTest do
     end
   end
 
-  describe "auto-compact on product path" do
-    test "record_usage triggers auto-compact when over threshold" do
+  describe "no silent auto-compact on product path (R15)" do
+    test "default record_usage does not auto-compact" do
       tmp = Path.join(System.tmp_dir!(), "arvo-ac-#{System.unique_integer([:positive])}")
       File.mkdir_p!(tmp)
       old = System.get_env("HOME")
       System.put_env("HOME", tmp)
+      Application.put_env(:arvo, :auto_compact, false)
 
       on_exit(fn ->
         if old, do: System.put_env("HOME", old)
@@ -51,35 +52,49 @@ defmodule Arvo.ProductPathTest do
         {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "msg#{i} " <> String.duplicate("x", 20)})
       end
 
-      # Force cumulative over threshold with tiny window
-      # record_usage adds tokens then maybe_auto_compact with default window — inject via maybe_auto_compact opts
-      # First pump cumulative high
       {:ok, _} = Arvo.Session.record_usage(%{input_tokens: 100_000, output_tokens: 0})
+      assert {:ok, :noop} = Arvo.Session.maybe_auto_compact(window: 100_000)
 
-      # Call with small window so threshold is low
-      assert {:ok, :compacted} = Arvo.Session.maybe_auto_compact(window: 100_000)
+      entries = Arvo.Session.Store.read_all(path)
+      refute Enum.any?(entries, &(&1["type"] == "compaction"))
+    end
 
+    test "opt-in auto_compact still works when forced" do
+      tmp = Path.join(System.tmp_dir!(), "arvo-ac-force-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      old = System.get_env("HOME")
+      System.put_env("HOME", tmp)
+
+      on_exit(fn ->
+        if old, do: System.put_env("HOME", old)
+        File.rm_rf!(tmp)
+      end)
+
+      {:ok, path} = Arvo.Session.open_new(tmp)
+      {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "x"})
+      {:ok, _} = Arvo.Session.record_usage(%{input_tokens: 100_000, output_tokens: 0})
+      assert {:ok, :compacted} = Arvo.Session.maybe_auto_compact(window: 100_000, force: true)
       entries = Arvo.Session.Store.read_all(path)
       assert Enum.any?(entries, &(&1["type"] == "compaction"))
     end
 
-    test "should_auto_compact is called from Session source" do
+    test "auto compact is gated in Session source" do
       src = File.read!(Path.expand("../../lib/arvo/session.ex", __DIR__))
-      assert src =~ "should_auto_compact?"
+      assert src =~ "auto_compact"
       assert src =~ "maybe_auto_compact"
     end
   end
 
-  describe "length error surfaces /compact" do
+  describe "length error surfaces handoff" do
     test "classify path uses length_error_message" do
       src = File.read!(Path.expand("../../lib/arvo/providers/completion.ex", __DIR__))
       assert src =~ "Arvo.Session.Compaction.length_error_message"
       assert src =~ "length_error?"
     end
 
-    test "length_error_message text" do
+    test "length_error_message mentions handoff" do
       msg = Arvo.Session.Compaction.length_error_message()
-      assert msg =~ "/compact"
+      assert msg =~ "/handoff"
     end
   end
 

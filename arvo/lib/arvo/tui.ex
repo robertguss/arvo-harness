@@ -259,7 +259,8 @@ defmodule Arvo.TUI do
       /login [provider]  device-flow login (default grok)
       /resume [n|path]   list sessions, or resume by index/path
       /rewind [n]        move HEAD back n steps (default 1); next msg forks
-      /compact [focus]   summarize older turns (optional focus text)
+      /handoff           new session with work-delta packet (no silent compact)
+      /compact [focus]   power: summarize older turns (optional focus text)
       /quit              exit
 
     Keys (Focus): Enter send · Esc cancel turn · / for slash
@@ -342,7 +343,8 @@ defmodule Arvo.TUI do
       end
 
     case path && Arvo.Session.resume(path) do
-      {:ok, %{messages: msgs}} ->
+      {:ok, %{messages: msgs} = resumed} ->
+        state = rehydrate_from_resume(state, resumed)
         {{:ok, :handled, "resumed #{Path.basename(path)} (#{length(msgs)} messages)"}, state}
 
       _ ->
@@ -363,6 +365,31 @@ defmodule Arvo.TUI do
 
       {:error, reason} ->
         {{:ok, :handled, "rewind failed: #{inspect(reason)}"}, state}
+    end
+  end
+
+  defp do_slash(state, "handoff", _) do
+    case Arvo.Session.Handoff.perform() do
+      {:ok, %{path: path, packet: packet}} ->
+        state = %{
+          state
+          | status: :idle,
+            spinner: false,
+            tool_name: nil,
+            streaming: false,
+            buffer: "",
+            last_error: nil,
+            tokens: %{turn: 0, cumulative: 0, window: 500_000},
+            transcript:
+              state.transcript ++ [%{kind: :system, text: "handoff → new session (parent intact)"}]
+        }
+
+        {{:ok, :handled,
+          "handoff ok → #{Path.basename(path)} (parent_session_id=#{packet["parent_session_id"]})"},
+         state}
+
+      {:error, reason} ->
+        {{:ok, :handled, "handoff failed: #{inspect(reason)}"}, state}
     end
   end
 
@@ -390,6 +417,30 @@ defmodule Arvo.TUI do
 
   defp do_slash(state, other, _) do
     {{:ok, :unknown, "unknown command: /#{other}"}, state}
+  end
+
+  defp rehydrate_from_resume(state, resumed) do
+    tokens = resumed[:tokens] || resumed["tokens"]
+
+    state =
+      if tokens do
+        cum = tokens.cumulative_total || 0
+        turn = (tokens.turn_input || 0) + (tokens.turn_output || 0)
+        %{state | tokens: %{turn: turn, cumulative: cum, window: 500_000}}
+      else
+        state
+      end
+
+    state =
+      case resumed[:model] || resumed["model"] do
+        m when is_binary(m) -> %{state | model: m}
+        _ -> state
+      end
+
+    case resumed[:profile] || resumed["profile"] do
+      p when is_binary(p) -> Map.put(state, :profile, p)
+      _ -> state
+    end
   end
 
   defp normalize_key(:esc), do: :esc

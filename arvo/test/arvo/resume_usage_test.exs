@@ -70,4 +70,55 @@ defmodule Arvo.ResumeUsageTest do
     assert line =~ "340"
     assert line =~ "500000" or line =~ "500_000" or line =~ "/500"
   end
+
+  test "record_usage durable; resume rehydrates non-zero cumulative tokens (AE2)", %{tmp: tmp} do
+    {:ok, path} = Arvo.Session.open_new(tmp)
+    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "hi"})
+    {:ok, tokens} = Arvo.Session.record_usage(%{input_tokens: 100, output_tokens: 40})
+    assert tokens.cumulative_total == 140
+
+    # Kill simulation: re-resume from path only
+    assert {:ok, resumed} = Arvo.Session.resume(path)
+    assert resumed.tokens.cumulative_total == 140
+    assert Arvo.Session.tokens().cumulative_total == 140
+  end
+
+  test "model and profile name round-trip on resume", %{tmp: tmp} do
+    {:ok, path} = Arvo.Session.open_new(tmp, model: "xai:custom-model", profile: "search")
+    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "x"})
+    assert {:ok, resumed} = Arvo.Session.resume(path)
+    assert resumed.model == "xai:custom-model"
+    assert resumed.profile == "search"
+  end
+
+  test "auto-resume same cwd skips empty shells", %{tmp: tmp} do
+    {:ok, chat} = Arvo.Session.open_new(tmp)
+    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "keep"})
+    {:ok, empty} = Arvo.Session.open_new(tmp)
+
+    Application.put_env(:arvo, :auto_resume, true)
+    Application.put_env(:arvo, :cwd, tmp)
+
+    on_exit(fn -> Application.put_env(:arvo, :auto_resume, false) end)
+
+    assert {:ok, %{path: path}} = Arvo.Application.maybe_auto_resume(tmp)
+    assert path == chat
+    refute path == empty
+  end
+
+  test "auto-resume after rewind uses HEAD messages not abandoned tip", %{tmp: tmp} do
+    {:ok, path} = Arvo.Session.open_new(tmp)
+    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "u1"})
+    {:ok, a1} = Arvo.Session.record_message(%{role: "assistant", content: "a1"})
+    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "u2-abandoned"})
+    {:ok, _} = Arvo.Session.rewind(1)
+    assert Arvo.Session.head_id() == a1["id"]
+
+    assert {:ok, resumed} = Arvo.Session.resume(path)
+    contents = Enum.map(resumed.messages, & &1.content)
+    assert "u1" in contents
+    assert "a1" in contents
+    refute "u2-abandoned" in contents
+  end
 end
+

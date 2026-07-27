@@ -49,6 +49,16 @@ defmodule Arvo.TUI do
     GenServer.call(__MODULE__, :reset_idle)
   end
 
+  @doc """
+  Atomically claim product turn UI state if idle.
+
+  Prevents Focus double-Enter races before `agent_start` arrives.
+  Returns `:ok` or `{:error, :busy}`.
+  """
+  def try_begin_turn do
+    GenServer.call(__MODULE__, :try_begin_turn)
+  end
+
   @doc "Dispatch a slash command. Returns `{:ok, :quit | :handled | :unknown}` result text."
   def slash(cmd, args \\ "") do
     # Device flow blocks on network poll — run outside the GenServer mailbox.
@@ -140,6 +150,14 @@ defmodule Arvo.TUI do
      }}
   end
 
+  def handle_call(:try_begin_turn, _from, state) do
+    if state.status == :running or Arvo.Session.turn_in_progress?() do
+      {:reply, {:error, :busy}, state}
+    else
+      {:reply, :ok, %{state | status: :running, spinner: true, buffer: "", last_error: nil}}
+    end
+  end
+
   def handle_call({:key, key}, _from, state) do
     key = normalize_key(key)
 
@@ -147,6 +165,8 @@ defmodule Arvo.TUI do
       key == :esc and state.status == :running ->
         _ = Arvo.Session.cancel_turn()
 
+        # Drop uncommitted streaming buffer; do not retract a transcript row already
+        # promoted by :agent_end (that path sets status :idle first).
         {:reply, :cancelled,
          %{state | status: :idle, spinner: false, tool_name: nil, streaming: false, buffer: ""}}
 
@@ -175,6 +195,8 @@ defmodule Arvo.TUI do
   defp reduce_event(state, {:turn_start, _}), do: %{state | spinner: true, tool_name: nil}
 
   defp reduce_event(state, {:message_delta, %{text: t}}) do
+    # Neutralize CSI/OSC from model output before TTY paint (Focus writes buffer raw)
+    t = sanitize_terminal_text(t)
     %{state | streaming: true, buffer: state.buffer <> t, spinner: false}
   end
 
@@ -314,10 +336,7 @@ defmodule Arvo.TUI do
 
   defp do_slash(state, "profile", name) do
     # Idle-only: reject while turn in progress (KTD 13)
-    sess = Arvo.Session.get()
-
-    if sess.turn_task && is_map(sess.turn_task) && Map.get(sess.turn_task, :pid) &&
-         Process.alive?(sess.turn_task.pid) do
+    if Arvo.Session.turn_in_progress?() do
       {{:ok, :handled, "profile switch rejected: turn in progress (idle-only)"}, state}
     else
       name = String.trim(name)
@@ -423,14 +442,8 @@ defmodule Arvo.TUI do
     instructions = if String.trim(args) == "", do: nil, else: String.trim(args)
     sess = Arvo.Session.get()
 
-    messages =
-      Enum.flat_map(sess.history || [], fn e ->
-        if e["type"] == "message" do
-          [%{role: e["role"], content: e["content"], id: e["id"]}]
-        else
-          []
-        end
-      end)
+    # Compact attention on HEAD chain only (not abandoned tips after rewind)
+    messages = Arvo.Session.Store.messages_to_head(sess.history || [])
 
     result = Arvo.Session.Compaction.compact(messages, sess.history || [], instructions: instructions)
 
@@ -502,4 +515,14 @@ defmodule Arvo.TUI do
   defp normalize_key("\e"), do: :esc
   defp normalize_key(:escape), do: :esc
   defp normalize_key(other), do: other
+
+  # Strip ESC and C0 controls (keep tab/newline) so model text cannot drive the TTY
+  defp sanitize_terminal_text(t) when is_binary(t) do
+    t
+    |> String.replace(~r/\e\[[0-9;?]*[A-Za-z]/, "")
+    |> String.replace(~r/\e\][^\a\e]*(?:\a|\e\\)?/, "")
+    |> String.replace(~r/[\x00-\x08\x0b\x0c\x0e-\x1f]/, "")
+  end
+
+  defp sanitize_terminal_text(other), do: other
 end

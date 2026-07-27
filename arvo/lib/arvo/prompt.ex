@@ -43,12 +43,25 @@ defmodule Arvo.Prompt do
     os = :os.type() |> Tuple.to_list() |> Enum.map_join(" ", &to_string/1)
     git = git_oneline(cwd)
 
+    profile =
+      Application.get_env(:arvo, :active_profile) ||
+        try do
+          Arvo.Plugins.Registry.profile()
+        rescue
+          _ -> nil
+        catch
+          _, _ -> nil
+        end
+
+    profile_line =
+      if is_binary(profile) and profile != "", do: "- profile: #{profile}\n", else: ""
+
     """
     ## Environment
     - cwd: #{cwd}
     - os: #{os}
     - date: #{date}
-    #{if git, do: "- git: #{git}", else: ""}
+    #{profile_line}#{if git, do: "- git: #{git}", else: ""}
     """
     |> String.trim()
   end
@@ -76,7 +89,13 @@ defmodule Arvo.Prompt do
         "- #{name}: #{desc} (#{path})"
       end)
 
-    "<available_skills>\n#{rows}\n</available_skills>"
+    """
+    <available_skills>
+    When a listed skill matches the task, use the Read tool on its path before applying its instructions; do not invent skill contents.
+    #{rows}
+    </available_skills>
+    """
+    |> String.trim()
   end
 
   def tool_schemas_block(tools) do

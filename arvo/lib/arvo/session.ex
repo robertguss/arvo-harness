@@ -8,12 +8,22 @@ defmodule Arvo.Session do
   """
   use GenServer
 
+  require Logger
+
+  # Long enough for multi-tool loops; HTTP receive_timeout is 120s per complete call.
+  @default_await_timeout :infinity
+
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
   def get do
     GenServer.call(__MODULE__, :get)
+  end
+
+  @doc "True when a product turn Task is currently running."
+  def turn_in_progress? do
+    GenServer.call(__MODULE__, :turn_in_progress?)
   end
 
   @doc "Start a new persisted session for cwd."
@@ -72,8 +82,14 @@ defmodule Arvo.Session do
     GenServer.call(__MODULE__, :cancel_turn)
   end
 
-  def await_turn(timeout \\ 60_000) do
-    GenServer.call(__MODULE__, :await_turn, timeout + 1_000)
+  def await_turn(timeout \\ @default_await_timeout) do
+    call_timeout =
+      case timeout do
+        :infinity -> :infinity
+        n when is_integer(n) and n >= 0 -> n + 1_000
+      end
+
+    GenServer.call(__MODULE__, :await_turn, call_timeout)
   end
 
   @doc """
@@ -93,6 +109,14 @@ defmodule Arvo.Session do
   @doc "Rebind open session fields (handoff). Idle-only."
   def rebind(state_fields) when is_map(state_fields) do
     GenServer.call(__MODULE__, {:rebind, state_fields})
+  end
+
+  @doc """
+  Atomic handoff under the Session lock: idle check, create child, seed packet,
+  parent marker, rebind. Prevents start_turn interleaving (TOCTOU).
+  """
+  def handoff(opts \\ []) when is_list(opts) do
+    GenServer.call(__MODULE__, {:handoff, opts}, 60_000)
   end
 
   @doc """
@@ -163,128 +187,150 @@ defmodule Arvo.Session do
 
   def handle_call(:tokens, _from, state), do: {:reply, state.tokens, state}
 
-  def handle_call({:open_new, cwd, opts}, _from, state) do
-    opts =
-      opts
-      |> Keyword.put_new(
-        :model,
-        Keyword.get(opts, :model) ||
-          Application.get_env(:arvo, :default_model) ||
-          get_in(Application.get_env(:arvo, :config) || %{}, [:default_model]) ||
-          "xai:grok-4.5"
-      )
-      |> Keyword.put_new(:profile, Keyword.get(opts, :profile) || profile_name())
-
-    {:ok, path, meta} = Arvo.Session.Store.create(cwd, opts)
-
-    state = %{
-      state
-      | id: meta["id"],
-        path: path,
-        last_id: meta["id"],
-        cwd: cwd,
-        history: [meta],
-        model: meta["model"],
-        profile: meta["profile"],
-        tokens: Arvo.Session.Tokens.new()
-    }
-
-    {:reply, {:ok, path}, state}
+  def handle_call(:turn_in_progress?, _from, state) do
+    {:reply, turn_busy?(state), state}
   end
 
-  def handle_call({:resume, path_or_cwd}, _from, state) do
-    path =
-      cond do
-        is_binary(path_or_cwd) and String.ends_with?(path_or_cwd, ".jsonl") ->
-          path_or_cwd
-
-        is_binary(path_or_cwd) ->
-          Arvo.Session.Store.list_resumable_for_cwd(path_or_cwd) |> List.first()
-
-        true ->
-          Arvo.Session.Store.list_resumable_for_cwd(state.cwd || Arvo.cwd()) |> List.first()
-      end
-
-    if is_nil(path) do
-      {:reply, {:error, :no_session}, state}
+  def handle_call({:open_new, cwd, opts}, _from, state) do
+    if turn_busy?(state) do
+      {:reply, {:error, :turn_in_progress}, state}
     else
-      entries = Arvo.Session.Store.read_all(path)
-      tip = Arvo.Session.Store.tip(path)
-      meta = List.first(entries)
-      head = Arvo.Session.Store.resolve_head(entries)
-      tokens = tokens_from_history(entries)
+      opts =
+        opts
+        |> Keyword.put_new(
+          :model,
+          Keyword.get(opts, :model) ||
+            Application.get_env(:arvo, :default_model) ||
+            get_in(Application.get_env(:arvo, :config) || %{}, [:default_model]) ||
+            "xai:grok-4.5"
+        )
+        |> Keyword.put_new(:profile, Keyword.get(opts, :profile) || profile_name())
+
+      {:ok, path, meta} = Arvo.Session.Store.create(cwd, opts)
 
       state = %{
         state
-        | id: meta && meta["id"],
+        | id: meta["id"],
           path: path,
-          last_id: head,
-          cwd: (meta && meta["cwd"]) || state.cwd,
-          history: entries,
-          model: meta && meta["model"],
-          profile: meta && meta["profile"],
-          tokens: tokens
+          last_id: meta["id"],
+          cwd: cwd,
+          history: [meta],
+          model: meta["model"],
+          profile: meta["profile"],
+          tokens: Arvo.Session.Tokens.new()
       }
 
-      # Do not call TUI here — resume is often invoked from TUI.slash (deadlock).
-      messages = Arvo.Session.Store.messages_to_head(entries)
+      {:reply, {:ok, path}, state}
+    end
+  end
 
-      {:reply,
-       {:ok,
-        %{
-          path: path,
-          messages: messages,
-          tip: tip,
-          head_id: head,
-          tokens: tokens,
-          model: state.model,
-          profile: state.profile
-        }}, state}
+  def handle_call({:resume, path_or_cwd}, _from, state) do
+    if turn_busy?(state) do
+      {:reply, {:error, :turn_in_progress}, state}
+    else
+      path =
+        cond do
+          is_binary(path_or_cwd) and String.ends_with?(path_or_cwd, ".jsonl") ->
+            confine_session_path(path_or_cwd)
+
+          is_binary(path_or_cwd) ->
+            Arvo.Session.Store.list_resumable_for_cwd(path_or_cwd) |> List.first()
+
+          true ->
+            Arvo.Session.Store.list_resumable_for_cwd(state.cwd || Arvo.cwd()) |> List.first()
+        end
+
+      cond do
+        path == :outside_sessions_root ->
+          {:reply, {:error, :path_outside_sessions_root}, state}
+
+        is_nil(path) ->
+          {:reply, {:error, :no_session}, state}
+
+        true ->
+          entries = Arvo.Session.Store.read_all(path)
+          tip = Arvo.Session.Store.tip(path)
+          meta = List.first(entries)
+          head = Arvo.Session.Store.resolve_head(entries)
+          tokens = tokens_from_history(entries)
+
+          state = %{
+            state
+            | id: meta && meta["id"],
+              path: path,
+              last_id: head,
+              cwd: (meta && meta["cwd"]) || state.cwd,
+              history: entries,
+              model: meta && meta["model"],
+              profile: meta && meta["profile"],
+              tokens: tokens
+          }
+
+          # Do not call TUI here — resume is often invoked from TUI.slash (deadlock).
+          messages = Arvo.Session.Store.messages_to_head(entries)
+
+          {:reply,
+           {:ok,
+            %{
+              path: path,
+              messages: messages,
+              tip: tip,
+              head_id: head,
+              tokens: tokens,
+              model: state.model,
+              profile: state.profile
+            }}, state}
+      end
     end
   end
 
   def handle_call(:head_id, _from, state), do: {:reply, state.last_id, state}
 
   def handle_call({:rewind, steps}, _from, state) do
-    if is_nil(state.path) do
-      {:reply, {:error, :no_session}, state}
-    else
-      by_id = Map.new(state.history, &{&1["id"], &1})
-      start = by_id[state.last_id]
+    cond do
+      turn_busy?(state) ->
+        {:reply, {:error, :turn_in_progress}, state}
 
-      target =
-        Enum.reduce_while(1..steps, start, fn _, cur ->
-          case cur do
-            nil ->
-              {:halt, nil}
+      is_nil(state.path) ->
+        {:reply, {:error, :no_session}, state}
 
-            %{"parent_id" => nil} ->
-              {:halt, cur}
+      true ->
+        by_id = Map.new(state.history, &{&1["id"], &1})
+        start = by_id[state.last_id]
 
-            %{"parent_id" => pid} ->
-              case by_id[pid] do
-                nil -> {:halt, cur}
-                parent -> {:cont, parent}
-              end
-          end
-        end)
+        target =
+          Enum.reduce_while(1..steps, start, fn _, cur ->
+            case cur do
+              nil ->
+                {:halt, nil}
 
-      case target do
-        %{"id" => new_head} ->
-          written =
-            Arvo.Session.Store.append_head_move!(state.path, new_head, parent_id: state.last_id)
+              %{"parent_id" => nil} ->
+                {:halt, cur}
 
-          state = %{
-            state
-            | last_id: new_head,
-              history: state.history ++ [written]
-          }
+              %{"parent_id" => pid} ->
+                case by_id[pid] do
+                  nil -> {:halt, cur}
+                  parent -> {:cont, parent}
+                end
+            end
+          end)
 
-          {:reply, {:ok, %{head_id: new_head}}, state}
+        case target do
+          %{"id" => new_head} ->
+            written =
+              Arvo.Session.Store.append_head_move!(state.path, new_head, parent_id: state.last_id)
 
-        _ ->
-          {:reply, {:error, :cannot_rewind}, state}
-      end
+            state = %{
+              state
+              | last_id: new_head,
+                history: state.history ++ [written]
+            }
+
+            {:reply, {:ok, %{head_id: new_head}}, state}
+
+          _ ->
+            {:reply, {:error, :cannot_rewind}, state}
+        end
     end
   end
 
@@ -344,14 +390,21 @@ defmodule Arvo.Session do
       gen = state.turn_generation + 1
       parent = self()
 
-      # Safe event_fun: never raise into the turn Task
+      # Safe event_fun: never raise into the turn Task; log so UI failures are not silent
       safe_event = fn event ->
         try do
           event_fun.(event)
         rescue
-          _ -> :ok
+          e ->
+            Logger.warning("Arvo.Session event_fun failed (#{inspect(elem_tag(event))}): #{Exception.message(e)}")
+            :ok
         catch
-          _, _ -> :ok
+          kind, reason ->
+            Logger.warning(
+              "Arvo.Session event_fun #{kind} (#{inspect(elem_tag(event))}): #{inspect(reason)}"
+            )
+
+            :ok
         end
       end
 
@@ -378,22 +431,49 @@ defmodule Arvo.Session do
   def handle_call(:cancel_turn, _from, state) do
     case state.turn_task do
       %Task{pid: pid} = task ->
-        Task.shutdown(task, :brutal_kill)
-        if Process.alive?(pid), do: Process.exit(pid, :kill)
+        # If the Task already finished, prefer success persist over a cancel leaf.
+        # Task.shutdown returns {:ok, reply} when the process completed.
+        case Process.alive?(pid) do
+          false ->
+            # Drain pending {:turn_done, ...} if any; otherwise treat as already settled.
+            receive do
+              {:turn_done, gen, result} when gen == state.turn_generation ->
+                state = apply_turn_result(state, result)
+                state = reply_await(state, normalize_await_result(result))
+                {:reply, :ok, %{state | turn_task: nil}}
+            after
+              0 ->
+                # Result may already be in turn_result via a prior turn_done
+                state = reply_await(state, state.turn_result || {:error, :cancelled})
+                {:reply, :ok, %{state | turn_task: nil, turn_prior_len: nil}}
+            end
 
-        # Cancel-as-fork: incomplete leaf so HEAD stays coherent; never claim complete success
-        state = append_cancel_leaf(state)
+          true ->
+            case Task.shutdown(task, :brutal_kill) do
+              {:ok, result} ->
+                # Completed during shutdown — keep success, do not cancel-leaf
+                state = apply_turn_result(state, result)
+                state = reply_await(state, normalize_await_result(result))
+                {:reply, :ok, %{state | turn_task: nil}}
 
-        state = %{
-          state
-          | turn_task: nil,
-            turn_result: {:error, :cancelled},
-            cancelled_generation: state.turn_generation,
-            turn_prior_len: nil
-        }
+              _ ->
+                if Process.alive?(pid), do: Process.exit(pid, :kill)
 
-        state = reply_await(state, {:error, :cancelled})
-        {:reply, :ok, state}
+                # Cancel-as-fork: incomplete leaf so HEAD stays coherent
+                state = append_cancel_leaf(state)
+
+                state = %{
+                  state
+                  | turn_task: nil,
+                    turn_result: {:error, :cancelled},
+                    cancelled_generation: state.turn_generation,
+                    turn_prior_len: nil
+                }
+
+                state = reply_await(state, {:error, :cancelled})
+                {:reply, :ok, state}
+            end
+        end
 
       _ ->
         {:reply, :ok, state}
@@ -420,11 +500,32 @@ defmodule Arvo.Session do
   end
 
   def handle_call({:rebind, fields}, _from, state) do
-    if state.turn_task && Process.alive?(state.turn_task.pid) do
+    if turn_busy?(state) do
       {:reply, {:error, :turn_in_progress}, state}
     else
       state = Map.merge(state, fields)
       {:reply, :ok, state}
+    end
+  end
+
+  def handle_call({:handoff, opts}, _from, state) do
+    cond do
+      is_nil(state.path) ->
+        {:reply, {:error, :no_session}, state}
+
+      turn_busy?(state) ->
+        {:reply, {:error, :turn_in_progress}, state}
+
+      true ->
+        case Arvo.Session.Handoff.do_perform_locked(state, opts) do
+          {:ok, %{rebind: fields} = result} ->
+            # Allowlisted rebind keys only (no unbounded Map.merge of caller maps)
+            state = apply_handoff_rebind(state, fields)
+            {:reply, {:ok, Map.delete(result, :rebind)}, state}
+
+          {:error, _} = err ->
+            {:reply, err, state}
+        end
     end
   end
 
@@ -471,19 +572,25 @@ defmodule Arvo.Session do
   def handle_info(_msg, state), do: {:noreply, state}
 
   defp apply_turn_result(state, {:ok, result}) when is_map(result) do
-    prior_len = state.turn_prior_len || 0
-    {_, state} = do_persist_messages(state, Map.get(result, :messages) || [], prior_len)
-    _ = usage_from_result(result)
-    tokens = maybe_add_usage_tokens(state.tokens, result)
-    state = %{state | tokens: tokens, turn_result: {:ok, result}, turn_prior_len: nil}
-    state = do_maybe_auto_compact(state, [])
-    # Mirror TUI tokens when usage present
-    if tokens.turn_input + tokens.turn_output > 0 do
-      turn = tokens.turn_input + tokens.turn_output
-      _ = Arvo.TUI.put_tokens(turn, tokens.cumulative_total)
-    end
+    if is_nil(state.path) do
+      %{state | turn_result: {:ok, result}, turn_prior_len: nil}
+    else
+      prior_len = state.turn_prior_len || 0
+      {_, state} = do_persist_messages(state, Map.get(result, :messages) || [], prior_len)
+      usage = usage_from_result(result)
+      tokens = maybe_add_usage_tokens(state.tokens, result)
+      state = %{state | tokens: tokens, turn_result: {:ok, result}, turn_prior_len: nil}
+      state = maybe_append_usage_ledger(state, usage_for_ledger(usage), tokens)
+      state = do_maybe_auto_compact(state, [])
 
-    state
+      # Mirror TUI tokens when usage present
+      if tokens.turn_input + tokens.turn_output > 0 do
+        turn = tokens.turn_input + tokens.turn_output
+        _ = Arvo.TUI.put_tokens(turn, tokens.cumulative_total)
+      end
+
+      state
+    end
   end
 
   defp apply_turn_result(state, {:error, _} = err) do
@@ -510,21 +617,25 @@ defmodule Arvo.Session do
   end
 
   defp do_persist_messages(state, messages, prior_len) when is_list(messages) do
-    new_msgs = Enum.drop(messages, prior_len + 1)
+    if is_nil(state.path) do
+      {0, state}
+    else
+      new_msgs = Enum.drop(messages, prior_len + 1)
 
-    Enum.reduce(new_msgs, {0, state}, fn m, {n, st} ->
-      role = m[:role] || m["role"]
+      Enum.reduce(new_msgs, {0, state}, fn m, {n, st} ->
+        role = m[:role] || m["role"]
 
-      if role in ["assistant", "tool"] do
-        entry = message_to_attrs(m)
-        entry = Map.put(entry, "parent_id", st.last_id)
-        written = Arvo.Session.Store.append!(st.path, entry)
-        st = %{st | last_id: written["id"], history: st.history ++ [written]}
-        {n + 1, st}
-      else
-        {n, st}
-      end
-    end)
+        if role in ["assistant", "tool"] do
+          entry = message_to_attrs(m)
+          entry = Map.put(entry, "parent_id", st.last_id)
+          written = Arvo.Session.Store.append!(st.path, entry)
+          st = %{st | last_id: written["id"], history: st.history ++ [written]}
+          {n + 1, st}
+        else
+          {n, st}
+        end
+      end)
+    end
   end
 
   defp do_persist_messages(state, _, _), do: {0, state}
@@ -595,16 +706,20 @@ defmodule Arvo.Session do
         usage[:output_tokens] || usage["output_tokens"] || usage[:completion_tokens] ||
           usage["completion_tokens"] || 0
 
-      entry = %{
-        "type" => "usage",
-        "parent_id" => state.last_id,
-        "input_tokens" => input,
-        "output_tokens" => output,
-        "cumulative_total" => tokens.cumulative_total
-      }
+      if input + output > 0 do
+        entry = %{
+          "type" => "usage",
+          "parent_id" => state.last_id,
+          "input_tokens" => input,
+          "output_tokens" => output,
+          "cumulative_total" => tokens.cumulative_total
+        }
 
-      written = Arvo.Session.Store.append!(state.path, entry)
-      %{state | history: state.history ++ [written]}
+        written = Arvo.Session.Store.append!(state.path, entry)
+        %{state | history: state.history ++ [written]}
+      else
+        state
+      end
     else
       state
     end
@@ -643,12 +758,63 @@ defmodule Arvo.Session do
             history: state.history ++ [written]
         }
       rescue
-        _ -> state
+        e ->
+          Logger.warning("Arvo.Session cancel leaf append failed: #{Exception.message(e)}")
+          state
       end
     else
       state
     end
   end
+
+  defp turn_busy?(state) do
+    match?(%Task{pid: pid} when is_pid(pid), state.turn_task) and
+      Process.alive?(state.turn_task.pid)
+  end
+
+  defp apply_handoff_rebind(state, fields) when is_map(fields) do
+    %{
+      state
+      | id: Map.get(fields, :id, state.id),
+        path: Map.get(fields, :path, state.path),
+        last_id: Map.get(fields, :last_id, state.last_id),
+        history: Map.get(fields, :history, state.history),
+        cwd: Map.get(fields, :cwd, state.cwd),
+        model: Map.get(fields, :model, state.model),
+        profile: Map.get(fields, :profile, state.profile),
+        tokens: Map.get(fields, :tokens, Arvo.Session.Tokens.new()),
+        steering: [],
+        turn_task: nil,
+        turn_result: nil,
+        turn_prior_len: nil,
+        cancelled_generation: nil
+    }
+  end
+
+  defp confine_session_path(path) when is_binary(path) do
+    expanded = Path.expand(path)
+    root = Path.expand(Arvo.Session.Store.sessions_root())
+
+    if expanded == root or String.starts_with?(expanded, root <> "/") do
+      expanded
+    else
+      :outside_sessions_root
+    end
+  end
+
+  defp usage_for_ledger(usage) when is_map(usage) do
+    %{
+      input_tokens:
+        usage["prompt_tokens"] || usage[:prompt_tokens] || usage["input_tokens"] ||
+          usage[:input_tokens] || 0,
+      output_tokens:
+        usage["completion_tokens"] || usage[:completion_tokens] || usage["output_tokens"] ||
+          usage[:output_tokens] || 0
+    }
+  end
+
+  defp elem_tag(event) when is_tuple(event) and tuple_size(event) > 0, do: elem(event, 0)
+  defp elem_tag(other), do: other
 
   defp do_maybe_auto_compact(state, opts) do
     # R15: no silent auto-compact on product path unless explicitly opted in
@@ -661,14 +827,7 @@ defmodule Arvo.Session do
 
     if enabled? and is_binary(state.path) and
          Arvo.Session.Compaction.should_auto_compact?(cum, window) do
-      messages =
-        Enum.flat_map(state.history || [], fn e ->
-          if e["type"] == "message" do
-            [%{role: e["role"], content: e["content"], id: e["id"]}]
-          else
-            []
-          end
-        end)
+      messages = Arvo.Session.Store.messages_to_head(state.history || [])
 
       result =
         Arvo.Session.Compaction.compact(messages, state.history || [],

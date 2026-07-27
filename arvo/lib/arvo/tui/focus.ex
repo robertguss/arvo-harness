@@ -174,12 +174,15 @@ defmodule Arvo.TUI.Focus do
         end
 
       true ->
-        if Arvo.TUI.state().status == :running do
-          _ = Arvo.Session.steer(text)
-          {:cont, %{local | input: ""}}
-        else
-          _ = spawn_chat(text)
-          {:cont, %{local | input: ""}}
+        # Claim running synchronously so double-Enter cannot race before agent_start
+        case Arvo.TUI.try_begin_turn() do
+          :ok ->
+            _ = spawn_chat(text)
+            {:cont, %{local | input: ""}}
+
+          {:error, :busy} ->
+            _ = Arvo.Session.steer(text)
+            {:cont, %{local | input: ""}}
         end
     end
   end
@@ -188,22 +191,37 @@ defmodule Arvo.TUI.Focus do
     # Fire-and-forget product turn on Session (Focus stays responsive for Esc)
     Task.start(fn ->
       ensure_session()
-      _ = Arvo.TUI.append_user(text)
-      _ = Arvo.Session.record_message(%{role: "user", content: text})
-      context = Arvo.TurnContext.build()
-      model = Arvo.TUI.model()
 
-      event_fun = fn event ->
-        Arvo.TUI.handle_event(event)
-      end
-
-      case Arvo.Session.start_turn(context, %{model: model}, event_fun) do
+      case Arvo.Session.record_message(%{role: "user", content: text}) do
         {:ok, _} ->
-          _ = Arvo.Session.await_turn()
-          :ok
+          _ = Arvo.TUI.append_user(text)
+          context = Arvo.TurnContext.build()
+          model = Arvo.TUI.model()
 
-        {:error, :turn_in_progress} ->
-          _ = Arvo.TUI.append_system("turn already in progress")
+          event_fun = fn event ->
+            Arvo.TUI.handle_event(event)
+          end
+
+          case Arvo.Session.start_turn(context, %{model: model}, event_fun) do
+            {:ok, _} ->
+              _ = Arvo.Session.await_turn()
+              :ok
+
+            {:error, :turn_in_progress} ->
+              # Should be rare after try_begin_turn; release UI claim
+              _ = Arvo.TUI.reset_idle()
+              _ = Arvo.TUI.append_system("turn already in progress")
+              :ok
+
+            {:error, reason} ->
+              _ = Arvo.TUI.reset_idle()
+              _ = Arvo.TUI.append_system("turn failed: #{inspect(reason)}")
+              :ok
+          end
+
+        {:error, reason} ->
+          _ = Arvo.TUI.reset_idle()
+          _ = Arvo.TUI.append_system("could not record message: #{inspect(reason)}")
           :ok
       end
     end)

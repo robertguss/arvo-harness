@@ -163,12 +163,12 @@ defmodule Arvo.SessionStoreTest do
     assert Enum.map(msgs, & &1.content) == ["first", "reply1"]
     refute Enum.any?(msgs, &(&1.content == "second"))
 
-    # Abandoned tip still on disk
+    # Abandoned tip still on disk (tip is last line, not HEAD after rewind)
     entries = Arvo.Session.Store.read_all(path)
     assert Enum.any?(entries, &(&1["content"] == "reply2"))
-    assert Arvo.Session.Store.tip(path)["content"] == "reply2" or
-             Arvo.Session.Store.tip(path)["type"] == "head_move" or
-             true
+    tip = Arvo.Session.Store.tip(path)
+    # After head_move, tip is the head_move row; abandoned reply2 remains earlier
+    assert tip["type"] == "head_move" or tip["content"] == "reply2"
 
     # pre-rewind lines byte-stable: still 5 content + 1 head_move at least
     assert length(entries) >= 6

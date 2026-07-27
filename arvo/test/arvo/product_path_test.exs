@@ -17,7 +17,7 @@ defmodule Arvo.ProductPathTest do
       assert {:ok, :handled, text} = Arvo.TUI.slash("help")
       assert text =~ "/model"
       # Full v0.1 slash surface (SPEC §7) — not a partial stub list
-      for cmd <- ~w(/help /model /profile /login /resume /compact /quit) do
+      for cmd <- ~w(/help /model /profile /login /resume /compact /rewind /handoff /quit) do
         assert text =~ cmd
       end
     end
@@ -111,6 +111,11 @@ defmodule Arvo.ProductPathTest do
       assert repl_src =~ "Arvo.TUI.slash"
       # Product chat must not call Agent.run inline (library path only)
       refute repl_src =~ "Arvo.Agent.run"
+
+      # Focus is the product default surface — lock the same spine
+      focus_src = File.read!(Path.expand("../../lib/arvo/tui/focus.ex", __DIR__))
+      assert focus_src =~ "Arvo.Session.start_turn"
+      refute focus_src =~ "Arvo.Agent.run"
     end
 
     test "turn context assembly always includes skills key" do

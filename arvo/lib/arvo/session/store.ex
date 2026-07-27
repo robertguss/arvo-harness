@@ -310,6 +310,15 @@ defmodule Arvo.Session.Store do
   end
 
   @doc "Convert a single session entry into zero-or-more chat messages (tool fields preserved)."
+  def entry_to_messages(%{"type" => "message", "incomplete" => true} = e) do
+    # Cancel-as-fork leaves incomplete assistant leaves on disk; keep them off the model path.
+    if (e["role"] || "user") == "assistant" and (e["content"] || "") == "" do
+      []
+    else
+      entry_to_messages(Map.delete(e, "incomplete"))
+    end
+  end
+
   def entry_to_messages(%{"type" => "message"} = e) do
     role = e["role"] || "user"
     content = e["content"] || ""

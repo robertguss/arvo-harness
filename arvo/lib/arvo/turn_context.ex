@@ -36,13 +36,27 @@ defmodule Arvo.TurnContext do
 
     skills =
       Keyword.get_lazy(opts, :skills, fn ->
-        try do
-          Arvo.Plugins.Registry.skills()
-        rescue
-          _ -> []
-        catch
-          _, _ -> []
-        end
+        plugin_skills =
+          try do
+            Arvo.Plugins.Registry.skills()
+          rescue
+            _ -> []
+          catch
+            _, _ -> []
+          end
+
+        user_skills =
+          try do
+            Arvo.Skills.discover()
+          rescue
+            _ -> []
+          catch
+            _, _ -> []
+          end
+
+        # Plugin skills first, then user ~/.arvo/skills; uniq by name
+        (List.wrap(plugin_skills) ++ List.wrap(user_skills))
+        |> Enum.uniq_by(fn s -> Map.get(s, :name) || Map.get(s, "name") end)
       end)
 
     session_id = Keyword.get(opts, :session_id, sess[:id])

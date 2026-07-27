@@ -48,32 +48,24 @@ defmodule Arvo.Session.Handoff do
   Returns `{:ok, %{path, parent_path, packet}}` or `{:error, reason}`.
   """
   def perform(opts \\ []) do
-    sess = Arvo.Session.get()
-
-    cond do
-      is_nil(sess.path) ->
-        {:error, :no_session}
-
-      sess.turn_task && is_map(sess.turn_task) && Map.get(sess.turn_task, :pid) &&
-          Process.alive?(sess.turn_task.pid) ->
-        {:error, :turn_in_progress}
-
-      true ->
-        do_perform(sess, opts)
-    end
+    # Entire handoff runs under Session GenServer so start_turn cannot interleave
+    # between idle check, child create, marker, and rebind (closes TOCTOU).
+    Arvo.Session.handoff(opts)
   end
 
-  defp do_perform(sess, opts) do
+  @doc false
+  def do_perform_locked(sess, opts) do
     parent_path = sess.path
-    parent_entries_before = length(sess.history || [])
-    packet = build_packet(opts)
+    packet = build_packet_from(sess, opts)
     cwd = sess.cwd || Application.get_env(:arvo, :cwd) || Arvo.cwd()
+    model = sess.model || Application.get_env(:arvo, :default_model) || "xai:grok-4.5"
+    profile = sess.profile || "base"
 
     try do
       {:ok, child_path, meta} =
         Arvo.Session.Store.create(cwd,
-          model: sess.model || Arvo.TUI.model(),
-          profile: sess.profile || "base",
+          model: model,
+          profile: profile,
           parent_session_id: sess.id
         )
 
@@ -99,24 +91,7 @@ defmodule Arvo.Session.Handoff do
           })
       end
 
-      :ok =
-        Arvo.Session.rebind(%{
-          id: meta["id"],
-          path: child_path,
-          last_id: written["id"],
-          history: child_entries,
-          cwd: cwd,
-          model: meta["model"],
-          profile: meta["profile"],
-          tokens: Arvo.Session.Tokens.new(),
-          steering: [],
-          turn_task: nil,
-          turn_result: nil
-        })
-
-      # Do not call TUI here — often invoked from TUI.slash (deadlock).
       parent_now = Arvo.Session.Store.read_all(parent_path)
-      _ = parent_entries_before
 
       {:ok,
        %{
@@ -125,13 +100,57 @@ defmodule Arvo.Session.Handoff do
          packet: packet,
          parent_entry_count: length(parent_now),
          child_messages: Arvo.Session.Store.messages_to_head(child_entries),
-         rehydrate_tui: true
+         rehydrate_tui: true,
+         rebind: %{
+           id: meta["id"],
+           path: child_path,
+           last_id: written["id"],
+           history: child_entries,
+           cwd: cwd,
+           model: meta["model"],
+           profile: meta["profile"],
+           tokens: Arvo.Session.Tokens.new(),
+           steering: [],
+           turn_task: nil,
+           turn_result: nil
+         }
        }}
     rescue
       e ->
-        # Fail closed: do not leave Session pointing at a half-created child
         {:error, Exception.message(e)}
     end
+  end
+
+  defp build_packet_from(sess, opts) do
+    history = sess.history || []
+    messages = Arvo.Session.Store.messages_to_head(history)
+
+    users = Enum.filter(messages, &((&1[:role] || &1["role"]) == "user"))
+    assts = Enum.filter(messages, &((&1[:role] || &1["role"]) == "assistant"))
+
+    goal =
+      Keyword.get(opts, :goal) ||
+        case List.last(users) do
+          nil -> "continue work"
+          m -> String.slice(to_string(m[:content] || m["content"] || ""), 0, 200)
+        end
+
+    last_asst =
+      case List.last(assts) do
+        nil -> ""
+        m -> String.slice(to_string(m[:content] || m["content"] || ""), 0, 400)
+      end
+
+    %{
+      "goal" => goal,
+      "done" => Keyword.get(opts, :done) || summarize_done(assts),
+      "not_done" => Keyword.get(opts, :not_done) || goal,
+      "paths" => Keyword.get(opts, :paths) || [],
+      "last_error" => Keyword.get(opts, :last_error) || "",
+      "next_steps" => Keyword.get(opts, :next_steps) || "Continue from handoff packet.",
+      "parent_session_id" => sess.id,
+      "last_assistant_excerpt" => last_asst
+    }
   end
 
   def packet_blob(packet) when is_map(packet) do

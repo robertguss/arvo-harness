@@ -85,8 +85,16 @@ defmodule Arvo.Application do
       case Arvo.Session.Store.list_resumable_for_cwd(cwd) do
         [path | _] ->
           case Arvo.Session.resume(path) do
-            {:ok, _} = ok -> ok
-            other -> other
+            {:ok, resumed} = ok ->
+              reapply_profile_from_resume(resumed)
+              ok
+
+            other ->
+              Logger.warning(
+                "Arvo: same-cwd auto-resume failed for #{path}: #{inspect(other)}"
+              )
+
+              other
           end
 
         [] ->
@@ -95,6 +103,31 @@ defmodule Arvo.Application do
     else
       :noop
     end
+  end
+
+  # R13/AE2: session meta.profile is a name only; re-run Profiles.switch so tools/skills match.
+  defp reapply_profile_from_resume(resumed) do
+    case resumed[:profile] || resumed["profile"] do
+      p when is_binary(p) and p != "" ->
+        active = Arvo.Plugins.Registry.list_active()
+
+        case Arvo.Profiles.switch(p, active) do
+          {:ok, _} ->
+            Application.put_env(:arvo, :active_profile, p)
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("Arvo: auto-resume profile switch failed for #{p}: #{inspect(reason)}")
+            :ok
+        end
+
+      _ ->
+        :ok
+    end
+  rescue
+    e ->
+      Logger.warning("Arvo: auto-resume profile reapply crashed: #{Exception.message(e)}")
+      :ok
   end
 end
 

@@ -179,10 +179,9 @@ defmodule Arvo.SessionStoreTest do
     Application.put_env(:arvo, :cwd, cwd)
     assert {:ok, path} = Arvo.Session.open_new(cwd)
 
-    {:ok, u1} = Arvo.Session.record_message(%{role: "user", content: "u1"})
+    {:ok, _u1} = Arvo.Session.record_message(%{role: "user", content: "u1"})
     {:ok, a1} = Arvo.Session.record_message(%{role: "assistant", content: "a1"})
     {:ok, u2} = Arvo.Session.record_message(%{role: "user", content: "u2"})
-    _ = u2
 
     assert {:ok, %{head_id: head}} = Arvo.Session.rewind(1)
     # one step back from u2 → a1

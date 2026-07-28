@@ -225,6 +225,117 @@ defmodule Arvo.Session.Store do
     })
   end
 
+  @doc """
+  Project history into ordered tree-navigator rows (excludes `head_move` / `session_meta`).
+
+  Each row: `%{id, parent_id, kind, preview, jumpable?, head?, tip?, aborted?}`.
+  Kinds: `:user | :assistant | :tool | :other`. Jump targets are message nodes
+  with role user/assistant (tool rows orient only).
+  """
+  def tree_nodes(path) when is_binary(path), do: tree_nodes(read_all(path))
+
+  def tree_nodes(entries) when is_list(entries) do
+    head_id = resolve_head(entries)
+
+    tip_id =
+      case tip(entries) do
+        %{"id" => id} -> id
+        _ -> nil
+      end
+
+    entries
+    |> Enum.reject(&(&1["type"] in ["head_move", "session_meta"]))
+    |> Enum.map(fn e ->
+      %{
+        id: e["id"],
+        parent_id: e["parent_id"],
+        kind: node_kind(e),
+        preview: node_preview(e),
+        jumpable?: jumpable_entry?(e),
+        head?: e["id"] == head_id,
+        tip?: e["id"] == tip_id,
+        aborted?: aborted_entry?(e)
+      }
+    end)
+  end
+
+  @doc """
+  True when entry is a valid Focus jump target (user/assistant message).
+
+  Assistants that still carry `tool_calls` are not jumpable: making them HEAD
+  would put an open tool-call turn on the model path without tool results.
+  """
+  def jumpable_entry?(%{"type" => "message"} = e) do
+    role = e["role"] || "user"
+
+    cond do
+      not is_nil(e["tool_call_id"]) ->
+        false
+
+      role == "user" ->
+        true
+
+      role == "assistant" ->
+        # Pending tool_calls on HEAD break the next-turn message shape.
+        case e["tool_calls"] do
+          list when is_list(list) and list != [] -> false
+          _ -> true
+        end
+
+      true ->
+        false
+    end
+  end
+
+  def jumpable_entry?(_), do: false
+
+  defp node_kind(%{"type" => "message"} = e) do
+    cond do
+      e["role"] == "tool" or not is_nil(e["tool_call_id"]) -> :tool
+      e["role"] == "assistant" -> :assistant
+      e["role"] == "user" -> :user
+      true -> :other
+    end
+  end
+
+  defp node_kind(_), do: :other
+
+  defp aborted_entry?(%{"type" => "message", "role" => "assistant"} = e) do
+    e["incomplete"] == true or e["stop_reason"] in ["cancelled", "aborted"]
+  end
+
+  defp aborted_entry?(_), do: false
+
+  defp node_preview(%{"type" => "message"} = e) do
+    cond do
+      e["role"] == "tool" or not is_nil(e["tool_call_id"]) ->
+        name = e["name"] || "tool"
+        body = e["content"] || ""
+        truncate_preview(name <> ": " <> first_line(body))
+
+      true ->
+        truncate_preview(first_line(e["content"] || ""))
+    end
+  end
+
+  defp node_preview(%{"type" => "compaction"} = e) do
+    truncate_preview("[compacted] " <> first_line(e["summary"] || ""))
+  end
+
+  defp node_preview(_), do: ""
+
+  defp first_line(s) when is_binary(s) do
+    s
+    |> String.split("\n", parts: 2)
+    |> List.first()
+    |> to_string()
+    |> String.trim()
+  end
+
+  defp truncate_preview(s) when is_binary(s) do
+    if String.length(s) > 80, do: String.slice(s, 0, 77) <> "...", else: s
+  end
+
   @doc "Reconstruct chat messages along root → HEAD (product path)."
   def messages_to_head(path) when is_binary(path) do
     messages_to_head(read_all(path))
@@ -315,11 +426,15 @@ defmodule Arvo.Session.Store do
 
   @doc "Convert a single session entry into zero-or-more chat messages (tool fields preserved)."
   def entry_to_messages(%{"type" => "message", "incomplete" => true} = e) do
-    # Cancel-as-fork leaves incomplete assistant leaves on disk; keep them off the model path.
+    # Cancel-as-fork leaves incomplete assistant leaves on disk; keep empty ones
+    # off the model path. Non-empty incomplete still rehydrates for human view.
     if (e["role"] || "user") == "assistant" and (e["content"] || "") == "" do
       []
     else
-      entry_to_messages(Map.delete(e, "incomplete"))
+      case entry_to_messages(Map.delete(e, "incomplete")) do
+        [msg] -> [Map.put(msg, :incomplete, true)]
+        other -> other
+      end
     end
   end
 
@@ -368,7 +483,8 @@ defmodule Arvo.Session.Store do
       %{
         id: tc["id"] || tc[:id],
         name: tc["name"] || tc[:name] || get_in(tc, ["function", "name"]),
-        arguments: tc["arguments"] || tc[:arguments] || get_in(tc, ["function", "arguments"]) || %{}
+        arguments:
+          tc["arguments"] || tc[:arguments] || get_in(tc, ["function", "arguments"]) || %{}
       }
     end)
   end

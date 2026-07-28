@@ -245,4 +245,218 @@ defmodule Arvo.SessionStoreTest do
     head = Arvo.Session.Store.resolve_head(path)
     assert head == u["id"]
   end
+
+  test "tree_nodes projects display rows; excludes head_move; tools not jumpable", %{cwd: cwd} do
+    File.mkdir_p!(cwd)
+    {:ok, path, meta} = Arvo.Session.Store.create(cwd)
+
+    u1 =
+      Arvo.Session.Store.append!(path, %{
+        "type" => "message",
+        "parent_id" => meta["id"],
+        "role" => "user",
+        "content" => "first question about the tree"
+      })
+
+    a1 =
+      Arvo.Session.Store.append!(path, %{
+        "type" => "message",
+        "parent_id" => u1["id"],
+        "role" => "assistant",
+        "content" => "I'll use a tool",
+        "tool_calls" => [%{"id" => "tc1", "name" => "bash", "arguments" => %{"command" => "ls"}}]
+      })
+
+    tool =
+      Arvo.Session.Store.append!(path, %{
+        "type" => "message",
+        "parent_id" => a1["id"],
+        "role" => "tool",
+        "name" => "bash",
+        "tool_call_id" => "tc1",
+        "content" => "file1\nfile2"
+      })
+
+    u2 =
+      Arvo.Session.Store.append!(path, %{
+        "type" => "message",
+        "parent_id" => tool["id"],
+        "role" => "user",
+        "content" => "wrong path"
+      })
+
+    Arvo.Session.Store.append_head_move!(path, a1["id"], parent_id: u2["id"])
+
+    entries = Arvo.Session.Store.read_all(path)
+    nodes = Arvo.Session.Store.tree_nodes(entries)
+
+    assert Enum.all?(nodes, &(&1.kind != :head_move))
+    refute Enum.any?(nodes, &(&1.id == nil))
+
+    by_id = Map.new(nodes, &{&1.id, &1})
+    assert by_id[u1["id"]].kind == :user
+    assert by_id[u1["id"]].jumpable? == true
+    assert by_id[a1["id"]].kind == :assistant
+    # Assistant with pending tool_calls is not jumpable (open tool loop)
+    assert by_id[a1["id"]].jumpable? == false
+    assert by_id[tool["id"]].kind == :tool
+    assert by_id[tool["id"]].jumpable? == false
+    assert by_id[u2["id"]].kind == :user
+    assert by_id[u2["id"]].jumpable? == true
+
+    # HEAD is a1 after head_move; file tip is last content (u2 or head_move excluded → u2)
+    assert by_id[a1["id"]].head? == true
+    assert by_id[u2["id"]].tip? == true or by_id[u2["id"]].id == u2["id"]
+    assert by_id[u2["id"]].head? == false
+
+    assert is_binary(by_id[u1["id"]].preview)
+    assert by_id[u1["id"]].preview =~ "first question"
+  end
+
+  test "tree_nodes marks incomplete assistant as aborted", %{cwd: cwd} do
+    File.mkdir_p!(cwd)
+    {:ok, path, meta} = Arvo.Session.Store.create(cwd)
+
+    u =
+      Arvo.Session.Store.append!(path, %{
+        "type" => "message",
+        "parent_id" => meta["id"],
+        "role" => "user",
+        "content" => "go"
+      })
+
+    a =
+      Arvo.Session.Store.append!(path, %{
+        "type" => "message",
+        "parent_id" => u["id"],
+        "role" => "assistant",
+        "content" => "partial",
+        "incomplete" => true,
+        "stop_reason" => "cancelled"
+      })
+
+    [_, node] = Arvo.Session.Store.tree_nodes(Arvo.Session.Store.read_all(path))
+    assert node.id == a["id"]
+    assert node.aborted? == true
+  end
+
+  test "Session.jump_to moves HEAD, returns messages, abandoned tip stays", %{cwd: cwd} do
+    File.mkdir_p!(cwd)
+    Application.put_env(:arvo, :cwd, cwd)
+    assert {:ok, path} = Arvo.Session.open_new(cwd)
+
+    {:ok, _u1} = Arvo.Session.record_message(%{role: "user", content: "u1"})
+    {:ok, a1} = Arvo.Session.record_message(%{role: "assistant", content: "a1"})
+    {:ok, _u2} = Arvo.Session.record_message(%{role: "user", content: "u2-abandoned"})
+    {:ok, _a2} = Arvo.Session.record_message(%{role: "assistant", content: "a2-abandoned"})
+
+    assert {:ok, %{head_id: head, messages: msgs}} = Arvo.Session.jump_to(a1["id"])
+    assert head == a1["id"]
+    assert Enum.map(msgs, & &1.content) == ["u1", "a1"]
+    refute Enum.any?(msgs, &(&1.content =~ "abandoned"))
+
+    entries = Arvo.Session.Store.read_all(path)
+    assert Enum.any?(entries, &(&1["content"] == "a2-abandoned"))
+    assert Enum.any?(entries, &(&1["type"] == "head_move" && &1["head_id"] == a1["id"]))
+    assert Arvo.Session.head_id() == a1["id"]
+  end
+
+  test "Session.jump_to unknown id errors without head_move", %{cwd: cwd} do
+    File.mkdir_p!(cwd)
+    Application.put_env(:arvo, :cwd, cwd)
+    assert {:ok, path} = Arvo.Session.open_new(cwd)
+    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "hi"})
+    before = length(Arvo.Session.Store.read_all(path))
+
+    assert {:error, :unknown_id} = Arvo.Session.jump_to("no-such-id")
+    assert length(Arvo.Session.Store.read_all(path)) == before
+  end
+
+  test "Session.jump_to while turn_busy returns turn_in_progress", %{cwd: cwd} do
+    File.mkdir_p!(cwd)
+    Application.put_env(:arvo, :cwd, cwd)
+    assert {:ok, _} = Arvo.Session.open_new(cwd)
+    {:ok, u} = Arvo.Session.record_message(%{role: "user", content: "slow"})
+
+    complete_fun = fn _, _, _ ->
+      Process.sleep(10_000)
+      {:ok, %{role: "assistant", content: "late", tool_calls: []}}
+    end
+
+    ctx = Arvo.TurnContext.build()
+    {:ok, _task} = Arvo.Session.start_turn(ctx, %{complete_fun: complete_fun}, fn _ -> :ok end)
+    Process.sleep(20)
+
+    try do
+      assert {:error, :turn_in_progress} = Arvo.Session.jump_to(u["id"])
+    after
+      _ = Arvo.Session.cancel_turn()
+      Process.sleep(30)
+    end
+  end
+
+  test "Session.jump_to current HEAD is no-op without new head_move", %{cwd: cwd} do
+    File.mkdir_p!(cwd)
+    Application.put_env(:arvo, :cwd, cwd)
+    assert {:ok, path} = Arvo.Session.open_new(cwd)
+    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "hi"})
+    head = Arvo.Session.head_id()
+    before = Arvo.Session.Store.read_all(path)
+
+    assert {:ok, %{head_id: ^head, messages: msgs}} = Arvo.Session.jump_to(head)
+    assert length(msgs) >= 1
+    after_entries = Arvo.Session.Store.read_all(path)
+    assert length(after_entries) == length(before)
+    refute Enum.any?(Enum.drop(after_entries, length(before)), &(&1["type"] == "head_move"))
+  end
+
+  test "Session.rewind 1 after jump stays consistent via shared path", %{cwd: cwd} do
+    File.mkdir_p!(cwd)
+    Application.put_env(:arvo, :cwd, cwd)
+    assert {:ok, _} = Arvo.Session.open_new(cwd)
+    {:ok, u1} = Arvo.Session.record_message(%{role: "user", content: "u1"})
+    {:ok, a1} = Arvo.Session.record_message(%{role: "assistant", content: "a1"})
+    {:ok, u2} = Arvo.Session.record_message(%{role: "user", content: "u2"})
+    {:ok, _a2} = Arvo.Session.record_message(%{role: "assistant", content: "a2"})
+
+    assert {:ok, %{head_id: head_u2}} = Arvo.Session.jump_to(u2["id"])
+    assert head_u2 == u2["id"]
+    assert {:ok, %{head_id: head, messages: msgs}} = Arvo.Session.rewind(1)
+    assert head == a1["id"]
+    assert Enum.map(msgs, & &1.content) == ["u1", "a1"]
+
+    assert {:ok, %{head_id: head_u1}} = Arvo.Session.jump_to(u1["id"])
+    assert head_u1 == u1["id"]
+    assert Arvo.Session.head_id() == u1["id"]
+  end
+
+  test "Session.jump_to tool message is not jump-eligible", %{cwd: cwd} do
+    File.mkdir_p!(cwd)
+    Application.put_env(:arvo, :cwd, cwd)
+    assert {:ok, path} = Arvo.Session.open_new(cwd)
+    {:ok, u} = Arvo.Session.record_message(%{role: "user", content: "use tool"})
+    {:ok, a} =
+      Arvo.Session.record_message(%{
+        role: "assistant",
+        content: "",
+        tool_calls: [%{id: "t1", name: "bash", arguments: %{command: "echo hi"}}]
+      })
+
+    {:ok, tool} =
+      Arvo.Session.record_message(%{
+        role: "tool",
+        name: "bash",
+        tool_call_id: "t1",
+        content: "hi"
+      })
+
+    before = length(Arvo.Session.Store.read_all(path))
+    assert {:error, :not_jumpable} = Arvo.Session.jump_to(tool["id"])
+    # Assistant with pending tool_calls is not jumpable (open tool loop)
+    assert {:error, :not_jumpable} = Arvo.Session.jump_to(a["id"])
+    assert length(Arvo.Session.Store.read_all(path)) == before
+    # User messages remain jumpable
+    assert {:ok, %{head_id: head}} = Arvo.Session.jump_to(u["id"])
+    assert head == u["id"]
+  end
 end

@@ -9,6 +9,10 @@ defmodule Arvo.TUI.Render do
 
   # Visual width of role prefixes ("you  " / "arvo ") — ANSI not counted.
   @role_pad 5
+  # Collapsed activity body preview (Pi-style short + more-lines cue).
+  @detail_collapsed_lines 3
+  # Line count above which collapsed preview + cue is shown by default.
+  @detail_collapse_threshold 8
   # Expanded activity/tool detail hard cap.
   @detail_expanded_lines 16
   @palette_max 7
@@ -22,16 +26,27 @@ defmodule Arvo.TUI.Render do
     ghost = ghost_line(state, width)
     footer = footer_line(state, width)
     input = input_line(state, width)
-    palette_rows = palette_lines(state, width)
 
-    # Chrome: ghost, blank, body..., [palette...], blank, input, footer
-    reserved = 5 + length(palette_rows)
-    body_h = max(height - reserved, 1)
-    body = transcript_lines(state, body_h, width, scroll)
+    if state[:tree] do
+      # Full-body Session Tree overlay (Pi-style)
+      reserved = 4
+      body_h = max(height - reserved, 1)
+      body = tree_lines(state, body_h, width)
+      rows = [ghost, "" | body] ++ ["", input, footer]
+      rows = Enum.take(rows ++ List.duplicate("", height), height)
+      Enum.join(rows, "\n")
+    else
+      palette_rows = palette_lines(state, width)
 
-    rows = [ghost, "" | body] ++ palette_rows ++ ["", input, footer]
-    rows = Enum.take(rows ++ List.duplicate("", height), height)
-    Enum.join(rows, "\n")
+      # Chrome: ghost, blank, body..., [palette...], blank, input, footer
+      reserved = 5 + length(palette_rows)
+      body_h = max(height - reserved, 1)
+      body = transcript_lines(state, body_h, width, scroll)
+
+      rows = [ghost, "" | body] ++ palette_rows ++ ["", input, footer]
+      rows = Enum.take(rows ++ List.duplicate("", height), height)
+      Enum.join(rows, "\n")
+    end
   end
 
   def ghost_line(state, width \\ 80) do
@@ -48,10 +63,15 @@ defmodule Arvo.TUI.Render do
 
   def footer_line(state, width \\ 80) do
     base =
-      if state[:palette] do
-        "↑↓ select · Enter run · Esc close palette"
-      else
-        "Enter send · Esc cancel · ↑↓ focus · Ctrl+E all · / cmds · PgUp/Dn"
+      cond do
+        state[:tree] ->
+          "↑↓ move · Enter jump · Esc close tree"
+
+        state[:palette] ->
+          "↑↓ select · Enter run · Esc close palette"
+
+        true ->
+          "Enter send · Esc cancel · ↑↓ focus · Ctrl+E all · /tree · PgUp/Dn"
       end
 
     line =
@@ -135,6 +155,99 @@ defmodule Arvo.TUI.Render do
     end
   end
 
+  @doc "Session Tree overlay rows (header + node list + counter)."
+  def tree_lines(state, max_lines, width \\ 80) do
+    case state[:tree] do
+      %{nodes: nodes} = tree when is_list(nodes) ->
+        sel = tree[:selected] || 0
+        scroll = tree[:scroll] || 0
+        n = length(nodes)
+        # Header + list + counter leave 2 chrome lines inside body
+        list_h = max(max_lines - 2, 1)
+        window = min(tree[:window] || list_h, list_h)
+        scroll = min(scroll, max(n - window, 0))
+        shown = Enum.slice(nodes, scroll, window)
+
+        header =
+          Theme.bold("Session Tree") <> Theme.dim("  · jump message nodes · tools orient only")
+
+        rows =
+          Enum.with_index(shown, scroll)
+          |> Enum.map(fn {node, abs_i} ->
+            tree_node_line(node, abs_i == sel, width)
+          end)
+
+        counter =
+          cond do
+            n == 0 ->
+              Theme.dim("  (empty)")
+
+            is_binary(tree[:error]) and tree[:error] != "" ->
+              Theme.error("  ! " <> tree[:error])
+
+            true ->
+              Theme.dim("  #{sel + 1}/#{n}" <> if(n > window, do: "  (scroll ↑↓)", else: ""))
+          end
+
+        ([header] ++ rows ++ [counter])
+        |> Enum.take(max_lines)
+        |> pad_body(max_lines)
+
+      _ ->
+        pad_body([Theme.dim("  (no tree)")], max_lines)
+    end
+  end
+
+  defp tree_node_line(node, selected?, width) do
+    kind = node[:kind] || :other
+    preview = node[:preview] || ""
+    jumpable? = Map.get(node, :jumpable?, false)
+    head? = Map.get(node, :head?, false)
+    tip? = Map.get(node, :tip?, false)
+    aborted? = Map.get(node, :aborted?, false)
+
+    role =
+      case kind do
+        :user -> "user"
+        :assistant -> "assistant"
+        :tool -> "tool"
+        _ -> "other"
+      end
+
+    role =
+      if aborted? and kind == :assistant do
+        role <> " (aborted)"
+      else
+        role
+      end
+
+    markers =
+      []
+      |> then(fn m -> if head?, do: ["HEAD" | m], else: m end)
+      |> then(fn m -> if tip? and not head?, do: ["tip" | m], else: m end)
+      |> then(fn m -> if not jumpable? and kind == :tool, do: ["—"] ++ m, else: m end)
+      |> Enum.reverse()
+      |> case do
+        [] -> ""
+        ms -> " [" <> Enum.join(ms, ",") <> "]"
+      end
+
+    mark = if selected?, do: Theme.accent("› "), else: "  "
+    role_s = if selected?, do: Theme.bold(role), else: Theme.muted(role)
+    prev = Theme.dim("  " <> preview)
+    line = mark <> role_s <> markers <> prev
+
+    if not jumpable? and kind == :tool do
+      Theme.dim(Markdown.strip_ansi(line) |> String.slice(0, max(width, 1)))
+    else
+      if String.length(Markdown.strip_ansi(line)) > width do
+        String.slice(line, 0, width + 24)
+      else
+        line
+      end
+    end
+  end
+
   defp window(lines, max_lines, scroll) when scroll <= 0 do
     lines
     |> Enum.take(-max_lines)
@@ -159,15 +272,43 @@ defmodule Arvo.TUI.Render do
   defp pad_body(lines, max), do: lines ++ List.duplicate("", max - length(lines))
 
   defp wrap_entry(%{kind: :user, text: t}, width, _opts) do
-    wrap_role(Theme.bold("you") <> "  ", String.duplicate(" ", @role_pad), to_string(t), width, false)
+    wrap_role(
+      Theme.bold("you") <> "  ",
+      String.duplicate(" ", @role_pad),
+      to_string(t),
+      width,
+      false
+    )
   end
 
   defp wrap_entry(%{kind: :assistant, text: t, streaming: true}, width, _opts) do
-    wrap_role_md(Theme.accent("arvo") <> " ", String.duplicate(" ", @role_pad), to_string(t), width, true)
+    wrap_role_md(
+      Theme.accent("arvo") <> " ",
+      String.duplicate(" ", @role_pad),
+      to_string(t),
+      width,
+      true
+    )
+  end
+
+  defp wrap_entry(%{kind: :assistant, text: t, aborted: true}, width, _opts) do
+    wrap_role_md(
+      Theme.accent("arvo") <> Theme.dim("(aborted) "),
+      String.duplicate(" ", @role_pad),
+      to_string(t),
+      width,
+      false
+    )
   end
 
   defp wrap_entry(%{kind: :assistant, text: t}, width, _opts) do
-    wrap_role_md(Theme.accent("arvo") <> " ", String.duplicate(" ", @role_pad), to_string(t), width, false)
+    wrap_role_md(
+      Theme.accent("arvo") <> " ",
+      String.duplicate(" ", @role_pad),
+      to_string(t),
+      width,
+      false
+    )
   end
 
   defp wrap_entry(%{kind: :thought} = entry, width, opts) do
@@ -179,13 +320,13 @@ defmodule Arvo.TUI.Render do
 
     header =
       cond do
-        live? and text == "" -> "◆ Thinking…"
-        live? -> "◆ Thinking… (#{thought_duration(entry)})"
-        text != "" -> "◆ Thought for #{thought_duration(entry)}"
-        true -> "◆ Thought for #{thought_duration(entry)}"
+        live? and text == "" -> "Thought  · Thinking…"
+        live? -> "Thought  · Thinking… (#{thought_duration(entry)})"
+        text != "" -> "Thought  · #{thought_duration(entry)}"
+        true -> "Thought  · #{thought_duration(entry)}"
       end
 
-    header = if focused?, do: Theme.accent(header), else: Theme.dim(header)
+    header = if focused?, do: Theme.accent("◆ " <> header), else: Theme.dim("◆ " <> header)
 
     if expanded? and text != "" do
       body_w = max(width - 2, 1)
@@ -215,14 +356,32 @@ defmodule Arvo.TUI.Render do
         _ -> {"◆ ", &Theme.muted/1}
       end
 
-    line = glyph <> summary
+    # Two-tier card: accent/status header (tool · target), muted body below
+    header_text =
+      case status do
+        :running -> summary <> "  · running"
+        :error -> summary <> "  · error"
+        _ -> summary
+      end
+
+    line = glyph <> header_text
     line = if focused?, do: Theme.bold(paint.(line)), else: paint.(line)
 
-    if expanded? and is_binary(detail) and detail != "" do
-      body_w = max(width - 4, 1)
-      [line | preview_body(detail, body_w, @detail_expanded_lines)]
-    else
-      [line]
+    body_w = max(width - 4, 1)
+
+    cond do
+      not is_binary(detail) or detail == "" ->
+        [line]
+
+      expanded? ->
+        [line | preview_body(detail, body_w, @detail_expanded_lines)]
+
+      long_detail?(detail) ->
+        # Collapsed long output: short preview + more-lines cue (R11/AE5)
+        [line | preview_body(detail, body_w, @detail_collapsed_lines)]
+
+      true ->
+        [line]
     end
   end
 
@@ -243,12 +402,21 @@ defmodule Arvo.TUI.Render do
 
     line = glyph <> summary
     line = if focused?, do: Theme.bold(paint.(line)), else: paint.(line)
+    detail = to_string(t)
+    body_w = max(width - 4, 1)
 
-    if running? or not expanded? do
-      [line]
-    else
-      body_w = max(width - 4, 1)
-      [line | preview_body(to_string(t), body_w, @detail_expanded_lines)]
+    cond do
+      running? ->
+        [line]
+
+      expanded? ->
+        [line | preview_body(detail, body_w, @detail_expanded_lines)]
+
+      long_detail?(detail) ->
+        [line | preview_body(detail, body_w, @detail_collapsed_lines)]
+
+      true ->
+        [line]
     end
   end
 
@@ -272,6 +440,15 @@ defmodule Arvo.TUI.Render do
 
   defp wrap_entry(other, width, _opts) when is_binary(other), do: wrap_text(other, max(width, 1))
   defp wrap_entry(_, _, _), do: []
+
+  defp long_detail?(text) when is_binary(text) do
+    text
+    |> String.split("\n")
+    |> length()
+    |> Kernel.>(@detail_collapse_threshold)
+  end
+
+  defp long_detail?(_), do: false
 
   defp thought_duration(%{started_at: s, ended_at: e}) when is_integer(s) and is_integer(e) do
     ms = max(e - s, 0)

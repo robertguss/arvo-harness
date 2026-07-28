@@ -28,7 +28,10 @@ defmodule Arvo.Session do
 
   @doc "Start a new persisted session for cwd."
   def open_new(cwd \\ nil, opts \\ []) do
-    GenServer.call(__MODULE__, {:open_new, cwd || Application.get_env(:arvo, :cwd) || Arvo.cwd(), opts})
+    GenServer.call(
+      __MODULE__,
+      {:open_new, cwd || Application.get_env(:arvo, :cwd) || Arvo.cwd(), opts}
+    )
   end
 
   @doc "Resume the newest session for cwd from tip (or given path)."
@@ -96,9 +99,21 @@ defmodule Arvo.Session do
   Move HEAD to an earlier node (append-only `head_move`). Next messages parent from new HEAD.
 
   Steps: positive integer of parent hops from current HEAD (default 1).
+  Thin wrapper over ancestor walk + `jump_to` shared head-move path (legacy; prefer `/tree`).
   """
   def rewind(steps \\ 1) when is_integer(steps) and steps >= 1 do
     GenServer.call(__MODULE__, {:rewind, steps})
+  end
+
+  @doc """
+  Move HEAD to a specific message entry id (append-only `head_move`).
+
+  Idle-only. Target must be a jumpable user/assistant message in history.
+  Returns `{:ok, %{head_id, messages}}` where `messages` is root→HEAD for Focus rehydrate.
+  Jump to current HEAD is a no-op (no new head_move).
+  """
+  def jump_to(entry_id) when is_binary(entry_id) do
+    GenServer.call(__MODULE__, {:jump_to, entry_id})
   end
 
   @doc "Current HEAD entry id (explicit pointer, not necessarily file tip)."
@@ -242,18 +257,19 @@ defmodule Arvo.Session do
 
       {:ok, path, meta} = Arvo.Session.Store.create(cwd, opts)
 
-      state = %{
-        state
-        | id: meta["id"],
-          path: path,
-          last_id: meta["id"],
-          cwd: cwd,
-          history: [meta],
-          model: meta["model"],
-          profile: meta["profile"],
-          tokens: Arvo.Session.Tokens.new()
-      }
-      |> put_attention_defaults()
+      state =
+        %{
+          state
+          | id: meta["id"],
+            path: path,
+            last_id: meta["id"],
+            cwd: cwd,
+            history: [meta],
+            model: meta["model"],
+            profile: meta["profile"],
+            tokens: Arvo.Session.Tokens.new()
+        }
+        |> put_attention_defaults()
 
       {:reply, {:ok, path}, state}
     end
@@ -293,19 +309,20 @@ defmodule Arvo.Session do
           warm = warm_from_history(entries)
           path_index = rebuild_path_index(path)
 
-          state = %{
-            state
-            | id: meta && meta["id"],
-              path: path,
-              last_id: head,
-              cwd: (meta && meta["cwd"]) || state.cwd,
-              history: entries,
-              model: meta && meta["model"],
-              profile: meta && meta["profile"],
-              tokens: tokens
-          }
-          |> put_attention_defaults(warm)
-          |> Map.put(:attention_path_index, path_index)
+          state =
+            %{
+              state
+              | id: meta && meta["id"],
+                path: path,
+                last_id: head,
+                cwd: (meta && meta["cwd"]) || state.cwd,
+                history: entries,
+                model: meta && meta["model"],
+                profile: meta && meta["profile"],
+                tokens: tokens
+            }
+            |> put_attention_defaults(warm)
+            |> Map.put(:attention_path_index, path_index)
 
           # Do not call TUI here — resume is often invoked from TUI.slash (deadlock).
           messages = Arvo.Session.Store.messages_to_head(entries)
@@ -327,6 +344,32 @@ defmodule Arvo.Session do
 
   def handle_call(:head_id, _from, state), do: {:reply, state.last_id, state}
 
+  def handle_call({:jump_to, entry_id}, _from, state) do
+    cond do
+      turn_busy?(state) ->
+        {:reply, {:error, :turn_in_progress}, state}
+
+      is_nil(state.path) ->
+        {:reply, {:error, :no_session}, state}
+
+      true ->
+        case Map.new(state.history, &{&1["id"], &1})[entry_id] do
+          nil ->
+            {:reply, {:error, :unknown_id}, state}
+
+          entry ->
+            if Arvo.Session.Store.jumpable_entry?(entry) do
+              case apply_head_move(state, entry_id) do
+                {:ok, state, result} -> {:reply, {:ok, result}, state}
+                {:error, reason} -> {:reply, {:error, reason}, state}
+              end
+            else
+              {:reply, {:error, :not_jumpable}, state}
+            end
+        end
+    end
+  end
+
   def handle_call({:rewind, steps}, _from, state) do
     cond do
       turn_busy?(state) ->
@@ -338,43 +381,14 @@ defmodule Arvo.Session do
       true ->
         by_id = Map.new(state.history, &{&1["id"], &1})
         start = by_id[state.last_id]
-
-        target =
-          Enum.reduce_while(1..steps, start, fn _, cur ->
-            case cur do
-              nil ->
-                {:halt, nil}
-
-              %{"parent_id" => nil} ->
-                {:halt, cur}
-
-              %{"parent_id" => pid} ->
-                case by_id[pid] do
-                  nil -> {:halt, cur}
-                  parent -> {:cont, parent}
-                end
-            end
-          end)
+        target = walk_ancestors(start, by_id, steps)
 
         case target do
           %{"id" => new_head} ->
-            written =
-              Arvo.Session.Store.append_head_move!(state.path, new_head, parent_id: state.last_id)
-
-            history = state.history ++ [written]
-            # Rebuild warm/attention from new HEAD chain (do not keep abandoned tip state)
-            warm = warm_from_history(history)
-
-            state =
-              %{
-                state
-                | last_id: new_head,
-                  history: history
-              }
-              |> put_attention_defaults(warm)
-              |> Map.put(:attention_path_index, rebuild_path_index(state.path))
-
-            {:reply, {:ok, %{head_id: new_head}}, state}
+            case apply_head_move(state, new_head) do
+              {:ok, state, result} -> {:reply, {:ok, result}, state}
+              {:error, :unknown_id} -> {:reply, {:error, :cannot_rewind}, state}
+            end
 
           _ ->
             {:reply, {:error, :cannot_rewind}, state}
@@ -389,7 +403,10 @@ defmodule Arvo.Session do
       entry =
         attrs
         |> Map.put("type", Map.get(attrs, "type") || Map.get(attrs, :type) || "message")
-        |> Map.put("parent_id", Map.get(attrs, "parent_id") || Map.get(attrs, :parent_id) || state.last_id)
+        |> Map.put(
+          "parent_id",
+          Map.get(attrs, "parent_id") || Map.get(attrs, :parent_id) || state.last_id
+        )
 
       written = Arvo.Session.Store.append!(state.path, entry)
 
@@ -425,7 +442,8 @@ defmodule Arvo.Session do
     end
   end
 
-  def handle_call(:warm, _from, state), do: {:reply, state.warm || Arvo.Session.Warm.empty(), state}
+  def handle_call(:warm, _from, state),
+    do: {:reply, state.warm || Arvo.Session.Warm.empty(), state}
 
   def handle_call({:set_warm_goal, goal}, _from, state) do
     warm = Arvo.Session.Warm.set_goal(state.warm || Arvo.Session.Warm.empty(), goal)
@@ -595,7 +613,10 @@ defmodule Arvo.Session do
           event_fun.(event)
         rescue
           e ->
-            Logger.warning("Arvo.Session event_fun failed (#{inspect(elem_tag(event))}): #{Exception.message(e)}")
+            Logger.warning(
+              "Arvo.Session event_fun failed (#{inspect(elem_tag(event))}): #{Exception.message(e)}"
+            )
+
             :ok
         catch
           kind, reason ->
@@ -955,6 +976,55 @@ defmodule Arvo.Session do
       Process.alive?(state.turn_task.pid)
   end
 
+  # Shared HEAD rewrite used by jump_to (jumpable gate) and rewind (any ancestor).
+  # No-op when already at entry_id: returns messages without appending head_move.
+  defp apply_head_move(state, entry_id) when is_binary(entry_id) do
+    by_id = Map.new(state.history, &{&1["id"], &1})
+
+    case by_id[entry_id] do
+      nil ->
+        {:error, :unknown_id}
+
+      _entry ->
+        if state.last_id == entry_id do
+          msgs = Arvo.Session.Store.messages_to_head(state.history)
+          {:ok, state, %{head_id: entry_id, messages: msgs}}
+        else
+          written =
+            Arvo.Session.Store.append_head_move!(state.path, entry_id, parent_id: state.last_id)
+
+          history = state.history ++ [written]
+          warm = warm_from_history(history)
+
+          state =
+            %{state | last_id: entry_id, history: history}
+            |> put_attention_defaults(warm)
+            |> Map.put(:attention_path_index, rebuild_path_index(state.path))
+
+          msgs = Arvo.Session.Store.messages_to_head(history)
+          {:ok, state, %{head_id: entry_id, messages: msgs}}
+        end
+    end
+  end
+
+  defp walk_ancestors(start, by_id, steps) do
+    Enum.reduce_while(1..steps, start, fn _, cur ->
+      case cur do
+        nil ->
+          {:halt, nil}
+
+        %{"parent_id" => nil} ->
+          {:halt, cur}
+
+        %{"parent_id" => pid} ->
+          case by_id[pid] do
+            nil -> {:halt, cur}
+            parent -> {:cont, parent}
+          end
+      end
+    end)
+  end
+
   defp apply_handoff_rebind(state, fields) when is_map(fields) do
     child_warm =
       Map.get(fields, :warm) ||
@@ -975,7 +1045,7 @@ defmodule Arvo.Session do
         turn_task: nil,
         turn_result: nil,
         turn_prior_len: nil,
-        cancelled_generation: nil,
+        cancelled_generation: nil
     }
     |> put_attention_defaults(Arvo.Session.Warm.normalize(child_warm))
   end
@@ -1072,7 +1142,8 @@ defmodule Arvo.Session do
               tool: m[:name] || m["name"] || "tool",
               args: %{},
               is_error: m[:is_error] || m["is_error"] || false,
-              text: if(m[:is_error] || m["is_error"], do: String.slice(content, 0, 300), else: nil),
+              text:
+                if(m[:is_error] || m["is_error"], do: String.slice(content, 0, 300), else: nil),
               path: nil
             })
 

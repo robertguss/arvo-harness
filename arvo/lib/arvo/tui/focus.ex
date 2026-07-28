@@ -61,6 +61,13 @@ defmodule Arvo.TUI.Focus do
     _ -> false
   end
 
+  # Bracketed paste (DECSET 2004): terminals wrap clipboard in \e[200~ … \e[201~
+  # so mid-paste newlines are not mistaken for Enter.
+  @bracketed_paste_enable "\e[?2004h"
+  @bracketed_paste_disable "\e[?2004l"
+  @paste_start "\e[200~"
+  @paste_end "\e[201~"
+
   defp run_raw(_opts) do
     term = Termite.Terminal.start()
 
@@ -69,18 +76,24 @@ defmodule Arvo.TUI.Focus do
       |> Termite.Screen.alt_screen()
       |> Termite.Screen.clear_screen()
       |> Termite.Terminal.write(Termite.Screen.escape_sequence(:cursor_hide))
+      |> Termite.Terminal.write(@bracketed_paste_enable)
 
     try do
-      raw_loop(term, %{input: "", multiline: false, scroll: 0, palette: nil}, nil)
+      raw_loop(term, new_local(), nil)
     after
       try do
         term
+        |> Termite.Terminal.write(@bracketed_paste_disable)
         |> Termite.Terminal.write(Termite.Screen.escape_sequence(:cursor_show))
         |> Termite.Screen.exit_alt_screen()
       rescue
         _ -> :ok
       end
     end
+  end
+
+  defp new_local do
+    %{input: "", paste: false, pending: "", scroll: 0, palette: nil}
   end
 
   # Paint only when the frame changes. Full clear_screen on every 80ms poll was
@@ -150,10 +163,28 @@ defmodule Arvo.TUI.Focus do
   defp size(%{size: %{width: w, height: h}}) when is_integer(w) and is_integer(h), do: {w, h}
   defp size(_), do: {80, 24}
 
-  defp handle_keys(data, local, st) do
+  @doc false
+  # Test seam for raw key/paste chunks (same path as the raw loop).
+  def apply_keys(data, local, st \\ %{status: :idle}) when is_binary(data) do
+    handle_keys(data, local, st)
+  end
+
+  defp handle_keys(data, local, st) when is_binary(data) do
+    local = normalize_local(local)
+    data = Map.get(local, :pending, "") <> data
+    local = %{local | pending: ""}
     tree_open? = st[:tree] != nil
 
     cond do
+      # Incomplete bracketed-paste marker at end of chunk — hold for next poll.
+      pending_paste_marker?(data) ->
+        {:cont, %{local | pending: data}}
+
+      # In paste mode, or chunk is a paste stream / multi-line bulk insert:
+      # never treat embedded newlines as Enter.
+      paste_insert_chunk?(data, local) ->
+        absorb_paste_or_bulk(data, local)
+
       # Esc: tree → palette → cancel turn
       data == "\e" or data == "\e\e" ->
         cond do
@@ -214,7 +245,8 @@ defmodule Arvo.TUI.Focus do
       data in ["\e[6~", "\e[1;5B"] and not tree_open? ->
         {:cont, %{local | scroll: max(local.scroll - scroll_step(), 0)}}
 
-      data in ["\r", "\n"] ->
+      # Real Enter only when the entire event is a lone line ending (not paste).
+      data in ["\r", "\n", "\r\n"] ->
         if tree_open? do
           _ = Arvo.TUI.key(:enter)
           {:cont, %{local | input: "", palette: nil}}
@@ -246,6 +278,122 @@ defmodule Arvo.TUI.Focus do
 
       true ->
         {:cont, local}
+    end
+  end
+
+  defp normalize_local(local) when is_map(local) do
+    local
+    |> Map.put_new(:input, "")
+    |> Map.put_new(:paste, false)
+    |> Map.put_new(:pending, "")
+    |> Map.put_new(:scroll, 0)
+    |> Map.put_new(:palette, nil)
+  end
+
+  defp paste_insert_chunk?(data, local) do
+    local.paste or
+      String.contains?(data, @paste_start) or
+      String.contains?(data, @paste_end) or
+      bulk_multiline_insert?(data)
+  end
+
+  # Multi-byte chunk with embedded newlines is clipboard bulk, not a keypress.
+  # Lone "\r\n" is still Enter (handled before this when paste is false).
+  defp bulk_multiline_insert?(data) do
+    data != "\r\n" and byte_size(data) > 1 and
+      (String.contains?(data, "\n") or String.contains?(data, "\r"))
+  end
+
+  defp pending_paste_marker?(data) do
+    cond do
+      data == "" or data == "\e" ->
+        # Bare ESC is the Esc key, not a held paste delimiter.
+        false
+
+      true ->
+        strict_prefix?(data, @paste_start) or strict_prefix?(data, @paste_end)
+    end
+  end
+
+  defp strict_prefix?(data, marker) do
+    byte_size(data) < byte_size(marker) and String.starts_with?(marker, data)
+  end
+
+  defp absorb_paste_or_bulk(data, local) do
+    {input, paste, pending} = scan_paste_stream(data, local.input, local.paste, "")
+    local = %{local | paste: paste, pending: pending}
+    {:cont, set_input(local, input)}
+  end
+
+  # Walk a chunk: toggle paste on markers; always insert text/newlines (never submit).
+  defp scan_paste_stream(<<>>, input, paste, pending), do: {input, paste, pending}
+
+  defp scan_paste_stream(data, input, paste, _pending) do
+    cond do
+      String.starts_with?(data, @paste_start) ->
+        rest = binary_part(data, byte_size(@paste_start), byte_size(data) - byte_size(@paste_start))
+        scan_paste_stream(rest, input, true, "")
+
+      String.starts_with?(data, @paste_end) ->
+        rest = binary_part(data, byte_size(@paste_end), byte_size(data) - byte_size(@paste_end))
+        scan_paste_stream(rest, input, false, "")
+
+      # Incomplete marker at end of this chunk only
+      pending_paste_marker?(data) ->
+        {input, paste, data}
+
+      String.starts_with?(data, "\r\n") ->
+        rest = binary_part(data, 2, byte_size(data) - 2)
+        scan_paste_stream(rest, input <> "\n", paste, "")
+
+      String.starts_with?(data, "\n") or String.starts_with?(data, "\r") ->
+        rest = binary_part(data, 1, byte_size(data) - 1)
+        scan_paste_stream(rest, input <> "\n", paste, "")
+
+      String.starts_with?(data, "\e") ->
+        # Unknown/partial escape inside paste stream — drop one ESC and continue
+        # so we do not leak CSI junk into the draft (markers already handled).
+        case next_escape_unit(data) do
+          {_, rest} -> scan_paste_stream(rest, input, paste, "")
+        end
+
+      true ->
+        {ch, rest} = next_utf8(data)
+        scan_paste_stream(rest, input <> ch, paste, "")
+    end
+  end
+
+  defp next_escape_unit(<<"\e[", mid::binary>>) do
+    case take_csi_final(mid) do
+      {:ok, _seq, after_csi} -> {"", after_csi}
+      :incomplete -> {"", mid}
+    end
+  end
+
+  defp next_escape_unit(<<"\e", rest::binary>>), do: {"", rest}
+  defp next_escape_unit(other), do: {"", other}
+
+  defp take_csi_final(mid) do
+    # CSI final bytes @ through ~ (0x40–0x7E)
+    finals = for b <- ?@..?~, do: <<b>>
+
+    case :binary.match(mid, :binary.compile_pattern(finals)) do
+      {idx, 1} ->
+        rest_len = byte_size(mid) - idx - 1
+        rest = if rest_len > 0, do: binary_part(mid, idx + 1, rest_len), else: ""
+        {:ok, binary_part(mid, 0, idx + 1), rest}
+
+      :nomatch ->
+        :incomplete
+    end
+  end
+
+  defp next_utf8(<<>>), do: {"", ""}
+
+  defp next_utf8(data) do
+    case String.next_grapheme(data) do
+      {g, rest} -> {g, rest}
+      nil -> {binary_part(data, 0, 1), binary_part(data, 1, byte_size(data) - 1)}
     end
   end
 

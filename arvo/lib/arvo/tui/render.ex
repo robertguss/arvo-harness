@@ -16,6 +16,8 @@ defmodule Arvo.TUI.Render do
   # Expanded activity/tool detail hard cap.
   @detail_expanded_lines 16
   @palette_max 7
+  # Soft-cap for multi-line composer so transcript keeps some room.
+  @input_max_rows 12
 
   @doc "Render full screen frame from TUI state map."
   def frame(state, opts \\ []) do
@@ -25,29 +27,38 @@ defmodule Arvo.TUI.Render do
 
     ghost = ghost_line(state, width)
     footer = footer_line(state, width)
-    input = input_line(state, width)
+    input_cap = input_row_cap(height)
+    input_rows = input_lines(state, width, input_cap)
 
     if state[:tree] do
       # Full-body Session Tree overlay (Pi-style)
-      reserved = 4
+      # ghost, blank, body..., blank, input..., footer
+      reserved = 4 + max(length(input_rows) - 1, 0)
       body_h = max(height - reserved, 1)
       body = tree_lines(state, body_h, width)
-      rows = [ghost, "" | body] ++ ["", input, footer]
+      rows = [ghost, "" | body] ++ [""] ++ input_rows ++ [footer]
       rows = Enum.take(rows ++ List.duplicate("", height), height)
       Enum.join(rows, "\n")
     else
       palette_rows = palette_lines(state, width)
 
-      # Chrome: ghost, blank, body..., [palette...], blank, input, footer
-      reserved = 5 + length(palette_rows)
+      # Chrome: ghost, blank, body..., [palette...], blank, input..., footer
+      # Base 5 reserved for single-line input; each extra input row steals from body.
+      reserved = 5 + length(palette_rows) + max(length(input_rows) - 1, 0)
       body_h = max(height - reserved, 1)
       body = transcript_lines(state, body_h, width, scroll)
 
-      rows = [ghost, "" | body] ++ palette_rows ++ ["", input, footer]
+      rows = [ghost, "" | body] ++ palette_rows ++ [""] ++ input_rows ++ [footer]
       rows = Enum.take(rows ++ List.duplicate("", height), height)
       Enum.join(rows, "\n")
     end
   end
+
+  defp input_row_cap(height) when is_integer(height) and height > 0 do
+    max(1, min(@input_max_rows, div(height, 3)))
+  end
+
+  defp input_row_cap(_), do: 1
 
   def ghost_line(state, width \\ 80) do
     model = state[:model] || "xai:?"
@@ -87,10 +98,67 @@ defmodule Arvo.TUI.Render do
     end
   end
 
+  @doc """
+  Single-row composer (first visual line). Prefer `input_lines/3` for multi-line paste.
+  """
   def input_line(state, width \\ 80) do
-    draft = state[:input] || ""
+    state |> input_lines(width, 1) |> List.first() || Theme.bold("› ")
+  end
+
+  @doc """
+  Multi-line composer rows: soft-wrap + explicit newlines, capped to `max_rows`.
+
+  First row uses `› `/`… `; continuation rows are indented to align with text.
+  Overflow keeps the **start** of the draft (so pasted prompts stay readable)
+  and appends a dim cue for hidden lines.
+  """
+  def input_lines(state, width \\ 80, max_rows \\ @input_max_rows) do
+    draft =
+      (state[:input] || "")
+      |> String.replace("\r\n", "\n")
+      |> String.replace("\r", "\n")
+
     prefix = if state[:status] == :running, do: "… ", else: "› "
-    Theme.bold(prefix) <> String.slice(draft, 0, max(width - 2, 10))
+    # Visual widths (ANSI bold not counted).
+    prefix_w = String.length(prefix)
+    cont = String.duplicate(" ", prefix_w)
+    content_w = max(width - prefix_w, 8)
+    max_rows = max(max_rows, 1)
+
+    wrapped =
+      case draft do
+        "" -> [""]
+        text -> wrap_text(text, content_w)
+      end
+
+    {visible, cue?} =
+      cond do
+        length(wrapped) <= max_rows ->
+          {wrapped, false}
+
+        max_rows == 1 ->
+          # Single-row callers: hard slice only (no room for a cue row).
+          {[String.slice(hd(wrapped), 0, content_w)], false}
+
+        true ->
+          keep = max_rows - 1
+          {Enum.take(wrapped, keep), true}
+      end
+
+    rows =
+      visible
+      |> Enum.with_index()
+      |> Enum.map(fn {line, i} ->
+        p = if i == 0, do: Theme.bold(prefix), else: cont
+        p <> line
+      end)
+
+    if cue? do
+      hidden = length(wrapped) - length(visible)
+      rows ++ [Theme.dim(cont <> "… (+#{hidden} more lines)")]
+    else
+      rows
+    end
   end
 
   def transcript_lines(state, max_lines, width, scroll \\ 0) do

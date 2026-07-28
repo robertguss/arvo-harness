@@ -119,6 +119,15 @@ while the pane stays open and Arvo-owned until process exit, Esc, or HEAD
 jump. Esc and HEAD jump explicitly tear down Arvo-owned panes so live
 processes do not outlive abandoned conversation branches.
 
+### Arvo-owned pane registry
+
+Session-local ownership map of pane ids Arvo opened for the current live
+session. Registration is a precondition of running work in a split pane;
+Esc, cancel, HEAD jump, resume, and open_new tear the registry down so
+Herdr processes cannot outlive abandoned conversation branches. Tile live
+status is pushed from Session to the agent tile (non-blocking), not pulled
+on every paint.
+
 ### Pane tools
 
 First-class tools that wrap Herdr for long-running or interactive work. Tool

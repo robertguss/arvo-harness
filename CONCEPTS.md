@@ -26,7 +26,7 @@ Attention handoff that creates a new session seeded only by a structured work-de
 
 ### Focus claim
 
-Synchronous UI busy claim before fire-and-forget product chat spawn. Blocks double-Enter from starting a second turn; mid-busy input becomes steering instead. Complements Session’s real start_turn mutex; does not replace it.
+Synchronous UI busy claim before fire-and-forget product chat spawn. Blocks double-Enter from starting a second turn; mid-busy input becomes steering instead. Complements Session’s real start_turn mutex; does not replace it. Session-driven status paint into Focus must not wait on the UI process while the UI can wait on Session — that reverse-call wait is a deadlock class, not a cosmetic UI freeze.
 
 ### Turn-busy
 

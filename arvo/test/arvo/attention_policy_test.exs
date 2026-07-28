@@ -36,8 +36,8 @@ defmodule Arvo.AttentionPolicyTest do
     assert decision.action == :full_hot
   end
 
-  test "error → full_hot even when large" do
-    decision =
+  test "large error → full_hot under budget; stub when budget exhausted" do
+    under =
       Policy.decide(%{
         tool: "bash",
         args: %{},
@@ -47,8 +47,25 @@ defmodule Arvo.AttentionPolicyTest do
         budgets: %{exception_bytes: 0, exception_count: 0}
       })
 
-    assert decision.action == :full_hot
-    assert decision.fidelity_exception == true
+    assert under.action == :full_hot
+    assert under.fidelity_exception == true
+
+    over =
+      Policy.decide(%{
+        tool: "bash",
+        args: %{},
+        text: @large,
+        is_error: true,
+        retention: %{},
+        budgets: %{
+          exception_bytes: 200_000,
+          exception_count: 50,
+          max_exception_bytes: 100_000,
+          max_exception_count: 10
+        }
+      })
+
+    assert over.action == :stub
   end
 
   test "last Read of P within retention → full_hot; after TTL → stub" do

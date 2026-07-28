@@ -62,13 +62,15 @@ defmodule Arvo.Attention do
 
     # Same-path re-invoke detection (AE7)
     existing = if is_binary(path), do: Cold.find_by_source_path(session_path, path), else: nil
+    path_changed? = path_changed?(path, text, existing, retention)
 
     if is_map(existing) and tool == "read" and not is_error? do
       audit(session_path, ctx, :same_path_reinvoke, %{
         "path" => path,
         "cold_id" => existing["id"],
         "tool" => tool,
-        "size" => existing["size"]
+        "size" => existing["size"],
+        "path_changed" => path_changed?
       })
     end
 
@@ -90,14 +92,14 @@ defmodule Arvo.Attention do
              tool: tool,
              path: path,
              cold_id: existing["id"],
-             path_changed?: false
+             path_changed?: path_changed?
            }) == :prefer_cold_stub do
         %{decision | action: :stub, fidelity_exception: false, reason: :same_path_reuse}
       else
         decision
       end
 
-    {:ok, cold_entry} =
+    cold_result =
       Cold.store(session_path, text, %{
         tool: tool,
         kind: "tool_result",
@@ -106,7 +108,22 @@ defmodule Arvo.Attention do
         preview: decision.preview
       })
 
-    cold_id = cold_entry["id"]
+    {cold_id, decision} =
+      case cold_result do
+        {:ok, cold_entry} ->
+          {cold_entry["id"], decision}
+
+        {:error, reason} ->
+          # Fail open to full-hot so Session stays up; audit honesty
+          audit(session_path, ctx, :store_cold, %{
+            "error" => inspect(reason),
+            "tool" => tool,
+            "size" => decision.size,
+            "path" => path
+          })
+
+          {nil, %{decision | action: :full_hot, reason: :cold_store_failed, fidelity_exception: false}}
+      end
 
     audit(session_path, ctx, :store_cold, %{
       "id" => cold_id,
@@ -116,21 +133,25 @@ defmodule Arvo.Attention do
     })
 
     {content, action} =
-      case decision.action do
-        :stub ->
+      case {decision.action, cold_id} do
+        {:stub, id} when is_binary(id) ->
           audit(session_path, ctx, :stub_in_hot, %{
-            "id" => cold_id,
+            "id" => id,
             "tool" => tool,
             "size" => decision.size,
             "path" => path,
             "reason" => to_string(decision.reason)
           })
 
-          {Policy.stub_content(Map.put(decision, :tool, tool), cold_id), :stub}
+          {Policy.stub_content(Map.put(decision, :tool, tool), id), :stub}
 
-        :full_hot ->
+        {:stub, _} ->
+          # No cold id available — cannot stub honestly
+          {text, :full_hot}
+
+        {:full_hot, id} ->
           audit(session_path, ctx, :full_hot, %{
-            "id" => cold_id,
+            "id" => id,
             "tool" => tool,
             "size" => decision.size,
             "path" => path,
@@ -139,7 +160,7 @@ defmodule Arvo.Attention do
 
           if decision.fidelity_exception do
             audit(session_path, ctx, :fidelity_exception, %{
-              "id" => cold_id,
+              "id" => id,
               "tool" => tool,
               "size" => decision.size,
               "path" => path,
@@ -149,7 +170,7 @@ defmodule Arvo.Attention do
 
           {text, :full_hot}
 
-        other ->
+        {other, _} ->
           {text, other}
       end
 
@@ -279,4 +300,30 @@ defmodule Arvo.Attention do
   end
 
   defp path_from(_, _), do: nil
+
+  defp path_changed?(path, text, existing, retention) do
+    edited = Map.get(retention, :edited_paths) || Map.get(retention, "edited_paths") || MapSet.new()
+
+    cond do
+      not is_binary(path) ->
+        true
+
+      path in to_mapset(edited) ->
+        true
+
+      not is_map(existing) ->
+        true
+
+      true ->
+        # Body size mismatch implies change; equal size still re-fetch compare when possible
+        case existing["size"] do
+          n when is_integer(n) and n != byte_size(text) -> true
+          _ -> false
+        end
+    end
+  end
+
+  defp to_mapset(%MapSet{} = s), do: s
+  defp to_mapset(list) when is_list(list), do: MapSet.new(list)
+  defp to_mapset(_), do: MapSet.new()
 end

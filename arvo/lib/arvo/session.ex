@@ -306,7 +306,8 @@ defmodule Arvo.Session do
               tokens: tokens,
               warm: warm,
               attention_retention: %{},
-              attention_budgets: Arvo.Attention.default_budgets()
+              attention_budgets: Arvo.Attention.default_budgets(),
+              attention_turn: 0
           }
 
           # Do not call TUI here — resume is often invoked from TUI.slash (deadlock).
@@ -954,13 +955,24 @@ defmodule Arvo.Session do
         goal = capture_packet_field(content, "goal")
         paths = capture_packet_paths(content)
         last_error = capture_packet_field(content, "last_error")
+        goal_known_raw = capture_packet_field(content, "goal_known")
+
+        goal_known =
+          cond do
+            goal_known_raw in ["true", "True"] -> true
+            goal_known_raw in ["false", "False"] -> false
+            # Honesty markers and empty must not invent a known goal (R9)
+            is_nil(goal) or goal == "" -> false
+            goal =~ ~r/^\(unknown/i -> false
+            goal == "continue work" or goal == "nil" -> false
+            true -> true
+          end
 
         Arvo.Session.Warm.from_packet(%{
-          "goal" => goal,
+          "goal" => if(goal_known, do: goal, else: nil),
           "paths" => paths,
           "last_error" => last_error,
-          "goal_known" =>
-            is_binary(goal) and goal != "" and goal != "continue work" and goal != "nil"
+          "goal_known" => goal_known
         })
 
       true ->
@@ -969,7 +981,7 @@ defmodule Arvo.Session do
   end
 
   defp capture_packet_field(content, key) when is_binary(content) do
-    case Regex.run(~r/^#{key}:\s*(.*)$/m, content) do
+    case Regex.run(~r/^#{Regex.escape(key)}:\s*(.*)$/m, content) do
       [_, v] -> String.trim(v)
       _ -> nil
     end

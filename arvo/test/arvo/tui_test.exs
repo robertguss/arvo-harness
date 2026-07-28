@@ -30,7 +30,9 @@ defmodule Arvo.TUITest do
     st = Arvo.TUI.state()
     tool = Enum.find(st.transcript, &(&1.kind == :tool && &1.name == "read"))
     assert tool.folded == true
-    assert tool.text == "ok"
+    # Dual-view labels what the model saw (full vs stub)
+    assert tool.text =~ "ok"
+    assert tool.text =~ "[model:full]"
 
     :ok = Arvo.TUI.handle_event_sync({:agent_error, %{error: "boom"}})
     st = Arvo.TUI.state()

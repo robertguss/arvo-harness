@@ -98,11 +98,16 @@ defmodule Arvo.Session.Handoff do
   end
 
   def packet_blob(packet) when is_map(packet) do
-    goal_known = Map.get(packet, "goal_known", true)
+    goal_known = Map.get(packet, "goal_known") == true
+
+    goal_line =
+      if goal_known and is_binary(packet["goal"]),
+        do: packet["goal"],
+        else: "(unknown — not set by user/pin/handoff)"
 
     """
     [handoff packet]
-    goal: #{packet["goal"]}
+    goal: #{goal_line}
     goal_known: #{goal_known}
     done: #{packet["done"]}
     not_done: #{packet["not_done"]}
@@ -152,14 +157,13 @@ defmodule Arvo.Session.Handoff do
     paths = Keyword.get(opts, :paths) || warm_fields["paths"] || []
     last_error = Keyword.get(opts, :last_error) || warm_fields["last_error"] || ""
 
-    goal_display =
-      if goal_known, do: goal, else: "(unknown — not set by user/pin/handoff)"
-
     %{
-      "goal" => goal_display,
+      # Keep goal nil when unknown so rehydrate cannot invent a goal string (R9)
+      "goal" => if(goal_known, do: goal, else: nil),
       "goal_known" => goal_known,
       "done" => Keyword.get(opts, :done) || summarize_done(assts),
-      "not_done" => Keyword.get(opts, :not_done) || if(goal_known, do: goal, else: goal_display),
+      "not_done" =>
+        Keyword.get(opts, :not_done) || if(goal_known, do: goal, else: "(goal unknown)"),
       "paths" => paths,
       "last_error" => last_error,
       "next_steps" => Keyword.get(opts, :next_steps) || "Continue from handoff packet.",

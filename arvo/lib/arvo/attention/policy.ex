@@ -51,10 +51,15 @@ defmodule Arvo.Attention.Policy do
       pinned? ->
         decision(:full_hot, text, size, preview, false, :pinned, path)
 
+      is_error? and size <= stub_bytes ->
+        decision(:full_hot, text, size, preview, false, :error, path)
+
+      is_error? and under_budget?(size, used_bytes, used_count, max_ex_bytes, max_ex_count) ->
+        # Large errors full-hot only under exception budget (late-window protection)
+        decision(:full_hot, text, size, preview, true, :error, path)
+
       is_error? ->
-        # Errors stay full-hot for fidelity; still count as exception when large
-        large? = size > stub_bytes
-        decision(:full_hot, text, size, preview, large?, :error, path)
+        decision(:stub, text, size, preview, false, :exception_budget, path)
 
       size <= stub_bytes ->
         decision(:full_hot, text, size, preview, false, :small, path)
@@ -118,7 +123,7 @@ defmodule Arvo.Attention.Policy do
 
     """
     [cold:#{cold_id} tool=#{tool} bytes=#{size}#{path_line}]
-    Full body stored cold; not injected into model context. Use /recall #{cold_id} to expand under caps.
+    Full body stored cold; not in model hot context. Ask the user to /recall #{cold_id} (capped) if needed.
     preview:
     #{preview}
     """

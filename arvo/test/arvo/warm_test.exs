@@ -97,4 +97,20 @@ defmodule Arvo.WarmTest do
     assert packet["goal"] =~ "progressive"
     assert "lib/foo.ex" in packet["paths"] or packet["paths"] != []
   end
+
+  test "goal unknown packet does not invent goal on rehydrate" do
+    # Clear goal
+    {:ok, _} = Arvo.Session.set_warm_goal(nil)
+    packet = Arvo.Session.Handoff.build_packet()
+    assert packet["goal_known"] == false
+    assert is_nil(packet["goal"])
+
+    blob = Arvo.Session.Handoff.packet_blob(packet)
+    assert blob =~ "goal_known: false"
+    assert blob =~ "(unknown"
+
+    warm = Arvo.Session.Warm.from_packet(packet)
+    assert warm["goal_known"] == false
+    assert is_nil(warm["goal"]) or warm["goal"] == ""
+  end
 end

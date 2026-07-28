@@ -209,15 +209,35 @@ defmodule Arvo.TUI do
   defp reduce_event(state, {:tool_call_end, ev}) do
     name = Map.get(ev, :name) || state.tool_name || "tool"
     err? = Map.get(ev, :is_error, false)
+    # Dual view: human keeps full body; model may have received a stub
     text = Map.get(ev, :text) || if(err?, do: "error", else: "ok")
+    action = Map.get(ev, :attention_action) || :full_hot
+    cold_id = Map.get(ev, :cold_id)
+    model_text = Map.get(ev, :model_text)
+
+    label =
+      case action do
+        :stub -> " [model:stub#{if cold_id, do: " cold:" <> cold_id, else: ""}]"
+        :full_hot -> " [model:full]"
+        other -> " [model:#{other}]"
+      end
+
+    display =
+      if action == :stub and is_binary(model_text) and model_text != text do
+        text <> "\n— dual-view#{label} —"
+      else
+        text <> label
+      end
 
     transcript =
       update_last_tool(state.transcript, name, %{
         kind: :tool,
         name: name,
-        text: text,
+        text: display,
         folded: true,
-        is_error: err?
+        is_error: err?,
+        attention_action: action,
+        cold_id: cold_id
       })
 
     %{state | tool_name: nil, transcript: transcript}

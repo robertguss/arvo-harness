@@ -26,6 +26,15 @@ The explicit attention pointer on the session JSONL tree (via head_move
 records), not merely the last file line. Product context and next parent_id walk
 root → HEAD so abandoned forks stay on disk but off the hot path.
 
+### Tree navigator
+
+Interactive Focus surface (`/tree`) that lists the open session’s content DAG
+(message + tool rows for orientation) and jumps HEAD to a chosen **message**
+node via `Session.jump_to/1` (append-only `head_move`, idle-only). After a jump,
+Focus rehydrates root→HEAD and progressive attention rebuilds warm from that
+chain. Abandoned tips stay on disk and remain listed. Primary nav over legacy
+N-step `/rewind` (thin alias over the same head-move path).
+
 ### Cancel-as-fork
 
 Esc mid-turn kills in-flight work and appends an incomplete assistant leaf so
@@ -51,7 +60,7 @@ cosmetic UI freeze.
 ### Turn-busy
 
 Session’s live-Task predicate used to refuse identity/HEAD rewrites (resume,
-rewind, open_new, rebind, handoff) while a product turn is running.
+rewind, jump_to, open_new, rebind, handoff) while a product turn is running.
 
 ### Progressive attention
 

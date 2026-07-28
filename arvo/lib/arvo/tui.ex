@@ -153,7 +153,9 @@ defmodule Arvo.TUI do
          tool_name: nil,
          streaming: false,
          buffer: "",
-         last_error: nil
+         last_error: nil,
+         tree: nil,
+         palette: nil
      }}
   end
 

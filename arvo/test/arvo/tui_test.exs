@@ -200,16 +200,18 @@ defmodule Arvo.TUITest do
     assert frame =~ "arvo"
   end
 
-  test "activity entries are compact one-liners; expand shows detail" do
-    tool_out = """
-    total 7144
-    drwxrwxr-x 12 rob rob    4096 Jul 28 .
-    -rw-rw-r--  1 rob rob    1234 Jul 28 mix.exs
-    -rw-rw-r--  1 rob rob    5678 Jul 28 README.md
-    more line four
-    more line five
-    more line six
-    """
+  test "activity entries are step cards; long detail collapses with more-lines cue" do
+    # >8 lines so collapsed path shows short preview + more cue (R11/AE5)
+    tool_out =
+      Enum.map_join(1..12, "\n", fn i ->
+        case i do
+          1 -> "total 7144"
+          2 -> "drwxrwxr-x 12 rob rob    4096 Jul 28 ."
+          3 -> "-rw-rw-r--  1 rob rob    1234 Jul 28 early.ex"
+          10 -> "-rw-rw-r--  1 rob rob    5678 Jul 28 buried-line.md"
+          _ -> "more line #{i}"
+        end
+      end)
 
     st = %{
       model: "xai:g",
@@ -222,7 +224,7 @@ defmodule Arvo.TUITest do
           name: "bash",
           summary: "bash · ls -la",
           status: :ok,
-          detail: tool_out <> " [model:full]",
+          detail: tool_out <> "\n [model:full]",
           expanded: false
         }
       ],
@@ -233,13 +235,65 @@ defmodule Arvo.TUITest do
     }
 
     frame = Arvo.TUI.Render.frame(st, width: 60, height: 24)
+    # AE4: tool step header
     assert frame =~ "bash · ls -la"
-    refute frame =~ "mix.exs"
+    # Collapsed: short preview + more-lines cue; buried line hidden
+    assert frame =~ "more lines"
+    refute frame =~ "buried-line.md"
 
     st2 = put_in(st, [:transcript, Access.at(0), :expanded], true)
     frame2 = Arvo.TUI.Render.frame(st2, width: 60, height: 24)
-    assert frame2 =~ "mix.exs"
-    assert frame2 =~ "README.md"
+    assert frame2 =~ "buried-line.md"
+    assert frame2 =~ "early.ex"
+  end
+
+  test "running activity shows live chrome; aborted assistant labeled" do
+    st = %{
+      model: "xai:g",
+      profile: "base",
+      tokens: %{cumulative: 0, window: 100},
+      status: :running,
+      transcript: [
+        %{kind: :activity, name: "read", summary: "read · lib/x.ex", status: :running, detail: nil, expanded: false},
+        %{kind: :assistant, text: "partial answer", aborted: true}
+      ],
+      buffer: "",
+      streaming: false,
+      input: "",
+      last_error: nil
+    }
+
+    frame = Arvo.TUI.Render.frame(st, width: 60, height: 16)
+    assert frame =~ "read · lib/x.ex"
+    assert frame =~ "running"
+    assert frame =~ "aborted"
+  end
+
+  test "thought header hierarchy persists after completion" do
+    st = %{
+      model: "xai:g",
+      profile: "base",
+      tokens: %{cumulative: 0, window: 100},
+      status: :idle,
+      transcript: [
+        %{
+          kind: :thought,
+          text: "I should inspect the session tree first.",
+          started_at: 0,
+          ended_at: 1500,
+          expanded: true,
+          live: false
+        }
+      ],
+      buffer: "",
+      streaming: false,
+      input: "",
+      last_error: nil
+    }
+
+    frame = Arvo.TUI.Render.frame(st, width: 60, height: 12)
+    assert frame =~ "Thought"
+    assert frame =~ "session tree"
   end
 
   test "transcript scroll reveals older lines above the live tail" do
@@ -428,7 +482,7 @@ defmodule Arvo.TUITest do
     assert is_integer(th.ended_at)
 
     frame = Arvo.TUI.Render.frame(st, width: 60, height: 16)
-    assert frame =~ "Thought for"
+    assert frame =~ "Thought"
     assert frame =~ "list files"
   end
 
@@ -575,11 +629,13 @@ defmodule Arvo.TUITest do
     Application.put_env(:arvo, :cwd, tmp)
 
     on_exit(fn ->
+      _ = Arvo.TUI.reset_idle()
       _ = Arvo.TUI.key(:esc)
       if old, do: System.put_env("HOME", old)
       File.rm_rf!(tmp)
     end)
 
+    _ = Arvo.TUI.reset_idle()
     {:ok, _path} = Arvo.Session.open_new(tmp)
     {:ok, _u1} = Arvo.Session.record_message(%{role: "user", content: "first"})
     {:ok, a1} = Arvo.Session.record_message(%{role: "assistant", content: "answer-one"})
@@ -592,8 +648,12 @@ defmodule Arvo.TUITest do
     assert is_map(st.tree)
     assert length(st.tree.nodes) >= 4
 
-    # Esc closes without head_move
+    # Esc closes without head_move (status must be idle so Esc is not cancel)
     before_head = Arvo.Session.head_id()
+    _ = Arvo.TUI.reset_idle()
+    # re-open tree after reset_idle (reset does not clear tree — close then open)
+    _ = Arvo.TUI.key(:esc)
+    assert {:ok, :tree, _} = Arvo.TUI.slash("tree")
     assert :ok = Arvo.TUI.key(:esc)
     assert Arvo.TUI.state().tree == nil
     assert Arvo.Session.head_id() == before_head

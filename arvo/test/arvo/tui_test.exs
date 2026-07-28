@@ -752,8 +752,9 @@ defmodule Arvo.TUITest do
     assert :ok = Arvo.TUI.key(:enter)
     assert Arvo.Session.head_id() == head_before
     st = Arvo.TUI.state()
-    # Tree stays open or shows not jumpable message
-    assert st.tree != nil or Enum.any?(st.transcript, &(&1.text =~ "not a jump target"))
+    # Tree stays open with error chrome (not buried under overlay)
+    assert st.tree != nil
+    assert is_binary(st.tree[:error]) and st.tree.error =~ "not a jump target"
     # Always leave tree closed for sibling tests sharing the TUI GenServer
     _ = Arvo.TUI.key(:esc)
   end

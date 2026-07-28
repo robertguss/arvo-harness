@@ -297,10 +297,12 @@ defmodule Arvo.SessionStoreTest do
     assert by_id[u1["id"]].kind == :user
     assert by_id[u1["id"]].jumpable? == true
     assert by_id[a1["id"]].kind == :assistant
-    assert by_id[a1["id"]].jumpable? == true
+    # Assistant with pending tool_calls is not jumpable (open tool loop)
+    assert by_id[a1["id"]].jumpable? == false
     assert by_id[tool["id"]].kind == :tool
     assert by_id[tool["id"]].jumpable? == false
     assert by_id[u2["id"]].kind == :user
+    assert by_id[u2["id"]].jumpable? == true
 
     # HEAD is a1 after head_move; file tip is last content (u2 or head_move excluded → u2)
     assert by_id[a1["id"]].head? == true
@@ -432,7 +434,7 @@ defmodule Arvo.SessionStoreTest do
     File.mkdir_p!(cwd)
     Application.put_env(:arvo, :cwd, cwd)
     assert {:ok, path} = Arvo.Session.open_new(cwd)
-    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "use tool"})
+    {:ok, u} = Arvo.Session.record_message(%{role: "user", content: "use tool"})
     {:ok, a} =
       Arvo.Session.record_message(%{
         role: "assistant",
@@ -450,9 +452,11 @@ defmodule Arvo.SessionStoreTest do
 
     before = length(Arvo.Session.Store.read_all(path))
     assert {:error, :not_jumpable} = Arvo.Session.jump_to(tool["id"])
+    # Assistant with pending tool_calls is not jumpable (open tool loop)
+    assert {:error, :not_jumpable} = Arvo.Session.jump_to(a["id"])
     assert length(Arvo.Session.Store.read_all(path)) == before
-    # assistant with tool_calls remains jumpable
-    assert {:ok, %{head_id: head}} = Arvo.Session.jump_to(a["id"])
-    assert head == a["id"]
+    # User messages remain jumpable
+    assert {:ok, %{head_id: head}} = Arvo.Session.jump_to(u["id"])
+    assert head == u["id"]
   end
 end

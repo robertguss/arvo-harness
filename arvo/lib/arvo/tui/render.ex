@@ -168,7 +168,8 @@ defmodule Arvo.TUI.Render do
         scroll = min(scroll, max(n - window, 0))
         shown = Enum.slice(nodes, scroll, window)
 
-        header = Theme.bold("Session Tree") <> Theme.dim("  · jump message nodes · tools orient only")
+        header =
+          Theme.bold("Session Tree") <> Theme.dim("  · jump message nodes · tools orient only")
 
         rows =
           Enum.with_index(shown, scroll)
@@ -177,10 +178,15 @@ defmodule Arvo.TUI.Render do
           end)
 
         counter =
-          if n == 0 do
-            Theme.dim("  (empty)")
-          else
-            Theme.dim("  #{sel + 1}/#{n}" <> if(n > window, do: "  (scroll ↑↓)", else: ""))
+          cond do
+            n == 0 ->
+              Theme.dim("  (empty)")
+
+            is_binary(tree[:error]) and tree[:error] != "" ->
+              Theme.error("  ! " <> tree[:error])
+
+            true ->
+              Theme.dim("  #{sel + 1}/#{n}" <> if(n > window, do: "  (scroll ↑↓)", else: ""))
           end
 
         ([header] ++ rows ++ [counter])
@@ -266,11 +272,23 @@ defmodule Arvo.TUI.Render do
   defp pad_body(lines, max), do: lines ++ List.duplicate("", max - length(lines))
 
   defp wrap_entry(%{kind: :user, text: t}, width, _opts) do
-    wrap_role(Theme.bold("you") <> "  ", String.duplicate(" ", @role_pad), to_string(t), width, false)
+    wrap_role(
+      Theme.bold("you") <> "  ",
+      String.duplicate(" ", @role_pad),
+      to_string(t),
+      width,
+      false
+    )
   end
 
   defp wrap_entry(%{kind: :assistant, text: t, streaming: true}, width, _opts) do
-    wrap_role_md(Theme.accent("arvo") <> " ", String.duplicate(" ", @role_pad), to_string(t), width, true)
+    wrap_role_md(
+      Theme.accent("arvo") <> " ",
+      String.duplicate(" ", @role_pad),
+      to_string(t),
+      width,
+      true
+    )
   end
 
   defp wrap_entry(%{kind: :assistant, text: t, aborted: true}, width, _opts) do
@@ -284,7 +302,13 @@ defmodule Arvo.TUI.Render do
   end
 
   defp wrap_entry(%{kind: :assistant, text: t}, width, _opts) do
-    wrap_role_md(Theme.accent("arvo") <> " ", String.duplicate(" ", @role_pad), to_string(t), width, false)
+    wrap_role_md(
+      Theme.accent("arvo") <> " ",
+      String.duplicate(" ", @role_pad),
+      to_string(t),
+      width,
+      false
+    )
   end
 
   defp wrap_entry(%{kind: :thought} = entry, width, opts) do

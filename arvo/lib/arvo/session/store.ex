@@ -259,11 +259,32 @@ defmodule Arvo.Session.Store do
     end)
   end
 
-  @doc "True when entry is a valid Focus jump target (user/assistant message)."
+  @doc """
+  True when entry is a valid Focus jump target (user/assistant message).
+
+  Assistants that still carry `tool_calls` are not jumpable: making them HEAD
+  would put an open tool-call turn on the model path without tool results.
+  """
   def jumpable_entry?(%{"type" => "message"} = e) do
     role = e["role"] || "user"
-    # Tool result rows have tool_call_id; assistants with tool_calls remain jumpable.
-    role in ["user", "assistant"] and is_nil(e["tool_call_id"])
+
+    cond do
+      not is_nil(e["tool_call_id"]) ->
+        false
+
+      role == "user" ->
+        true
+
+      role == "assistant" ->
+        # Pending tool_calls on HEAD break the next-turn message shape.
+        case e["tool_calls"] do
+          list when is_list(list) and list != [] -> false
+          _ -> true
+        end
+
+      true ->
+        false
+    end
   end
 
   def jumpable_entry?(_), do: false
@@ -405,11 +426,15 @@ defmodule Arvo.Session.Store do
 
   @doc "Convert a single session entry into zero-or-more chat messages (tool fields preserved)."
   def entry_to_messages(%{"type" => "message", "incomplete" => true} = e) do
-    # Cancel-as-fork leaves incomplete assistant leaves on disk; keep them off the model path.
+    # Cancel-as-fork leaves incomplete assistant leaves on disk; keep empty ones
+    # off the model path. Non-empty incomplete still rehydrates for human view.
     if (e["role"] || "user") == "assistant" and (e["content"] || "") == "" do
       []
     else
-      entry_to_messages(Map.delete(e, "incomplete"))
+      case entry_to_messages(Map.delete(e, "incomplete")) do
+        [msg] -> [Map.put(msg, :incomplete, true)]
+        other -> other
+      end
     end
   end
 
@@ -458,7 +483,8 @@ defmodule Arvo.Session.Store do
       %{
         id: tc["id"] || tc[:id],
         name: tc["name"] || tc[:name] || get_in(tc, ["function", "name"]),
-        arguments: tc["arguments"] || tc[:arguments] || get_in(tc, ["function", "arguments"]) || %{}
+        arguments:
+          tc["arguments"] || tc[:arguments] || get_in(tc, ["function", "arguments"]) || %{}
       }
     end)
   end

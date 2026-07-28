@@ -233,7 +233,7 @@ defmodule Arvo.TUI do
         commit_tree_jump(state)
 
       key in [:enter, :space] and state.status != :running and state[:input] in [nil, ""] and
-          is_integer(state[:focus_idx]) and state[:tree] == nil ->
+        is_integer(state[:focus_idx]) and state[:tree] == nil ->
         {:ok, toggle_focus_row(state)}
 
       true ->
@@ -439,7 +439,16 @@ defmodule Arvo.TUI do
     if is_integer(idx) do
       List.update_at(transcript, idx, fun)
     else
-      entry = fun.(%{kind: :activity, name: name, summary: name, status: :ok, detail: nil, expanded: false})
+      entry =
+        fun.(%{
+          kind: :activity,
+          name: name,
+          summary: name,
+          status: :ok,
+          detail: nil,
+          expanded: false
+        })
+
       transcript ++ [entry]
     end
   end
@@ -542,17 +551,22 @@ defmodule Arvo.TUI do
         :down -> min(sel + 1, max(n - 1, 0))
       end
 
-    # Keep selection in a painted window (cap large trees)
-    scroll = tree[:scroll] || 0
-    window = tree[:window] || 12
-    scroll2 =
-      cond do
-        sel2 < scroll -> sel2
-        sel2 >= scroll + window -> sel2 - window + 1
-        true -> scroll
-      end
+    window = max(tree[:window] || 12, 1)
+    scroll = tree_scroll_for(sel2, tree[:scroll] || 0, window, n)
+    %{state | tree: %{tree | selected: sel2, scroll: scroll, error: nil}}
+  end
 
-    %{state | tree: %{tree | selected: sel2, scroll: max(scroll2, 0)}}
+  # Keep selection inside the painted window used by Render.tree_lines/3.
+  defp tree_scroll_for(sel, scroll, window, n) do
+    window = max(min(window, max(n, 1)), 1)
+    max_scroll = max(n - window, 0)
+    scroll = min(max(scroll, 0), max_scroll)
+
+    cond do
+      sel < scroll -> sel
+      sel >= scroll + window -> min(sel - window + 1, max_scroll)
+      true -> scroll
+    end
   end
 
   defp commit_tree_jump(state) do
@@ -563,12 +577,12 @@ defmodule Arvo.TUI do
     case Enum.at(nodes, sel) do
       %{jumpable?: false} ->
         msg = "not a jump target (tools orient only)"
-        {:ok, %{state | transcript: state.transcript ++ [%{kind: :system, text: msg}]}}
+        {:ok, %{state | tree: Map.put(tree, :error, msg)}}
 
       %{id: id, jumpable?: true} when is_binary(id) ->
         if Arvo.Session.turn_in_progress?() do
           msg = "jump rejected: turn in progress (idle-only)"
-          {:ok, %{state | transcript: state.transcript ++ [%{kind: :system, text: msg}]}}
+          {:ok, %{state | tree: Map.put(tree, :error, msg)}}
         else
           case Arvo.Session.jump_to(id) do
             {:ok, %{head_id: _hid, messages: msgs}} ->
@@ -584,11 +598,11 @@ defmodule Arvo.TUI do
 
             {:error, :turn_in_progress} ->
               msg = "jump rejected: turn in progress (idle-only)"
-              {:ok, %{state | transcript: state.transcript ++ [%{kind: :system, text: msg}]}}
+              {:ok, %{state | tree: Map.put(tree, :error, msg)}}
 
             {:error, reason} ->
               msg = "jump failed: #{inspect(reason)}"
-              {:ok, %{state | transcript: state.transcript ++ [%{kind: :system, text: msg}]}}
+              {:ok, %{state | tree: Map.put(tree, :error, msg)}}
           end
         end
 
@@ -668,6 +682,7 @@ defmodule Arvo.TUI do
     case state[:palette] do
       %{query: q, selected: sel} ->
         items = Arvo.TUI.SlashMenu.filter(q)
+
         case Enum.at(items, sel) do
           {name, _} -> name
           _ -> nil
@@ -730,11 +745,17 @@ defmodule Arvo.TUI do
             Enum.find_index(nodes, & &1.head?) ||
               max(length(nodes) - 1, 0)
 
+          window = 12
+          n = length(nodes)
+          # Center selection in window so HEAD is visible on open
+          scroll = tree_scroll_for(head_idx, max(head_idx - div(window, 2), 0), window, n)
+
           tree = %{
             nodes: nodes,
             selected: head_idx,
-            scroll: max(head_idx - 5, 0),
-            window: 12
+            scroll: scroll,
+            window: window,
+            error: nil
           }
 
           {{:ok, :tree, "Session Tree (#{length(nodes)} nodes)"},
@@ -918,7 +939,8 @@ defmodule Arvo.TUI do
             last_error: nil,
             tokens: %{turn: 0, cumulative: 0, window: 500_000},
             transcript:
-              state.transcript ++ [%{kind: :system, text: "handoff → new session (parent intact)"}]
+              state.transcript ++
+                [%{kind: :system, text: "handoff → new session (parent intact)"}]
         }
 
         {{:ok, :handled,
@@ -993,7 +1015,8 @@ defmodule Arvo.TUI do
     # Compact attention on HEAD chain only (not abandoned tips after rewind)
     messages = Arvo.Session.Store.messages_to_head(sess.history || [])
 
-    result = Arvo.Session.Compaction.compact(messages, sess.history || [], instructions: instructions)
+    result =
+      Arvo.Session.Compaction.compact(messages, sess.history || [], instructions: instructions)
 
     if sess.path do
       _ = Arvo.Session.record_message(Map.put(result.entry, "role", "system"))
@@ -1106,7 +1129,6 @@ defmodule Arvo.TUI do
         state
     end
   end
-
 
   defp normalize_key(:esc), do: :esc
   defp normalize_key("\e"), do: :esc

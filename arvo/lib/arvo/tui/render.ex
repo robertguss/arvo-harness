@@ -6,10 +6,18 @@ defmodule Arvo.TUI.Render do
 
   alias Arvo.TUI.Theme
 
+  # Visual width of role prefixes ("you  " / "arvo ") — ANSI not counted.
+  @role_pad 5
+  # Folded tool body: enough lines to see what ran without flooding the pane.
+  @tool_preview_lines 10
+  # Expanded tool body hard cap (viewport still tails/scrolls).
+  @tool_expanded_lines 40
+
   @doc "Render full screen frame from TUI state map."
   def frame(state, opts \\ []) do
     width = Keyword.get(opts, :width, 80)
     height = Keyword.get(opts, :height, 24)
+    scroll = Keyword.get(opts, :scroll, state[:scroll] || 0)
 
     ghost = ghost_line(state, width)
     footer = footer_line(state, width)
@@ -18,7 +26,7 @@ defmodule Arvo.TUI.Render do
     # Fixed chrome rows: ghost, blank, (body...), blank, input, footer → 5 non-body.
     reserved = 5
     body_h = max(height - reserved, 1)
-    body = transcript_lines(state, body_h, width)
+    body = transcript_lines(state, body_h, width, scroll)
 
     # Exactly `height` rows so overwrite paints (no clear_screen) leave no ghosts.
     rows = [ghost, "" | body] ++ ["", input, footer]
@@ -39,7 +47,7 @@ defmodule Arvo.TUI.Render do
   end
 
   def footer_line(state, width \\ 80) do
-    base = "Enter send · Ctrl+J newline · Esc cancel · / slash"
+    base = "Enter send · Ctrl+J newline · Esc cancel · / slash · PgUp/PgDn scroll"
 
     line =
       case state[:status] do
@@ -62,7 +70,7 @@ defmodule Arvo.TUI.Render do
     Theme.bold(prefix) <> String.slice(draft, 0, max(width - 2, 10))
   end
 
-  def transcript_lines(state, max_lines, width) do
+  def transcript_lines(state, max_lines, width, scroll \\ 0) do
     lines = state[:transcript] || []
     error = state[:last_error]
 
@@ -82,33 +90,70 @@ defmodule Arvo.TUI.Render do
         lines
       end
 
+    all =
+      lines
+      |> Enum.flat_map(&wrap_entry(&1, width))
+
+    window(all, max_lines, scroll)
+  end
+
+  defp window(lines, max_lines, scroll) when scroll <= 0 do
     lines
-    |> Enum.flat_map(&wrap_entry(&1, width))
     |> Enum.take(-max_lines)
     |> pad_body(max_lines)
   end
 
-  defp pad_body(lines, max) when length(lines) >= max, do: lines
+  defp window(lines, max_lines, scroll) do
+    total = length(lines)
+    # scroll = how many lines above the live tail are hidden below the viewport.
+    # Clamp so we never scroll past the top of history.
+    max_scroll = max(total - max_lines, 0)
+    scroll = min(scroll, max_scroll)
+    end_exclusive = total - scroll
+    start = max(end_exclusive - max_lines, 0)
+
+    lines
+    |> Enum.slice(start, max_lines)
+    |> pad_body(max_lines)
+  end
+
+  defp pad_body(lines, max) when length(lines) >= max, do: Enum.take(lines, max)
   defp pad_body(lines, max), do: lines ++ List.duplicate("", max - length(lines))
 
   defp wrap_entry(%{kind: :user, text: t}, width) do
-    [Theme.bold("you") <> "  " <> String.slice(to_string(t), 0, width - 6)]
+    wrap_role(Theme.bold("you") <> "  ", String.duplicate(" ", @role_pad), to_string(t), width, false)
   end
 
   defp wrap_entry(%{kind: :assistant, text: t, streaming: true}, width) do
-    [Theme.accent("arvo") <> " " <> String.slice(to_string(t), 0, width - 6) <> "▍"]
+    wrap_role(Theme.accent("arvo") <> " ", String.duplicate(" ", @role_pad), to_string(t), width, true)
   end
 
   defp wrap_entry(%{kind: :assistant, text: t}, width) do
-    [Theme.accent("arvo") <> " " <> String.slice(to_string(t), 0, width - 5)]
+    wrap_role(Theme.accent("arvo") <> " ", String.duplicate(" ", @role_pad), to_string(t), width, false)
   end
 
-  defp wrap_entry(%{kind: :tool, text: t, name: n, folded: true}, _width) do
-    [Theme.muted("  ▸ tool #{n}: #{String.slice(to_string(t), 0, 40)}")]
-  end
+  defp wrap_entry(%{kind: :tool, text: t, name: n} = entry, width) do
+    folded? = Map.get(entry, :folded, true)
+    err? = Map.get(entry, :is_error, false)
+    running? = to_string(t) in ["running…", "running...", ""]
 
-  defp wrap_entry(%{kind: :tool, text: t, name: n}, _width) do
-    [Theme.muted("  ▸ tool #{n}: #{String.slice(to_string(t), 0, 60)}")]
+    status =
+      cond do
+        running? -> " · running…"
+        err? -> " · error"
+        true -> ""
+      end
+
+    header = Theme.muted("  ▸ tool #{n}#{status}")
+
+    if running? do
+      [header]
+    else
+      body_w = max(width - 4, 1)
+      cap = if folded?, do: @tool_preview_lines, else: @tool_expanded_lines
+      body = preview_body(to_string(t), body_w, cap)
+      [header | body]
+    end
   end
 
   defp wrap_entry(%{kind: :error, text: t}, width) do
@@ -131,6 +176,36 @@ defmodule Arvo.TUI.Render do
 
   defp wrap_entry(other, width) when is_binary(other), do: wrap_text(other, max(width, 1))
   defp wrap_entry(_, _), do: []
+
+  defp wrap_role(first_prefix, cont_prefix, text, width, streaming?) do
+    content_w = max(width - @role_pad, 1)
+    lines = wrap_text(text, content_w)
+    lines = if lines == [], do: [""], else: lines
+    last_i = length(lines) - 1
+
+    Enum.with_index(lines, fn line, i ->
+      pref = if i == 0, do: first_prefix, else: cont_prefix
+      suffix = if streaming? and i == last_i, do: "▍", else: ""
+      pref <> line <> suffix
+    end)
+  end
+
+  defp preview_body(text, width, cap) do
+    wrapped = wrap_text(String.trim_trailing(text), width)
+    shown = Enum.take(wrapped, cap)
+    more? = length(wrapped) > cap
+
+    body =
+      Enum.map(shown, fn line ->
+        Theme.muted("    " <> line)
+      end)
+
+    if more? do
+      body ++ [Theme.dim("    … (#{length(wrapped) - cap} more lines)")]
+    else
+      body
+    end
+  end
 
   @doc false
   # Hard-wrap on grapheme boundaries; preserve explicit newlines (incl. blank lines).

@@ -165,6 +165,123 @@ defmodule Arvo.TUITest do
     assert Enum.any?(lines, &String.contains?(&1, "/model"))
   end
 
+  test "assistant and user messages wrap instead of single-line slice cutoff" do
+    long =
+      "I'll scan the project layout and key docs to summarize the repo. " <>
+        "Gathering a bit more from README and mix.exs before I answer fully."
+
+    st = %{
+      model: "xai:g",
+      profile: "base",
+      tokens: %{cumulative: 0, window: 100},
+      status: :idle,
+      transcript: [
+        %{kind: :user, text: "tell me about this repo in some detail please"},
+        %{kind: :assistant, text: long}
+      ],
+      buffer: "",
+      streaming: false,
+      input: "",
+      last_error: nil
+    }
+
+    frame = Arvo.TUI.Render.frame(st, width: 40, height: 24)
+    # Prior bug: String.slice to width-5 dropped everything after the first line.
+    # Hard-wrap may split grapheme runs mid-word; assert content still present.
+    assert frame =~ "Gathe"
+    assert frame =~ "ring a bit more"
+    assert frame =~ "README"
+    assert frame =~ "you"
+    assert frame =~ "arvo"
+  end
+
+  test "tool entries show multi-line preview not 40-char fold" do
+    tool_out = """
+    total 7144
+    drwxrwxr-x 12 rob rob    4096 Jul 28 .
+    -rw-rw-r--  1 rob rob    1234 Jul 28 mix.exs
+    -rw-rw-r--  1 rob rob    5678 Jul 28 README.md
+    more line four
+    more line five
+    more line six
+    """
+
+    st = %{
+      model: "xai:g",
+      profile: "base",
+      tokens: %{cumulative: 0, window: 100},
+      status: :idle,
+      transcript: [
+        %{kind: :tool, name: "bash", text: tool_out <> " [model:full]", folded: true}
+      ],
+      buffer: "",
+      streaming: false,
+      input: "",
+      last_error: nil
+    }
+
+    frame = Arvo.TUI.Render.frame(st, width: 60, height: 24)
+    assert frame =~ "tool bash"
+    assert frame =~ "mix.exs"
+    assert frame =~ "README.md"
+    # Must not be stuck at the old 40-char one-liner.
+    refute frame =~ ~r/tool bash: total 7144\s*$/m
+  end
+
+  test "transcript scroll reveals older lines above the live tail" do
+    entries =
+      for i <- 1..20 do
+        %{kind: :system, text: "line-#{i}-marker"}
+      end
+
+    st = %{
+      model: "xai:g",
+      profile: "base",
+      tokens: %{cumulative: 0, window: 100},
+      status: :idle,
+      transcript: entries,
+      buffer: "",
+      streaming: false,
+      input: "",
+      last_error: nil
+    }
+
+    # height 12 → body_h = 7; tail should show late markers
+    tail = Arvo.TUI.Render.frame(st, width: 40, height: 12, scroll: 0)
+    assert tail =~ "line-20-marker"
+    refute tail =~ "line-1-marker"
+
+    older = Arvo.TUI.Render.frame(st, width: 40, height: 12, scroll: 15)
+    assert older =~ "line-1-marker" or older =~ "line-2-marker"
+    refute older =~ "line-20-marker"
+  end
+
+  test "streaming assistant buffer wraps with cursor on last line" do
+    st = %{
+      model: "xai:g",
+      profile: "base",
+      tokens: %{cumulative: 0, window: 100},
+      status: :running,
+      transcript: [],
+      buffer: String.duplicate("word ", 30),
+      streaming: true,
+      input: "",
+      last_error: nil
+    }
+
+    frame = Arvo.TUI.Render.frame(st, width: 30, height: 16)
+    assert frame =~ "arvo"
+    assert frame =~ "word"
+    assert frame =~ "▍"
+    # More than one body line of content (not width-sliced to a single row).
+    body_hits =
+      frame
+      |> String.split("\n")
+      |> Enum.count(&String.contains?(&1, "word"))
+
+    assert body_hits >= 2
+  end
+
   test "Focus.run halts VM on quit when enabled (injectable)" do
     test_pid = self()
     Application.put_env(:arvo, :halt_on_focus_quit, true)

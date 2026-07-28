@@ -71,7 +71,7 @@ defmodule Arvo.TUI.Focus do
       |> Termite.Terminal.write(Termite.Screen.escape_sequence(:cursor_hide))
 
     try do
-      raw_loop(term, %{input: "", multiline: false}, nil)
+      raw_loop(term, %{input: "", multiline: false, scroll: 0}, nil)
     after
       try do
         term
@@ -87,9 +87,22 @@ defmodule Arvo.TUI.Focus do
   # causing continuous flicker (shaky/jittery UI) even when idle.
   defp raw_loop(term, local, last_frame) do
     st = Arvo.TUI.state()
-    st = Map.put(st, :input, local.input)
+    # Stick to live tail while the agent is streaming/working so scroll-back
+    # does not freeze the user on a stale viewport mid-turn.
+    local =
+      if st.status == :running and local.scroll != 0 do
+        %{local | scroll: 0}
+      else
+        local
+      end
+
+    st =
+      st
+      |> Map.put(:input, local.input)
+      |> Map.put(:scroll, local.scroll)
+
     {w, h} = size(term)
-    frame = Render.frame(st, width: w, height: h)
+    frame = Render.frame(st, width: w, height: h, scroll: local.scroll)
 
     {term, last_frame} =
       if frame == last_frame do
@@ -145,6 +158,14 @@ defmodule Arvo.TUI.Focus do
 
         {:cont, local}
 
+      # PageUp / Ctrl+Up — scroll transcript toward older lines
+      data in ["\e[5~", "\e[1;5A"] ->
+        {:cont, %{local | scroll: local.scroll + scroll_step()}}
+
+      # PageDown / Ctrl+Down — toward live tail
+      data in ["\e[6~", "\e[1;5B"] ->
+        {:cont, %{local | scroll: max(local.scroll - scroll_step(), 0)}}
+
       data in ["\r", "\n"] ->
         submit_input(local)
 
@@ -159,10 +180,12 @@ defmodule Arvo.TUI.Focus do
         {:cont, %{local | input: local.input <> data}}
 
       true ->
-        # Escape sequences (arrows etc.) — ignore for D1
+        # Other escape sequences (arrows etc.) — ignore for D1
         {:cont, local}
     end
   end
+
+  defp scroll_step, do: 10
 
   defp submit_input(local) do
     text = String.trim(local.input)

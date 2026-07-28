@@ -17,9 +17,55 @@ defmodule Arvo.ProductPathTest do
       assert {:ok, :handled, text} = Arvo.TUI.slash("help")
       assert text =~ "/model"
       # Full v0.1 slash surface (SPEC §7) — not a partial stub list
-      for cmd <- ~w(/help /model /profile /login /resume /compact /rewind /handoff /quit) do
+      for cmd <- ~w(/help /model /profile /login /resume /compact /rewind /handoff /inspect /recall /quit) do
         assert text =~ cmd
       end
+    end
+  end
+
+  describe "inspect and recall slash (AE4/AE6)" do
+    setup do
+      tmp = Path.join(System.tmp_dir!(), "arvo-insp-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      old = System.get_env("HOME")
+      System.put_env("HOME", tmp)
+      Application.put_env(:arvo, :cwd, tmp)
+      Application.put_env(:arvo, :progressive_attention, true)
+
+      on_exit(fn ->
+        if old, do: System.put_env("HOME", old)
+        File.rm_rf!(tmp)
+      end)
+
+      {:ok, path} = Arvo.Session.open_new(tmp)
+      large = String.duplicate("inspect-me\n", 2_000)
+      r = Arvo.Session.project_tool_result("bash", %{"command" => "cat big"}, large, false)
+      %{tmp: tmp, path: path, cold_id: r.cold_id, large: large}
+    end
+
+    test "inspect lists cold and show body; recall injects into session", %{
+      cold_id: id,
+      large: large
+    } do
+      assert is_binary(id)
+      assert {:ok, :handled, summary} = Arvo.TUI.slash("inspect")
+      assert summary =~ "Cold entries"
+      assert summary =~ id or summary =~ "bash"
+
+      assert {:ok, :handled, body_view} = Arvo.TUI.slash("inspect", id)
+      assert body_view =~ "inspect-me"
+
+      assert {:ok, :handled, rec} = Arvo.TUI.slash("recall", id)
+      assert rec =~ "expanded"
+      assert rec =~ "session"
+
+      msgs = Arvo.Session.Store.messages_to_head(Arvo.Session.get().history || [])
+      assert Enum.any?(msgs, fn m ->
+               c = m[:content] || m["content"] || ""
+               c =~ "[expanded cold:#{id}]" and c =~ "inspect-me"
+             end)
+
+      _ = large
     end
   end
 
@@ -151,7 +197,8 @@ defmodule Arvo.ProductPathTest do
 
       {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "hello"})
       ctx = Arvo.TurnContext.build()
-      assert ctx.prior_len == 1
+      # prior_len = user message (+ optional warm inject when goal known)
+      assert ctx.prior_len >= 1
       assert Map.has_key?(ctx, :skills)
 
       {:ok, _task} =
@@ -169,6 +216,60 @@ defmodule Arvo.ProductPathTest do
       entries = Arvo.Session.Store.read_all(path)
       assistants = Enum.filter(entries, &(&1["role"] == "assistant"))
       assert Enum.any?(assistants, &(&1["content"] == "hello back"))
+    end
+
+    test "multi-tool turn stubs large body before second model call (AE1)", %{path: path, tmp: tmp} do
+      Application.put_env(:arvo, :progressive_attention, true)
+      large = String.duplicate("line of log\n", 800)
+      File.write!(Path.join(tmp, "big.log"), large)
+
+      complete_fun = fn messages, _, _ ->
+        tools = Enum.filter(messages, &(&1[:role] == "tool"))
+
+        cond do
+          tools == [] ->
+            {:ok,
+             %{
+               role: "assistant",
+               content: "",
+               tool_calls: [
+                 %{id: "1", name: "bash", arguments: %{"command" => "cat big.log"}},
+                 %{id: "2", name: "bash", arguments: %{"command" => "echo next"}}
+               ]
+             }}
+
+          true ->
+            # Second model call: first large tool must be stubbed in messages
+            first_tool = Enum.find(messages, &(&1[:role] == "tool" && &1[:name] == "bash"))
+            assert first_tool.content =~ "[cold:"
+            refute first_tool.content == large
+            {:ok, %{role: "assistant", content: "ok", tool_calls: []}}
+        end
+      end
+
+      {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "inspect log"})
+      ctx = Arvo.TurnContext.build(tools: [Arvo.Tools.Bash, Arvo.Tools.Read])
+
+      {:ok, _} =
+        Arvo.Session.start_turn(ctx, %{complete_fun: complete_fun, max_turns: 5}, fn _ -> :ok end)
+
+      assert {:ok, result} = Arvo.Session.await_turn(15_000)
+      assert result.stop_reason == :end_turn
+
+      tool_msgs = Enum.filter(result.messages, &(&1[:role] == "tool"))
+      large_tool = Enum.find(tool_msgs, &(&1[:content] =~ "[cold:" or byte_size(&1[:content] || "") > 1000))
+      assert large_tool
+      assert large_tool.content =~ "[cold:"
+
+      metrics = Arvo.Session.Audit.metrics(path)
+      assert metrics.store_cold >= 1
+      assert metrics.stub_in_hot >= 1
+
+      # Cold complete
+      cold = Arvo.Session.Cold.list(path)
+      assert length(cold) >= 1
+      assert {:ok, body} = Arvo.Session.Cold.fetch(path, hd(cold)["id"])
+      assert body =~ "line of log"
     end
 
     test "Esc mid-turn: Task dead, Session alive, no complete assistant success", %{path: path} do

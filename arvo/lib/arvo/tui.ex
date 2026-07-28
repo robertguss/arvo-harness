@@ -34,7 +34,8 @@ defmodule Arvo.TUI do
   end
 
   def put_tokens(turn, cumulative, window \\ 500_000) do
-    GenServer.call(__MODULE__, {:put_tokens, turn, cumulative, window})
+    # Cast so Session never GenServer.calls TUI while holding Session (AB-BA with slash).
+    GenServer.cast(__MODULE__, {:put_tokens, turn, cumulative, window})
   end
 
   def append_user(text) when is_binary(text) do
@@ -122,6 +123,7 @@ defmodule Arvo.TUI do
   end
 
   def handle_call({:put_tokens, turn, cum, window}, _from, state) do
+    # Keep call path for tests that still sync; cast is the product path.
     {:reply, :ok, %{state | tokens: %{turn: turn, cumulative: cum, window: window}}}
   end
 
@@ -185,6 +187,10 @@ defmodule Arvo.TUI do
   end
 
   @impl true
+  def handle_cast({:put_tokens, turn, cum, window}, state) do
+    {:noreply, %{state | tokens: %{turn: turn, cumulative: cum, window: window}}}
+  end
+
   def handle_cast({:event, event}, state) do
     {:noreply, reduce_event(state, event)}
   end
@@ -210,14 +216,36 @@ defmodule Arvo.TUI do
     name = Map.get(ev, :name) || state.tool_name || "tool"
     err? = Map.get(ev, :is_error, false)
     text = Map.get(ev, :text) || if(err?, do: "error", else: "ok")
+    action = Map.get(ev, :attention_action) || :full_hot
+    cold_id = Map.get(ev, :cold_id)
+    model_text = Map.get(ev, :model_text)
+
+    label =
+      case action do
+        :stub -> " [model:stub#{if cold_id, do: " cold:" <> cold_id, else: ""}]"
+        :full_hot -> " [model:full]"
+        other -> " [model:#{other}]"
+      end
+
+    display =
+      if action == :stub and is_binary(model_text) and model_text != text do
+        text <>
+          "\n— dual-view: model saw —\n" <>
+          model_text <>
+          "\n— end dual-view#{label} —"
+      else
+        text <> label
+      end
 
     transcript =
       update_last_tool(state.transcript, name, %{
         kind: :tool,
         name: name,
-        text: text,
+        text: display,
         folded: true,
-        is_error: err?
+        is_error: err?,
+        attention_action: action,
+        cold_id: cold_id
       })
 
     %{state | tool_name: nil, transcript: transcript}
@@ -300,6 +328,9 @@ defmodule Arvo.TUI do
       /resume [n|path]   list sessions, or resume by index/path
       /rewind [n]        move HEAD back n steps (default 1); next msg forks
       /handoff           new session with work-delta packet (no silent compact)
+      /inspect [id]      warm + cold list; /inspect <cold-id> full body
+      /memory [id]       alias for /inspect
+      /recall <id>       expand cold entry into view under size caps
       /compact [focus]   power: summarize older turns (optional focus text)
       /quit              exit#{plugin_cmds}
     Keys (Focus): Enter send · Esc cancel turn · / for slash
@@ -440,6 +471,62 @@ defmodule Arvo.TUI do
     end
   end
 
+  defp do_slash(state, cmd, args) when cmd in ["inspect", "memory"] do
+    arg = String.trim(args || "")
+    snap = Arvo.Session.inspect_attention()
+
+    text =
+      if arg == "" do
+        format_inspect_summary(snap)
+      else
+        case Arvo.Session.inspect_cold(arg) do
+          {:ok, body} ->
+            "cold #{arg} (#{byte_size(body)} bytes):\n" <> String.slice(body, 0, 8_000)
+
+          {:error, :no_session} ->
+            "no open session"
+
+          {:error, :not_found} ->
+            "cold id not found: #{arg}"
+
+          {:error, reason} ->
+            "inspect failed: #{inspect(reason)}"
+        end
+      end
+
+    {{:ok, :handled, text}, state}
+  end
+
+  defp do_slash(state, "recall", args) do
+    id = String.trim(args || "")
+
+    if id == "" do
+      {{:ok, :handled, "usage: /recall <cold-id>"}, state}
+    else
+      case Arvo.Session.recall(id, actor: :user) do
+        {:ok, slice} ->
+          # Inject into session history so next TurnContext / model turn sees the expand
+          _ =
+            Arvo.Session.record_message(%{
+              role: "system",
+              content: "[expanded cold:#{id}]\n" <> slice
+            })
+
+          {{:ok, :handled, "expanded #{id} into session (#{byte_size(slice)} bytes):\n" <> slice},
+           state}
+
+        {:error, :not_found} ->
+          {{:ok, :handled, "recall failed: cold id not found (#{id})"}, state}
+
+        {:error, :over_cap} ->
+          {{:ok, :handled, "recall denied: over expand cap for #{id}"}, state}
+
+        {:error, reason} ->
+          {{:ok, :handled, "recall failed: #{inspect(reason)}"}, state}
+      end
+    end
+  end
+
   defp do_slash(state, "compact", args) do
     instructions = if String.trim(args) == "", do: nil, else: String.trim(args)
     sess = Arvo.Session.get()
@@ -477,6 +564,39 @@ defmodule Arvo.TUI do
       _ ->
         {{:ok, :unknown, "unknown command: /#{other}"}, state}
     end
+  end
+
+  defp format_inspect_summary(snap) when is_map(snap) do
+    warm = snap.warm || %{}
+    cold = snap.cold || []
+    metrics = snap.metrics || %{}
+
+    goal =
+      if warm["goal_known"],
+        do: warm["goal"],
+        else: "(unknown)"
+
+    cold_lines =
+      cold
+      |> Enum.take(-20)
+      |> Enum.map_join("\n", fn e ->
+        "  #{e["id"]} tool=#{e["tool"]} bytes=#{e["size"]} path=#{e["source_path"] || "-"}"
+      end)
+
+    cold_lines = if cold_lines == "", do: "  (none)", else: cold_lines
+
+    """
+    Progressive attention: #{if snap.progressive_attention, do: "on", else: "off"}
+    Warm:
+      goal: #{goal}
+      paths: #{inspect(Enum.take(warm["paths"] || [], 12))}
+      last_error: #{warm["last_error"] || ""}
+    Cold entries (#{length(cold)}):
+    #{cold_lines}
+    Metrics: store=#{metrics[:store_cold] || 0} stub=#{metrics[:stub_in_hot] || 0} full_hot=#{metrics[:full_hot] || 0} full_ingest_bytes=#{metrics[:full_ingest_bytes] || 0} same_path_reinvoke=#{metrics[:same_path_reinvoke] || 0} expand=#{metrics[:expand] || 0}
+    /inspect <id> for full cold body; /recall <id> to expand under caps.
+    """
+    |> String.trim()
   end
 
   defp rehydrate_from_resume(state, resumed) do

@@ -30,7 +30,8 @@ defmodule Arvo.TUITest do
     st = Arvo.TUI.state()
     tool = Enum.find(st.transcript, &(&1.kind == :tool && &1.name == "read"))
     assert tool.folded == true
-    assert tool.text == "ok"
+    assert tool.text =~ "ok"
+    assert tool.text =~ "[model:full]"
 
     :ok = Arvo.TUI.handle_event_sync({:agent_error, %{error: "boom"}})
     st = Arvo.TUI.state()
@@ -38,6 +39,38 @@ defmodule Arvo.TUITest do
     assert st.last_error == "boom"
     assert st.spinner == false
   end
+
+  test "dual-view stub shows model pane with stub text" do
+    :ok = Arvo.TUI.handle_event_sync({:agent_start, %{}})
+    :ok = Arvo.TUI.handle_event_sync({:tool_call_start, %{name: "bash"}})
+
+    :ok =
+      Arvo.TUI.handle_event_sync({
+        :tool_call_end,
+        %{
+          name: "bash",
+          is_error: false,
+          text: String.duplicate("full log\n", 50),
+          model_text: "[cold:abc123 tool=bash bytes=900]",
+          attention_action: :stub,
+          cold_id: "abc123"
+        }
+      })
+
+    st = Arvo.TUI.state()
+    tool =
+      st.transcript
+      |> Enum.filter(&(&1.kind == :tool && &1.name == "bash"))
+      |> List.last()
+
+    assert tool
+    assert tool.text =~ "full log"
+    assert tool.text =~ "[model:stub"
+    assert tool.text =~ "cold:abc123"
+    assert tool.text =~ "model saw"
+    assert tool.text =~ "[cold:abc123"
+  end
+
 
   test "message_delta accumulates without requiring full redraw" do
     :ok = Arvo.TUI.handle_event_sync({:agent_start, %{}})

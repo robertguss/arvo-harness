@@ -1,5 +1,9 @@
 import Config
 
+# Progressive attention: harness-owned hot stubs + cold store (default on).
+# Set progressive_attention: false for debug identity projection.
+config :arvo, progressive_attention: true
+
 # Tests and programmatic starts must not own stdin / TTY.
 if config_env() == :test do
   config :arvo,

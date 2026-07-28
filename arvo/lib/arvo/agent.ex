@@ -168,39 +168,95 @@ defmodule Arvo.Agent do
         {mod.spec().name, mod}
       end)
 
-    Enum.map_reduce(tool_calls, [], fn call, acc ->
-      id = Map.get(call, :id) || Map.get(call, "id") || "call_#{System.unique_integer([:positive])}"
-      name = Map.get(call, :name) || Map.get(call, "name")
-      args = normalize_args(Map.get(call, :arguments) || Map.get(call, "arguments") || %{})
+    tool_msgs =
+      Enum.map(tool_calls, fn call ->
+        id = Map.get(call, :id) || Map.get(call, "id") || "call_#{System.unique_integer([:positive])}"
+        name = Map.get(call, :name) || Map.get(call, "name")
+        args = normalize_args(Map.get(call, :arguments) || Map.get(call, "arguments") || %{})
 
-      event_fun.({:tool_call_start, %{id: id, name: name, arguments: args}})
+        event_fun.({:tool_call_start, %{id: id, name: name, arguments: args}})
 
-      {is_error, text} =
-        case Map.get(tool_by_name, name) do
-          nil ->
-            {true,
-             "Unknown tool: #{name}. Available: #{Enum.map_join(Map.keys(tool_by_name), ", ", & &1)}"}
+        {is_error, text} =
+          case Map.get(tool_by_name, name) do
+            nil ->
+              {true,
+               "Unknown tool: #{name}. Available: #{Enum.map_join(Map.keys(tool_by_name), ", ", & &1)}"}
 
-          mod ->
-            case Arvo.Tool.invoke(mod, args, tool_ctx(ctx)) do
-              {:ok, out} -> {false, out}
-              {:error, out} -> {true, out}
-            end
+            mod ->
+              case Arvo.Tool.invoke(mod, args, tool_ctx(ctx)) do
+                {:ok, out} -> {false, out}
+                {:error, out} -> {true, out}
+              end
+          end
+
+        projected = project_tool_result(ctx, name, args, text, is_error, id)
+        model_content = Map.get(projected, :content) || text
+        human_text = Map.get(projected, :full_text) || text
+
+        event_fun.({
+          :tool_call_end,
+          %{
+            id: id,
+            name: name,
+            is_error: is_error,
+            text: human_text,
+            model_text: model_content,
+            cold_id: Map.get(projected, :cold_id),
+            attention_action: Map.get(projected, :action) || :full_hot
+          }
+        })
+
+        msg = %{
+          role: "tool",
+          tool_call_id: id,
+          name: name,
+          content: model_content,
+          is_error: is_error
+        }
+
+        if cold_id = Map.get(projected, :cold_id) do
+          Map.put(msg, :cold_id, cold_id)
+        else
+          msg
+        end
+      end)
+
+    {tool_msgs, tool_msgs}
+  end
+
+  # Progressive attention: project tool bodies for model hot context (KTD1).
+  # Injectable via context.project_tool_result/5 or identity when unset.
+  defp project_tool_result(ctx, name, args, text, is_error, tool_call_id) do
+    case Map.get(ctx, :project_tool_result) do
+      fun when is_function(fun, 5) ->
+        case fun.(name, args, text, is_error, %{tool_call_id: tool_call_id}) do
+          %{} = projected -> projected
+          content when is_binary(content) -> %{content: content, full_text: text, action: :full_hot}
+          _ -> %{content: text, full_text: text, action: :full_hot}
         end
 
-      event_fun.({:tool_call_end, %{id: id, name: name, is_error: is_error, text: text}})
+      _ ->
+        %{content: text, full_text: text, action: :full_hot, cold_id: nil}
+    end
+  rescue
+    e ->
+      project_fail_open(text, Exception.message(e))
+  catch
+    :exit, reason ->
+      project_fail_open(text, inspect(reason))
+  end
 
-      msg = %{
-        role: "tool",
-        tool_call_id: id,
-        name: name,
-        content: text,
-        is_error: is_error
-      }
+  defp project_fail_open(text, reason) do
+    require Logger
+    Logger.warning("Arvo.Agent projection fail-open: #{reason}")
 
-      {msg, acc ++ [msg]}
-    end)
-    |> then(fn {tool_msgs, results} -> {tool_msgs, results} end)
+    %{
+      content: text,
+      full_text: text,
+      action: :full_hot,
+      cold_id: nil,
+      project_error: reason
+    }
   end
 
   defp normalize_args(args) when is_binary(args) do

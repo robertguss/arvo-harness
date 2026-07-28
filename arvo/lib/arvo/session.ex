@@ -120,6 +120,40 @@ defmodule Arvo.Session do
   end
 
   @doc """
+  Project a tool result under progressive attention (cold + policy + warm + audit).
+
+  Called from Agent mid-turn via context.project_tool_result. Returns a map with
+  `:content` (model-facing), `:full_text`, `:cold_id`, `:action`.
+  """
+  def project_tool_result(tool, args, text, is_error, meta \\ %{}) do
+    GenServer.call(
+      __MODULE__,
+      {:project_tool_result, tool, args, text, is_error, meta || %{}},
+      30_000
+    )
+  end
+
+  @doc "Current live warm work-delta map."
+  def warm do
+    GenServer.call(__MODULE__, :warm)
+  end
+
+  @doc "Set or clear goal from a product-valid writer (user line, pin, opts)."
+  def set_warm_goal(goal) do
+    GenServer.call(__MODULE__, {:set_warm_goal, goal})
+  end
+
+  @doc "Expand a cold entry into a bounded hot slice. Actor: :user | :model | :policy."
+  def recall(cold_id, opts \\ []) when is_binary(cold_id) do
+    GenServer.call(__MODULE__, {:recall, cold_id, opts})
+  end
+
+  @doc "Inspect snapshot: warm fields, cold entry list, audit metrics."
+  def inspect_attention do
+    GenServer.call(__MODULE__, :inspect_attention)
+  end
+
+  @doc """
   Persist only **new** assistant/tool messages from an agent result.
 
   `prior_len` is the number of non-system messages supplied to the agent
@@ -172,7 +206,12 @@ defmodule Arvo.Session do
        turn_prior_len: nil,
        turn_generation: 0,
        cancelled_generation: nil,
-       tokens: Arvo.Session.Tokens.new()
+       tokens: Arvo.Session.Tokens.new(),
+       # Progressive attention live state
+       warm: Arvo.Session.Warm.empty(),
+       attention_retention: %{},
+       attention_budgets: Arvo.Attention.default_budgets(),
+       attention_turn: 0
      }}
   end
 
@@ -211,7 +250,11 @@ defmodule Arvo.Session do
           history: [meta],
           model: meta["model"],
           profile: meta["profile"],
-          tokens: Arvo.Session.Tokens.new()
+          tokens: Arvo.Session.Tokens.new(),
+          warm: Arvo.Session.Warm.empty(),
+          attention_retention: %{},
+          attention_budgets: Arvo.Attention.default_budgets(),
+          attention_turn: 0
       }
 
       {:reply, {:ok, path}, state}
@@ -248,6 +291,9 @@ defmodule Arvo.Session do
           head = Arvo.Session.Store.resolve_head(entries)
           tokens = tokens_from_history(entries)
 
+          # Rehydrate warm from handoff packet seed when present (R9)
+          warm = warm_from_history(entries)
+
           state = %{
             state
             | id: meta && meta["id"],
@@ -257,7 +303,10 @@ defmodule Arvo.Session do
               history: entries,
               model: meta && meta["model"],
               profile: meta && meta["profile"],
-              tokens: tokens
+              tokens: tokens,
+              warm: warm,
+              attention_retention: %{},
+              attention_budgets: Arvo.Attention.default_budgets()
           }
 
           # Do not call TUI here — resume is often invoked from TUI.slash (deadlock).
@@ -345,8 +394,106 @@ defmodule Arvo.Session do
           history: state.history ++ [written]
       }
 
+      # Product-valid goal writer: last user task line (R5/R9)
+      state =
+        if (written["role"] || written[:role]) == "user" and
+             (written["type"] || "message") == "message" do
+          content = to_string(written["content"] || "")
+          # Skip handoff packet seeds as goal writers when already structured
+          if content =~ "[handoff packet]" do
+            state
+          else
+            %{state | warm: Arvo.Session.Warm.set_goal(state.warm, content)}
+          end
+        else
+          state
+        end
+
       {:reply, {:ok, written}, state}
     end
+  end
+
+  def handle_call(:warm, _from, state), do: {:reply, state.warm || Arvo.Session.Warm.empty(), state}
+
+  def handle_call({:set_warm_goal, goal}, _from, state) do
+    warm = Arvo.Session.Warm.set_goal(state.warm || Arvo.Session.Warm.empty(), goal)
+    {:reply, {:ok, warm}, %{state | warm: warm}}
+  end
+
+  def handle_call({:project_tool_result, tool, args, text, is_error, meta}, _from, state) do
+    if is_nil(state.path) do
+      {:reply, %{content: text, full_text: text, action: :full_hot, cold_id: nil}, state}
+    else
+      turn = (state.attention_turn || 0) + 1
+
+      result =
+        Arvo.Attention.project_tool_result(tool, args, text, is_error, %{
+          session_path: state.path,
+          retention: state.attention_retention || %{},
+          budgets: state.attention_budgets || Arvo.Attention.default_budgets(),
+          current_turn: turn,
+          tool_call_id: Map.get(meta, :tool_call_id) || Map.get(meta, "tool_call_id")
+        })
+
+      warm =
+        Arvo.Session.Warm.update_from_tool(state.warm || Arvo.Session.Warm.empty(), %{
+          tool: tool,
+          args: args,
+          is_error: is_error,
+          text: text,
+          path: result.decision[:path] || result.decision["path"]
+        })
+
+      if is_binary(state.path) do
+        _ =
+          Arvo.Session.Audit.append(state.path, :warm_update, %{
+            "paths" => warm["paths"],
+            "goal_known" => warm["goal_known"]
+          })
+      end
+
+      state = %{
+        state
+        | warm: warm,
+          attention_retention: result.retention,
+          attention_budgets: result.budgets,
+          attention_turn: turn
+      }
+
+      {:reply, result, state}
+    end
+  end
+
+  def handle_call({:recall, cold_id, opts}, _from, state) do
+    if is_nil(state.path) do
+      {:reply, {:error, :no_session}, state}
+    else
+      {:reply, Arvo.Attention.expand(state.path, cold_id, opts), state}
+    end
+  end
+
+  def handle_call(:inspect_attention, _from, state) do
+    cold =
+      if is_binary(state.path) do
+        Arvo.Session.Cold.list(state.path)
+      else
+        []
+      end
+
+    metrics =
+      if is_binary(state.path) do
+        Arvo.Session.Audit.metrics(state.path)
+      else
+        Arvo.Session.Audit.empty_metrics()
+      end
+
+    {:reply,
+     %{
+       warm: state.warm || Arvo.Session.Warm.empty(),
+       cold: cold,
+       metrics: metrics,
+       progressive_attention: Arvo.Attention.enabled?()
+     }, state}
   end
 
   def handle_call({:record_usage, usage}, _from, state) do
@@ -380,6 +527,17 @@ defmodule Arvo.Session do
     else
       steering = state.steering
       context = Map.put(context, :steering, Map.get(context, :steering, []) ++ steering)
+
+      # Wire progressive attention projection into Agent (product path default-on)
+      context =
+        if Map.has_key?(context, :project_tool_result) do
+          context
+        else
+          Map.put(context, :project_tool_result, fn tool, args, text, is_error, meta ->
+            Arvo.Session.project_tool_result(tool, args, text, is_error, meta)
+          end)
+        end
+
       prior_len = Map.get(context, :prior_len) || length(List.wrap(Map.get(context, :messages)))
       gen = state.turn_generation + 1
       parent = self()
@@ -652,6 +810,12 @@ defmodule Arvo.Session do
           })
       end
 
+    attrs =
+      case m[:cold_id] || m["cold_id"] do
+        nil -> attrs
+        cold_id -> Map.put(attrs, "cold_id", cold_id)
+      end
+
     case m[:tool_calls] || m["tool_calls"] do
       nil -> attrs
       [] -> attrs
@@ -745,6 +909,11 @@ defmodule Arvo.Session do
   end
 
   defp apply_handoff_rebind(state, fields) when is_map(fields) do
+    child_warm =
+      Map.get(fields, :warm) ||
+        Map.get(fields, "warm") ||
+        Arvo.Session.Warm.empty()
+
     %{
       state
       | id: Map.get(fields, :id, state.id),
@@ -759,8 +928,65 @@ defmodule Arvo.Session do
         turn_task: nil,
         turn_result: nil,
         turn_prior_len: nil,
-        cancelled_generation: nil
+        cancelled_generation: nil,
+        warm: Arvo.Session.Warm.normalize(child_warm),
+        attention_retention: %{},
+        attention_budgets: Arvo.Attention.default_budgets(),
+        attention_turn: 0
     }
+  end
+
+  defp warm_from_history(entries) when is_list(entries) do
+    packet_msg =
+      entries
+      |> Enum.find(fn e ->
+        e["handoff_packet"] == true or
+          (is_binary(e["content"]) and e["content"] =~ "[handoff packet]")
+      end)
+
+    cond do
+      is_map(packet_msg) and is_map(packet_msg["warm"]) ->
+        Arvo.Session.Warm.from_packet(packet_msg["warm"])
+
+      is_map(packet_msg) ->
+        # Reconstruct from packet blob fields if structured warm missing
+        content = packet_msg["content"] || ""
+        goal = capture_packet_field(content, "goal")
+        paths = capture_packet_paths(content)
+        last_error = capture_packet_field(content, "last_error")
+
+        Arvo.Session.Warm.from_packet(%{
+          "goal" => goal,
+          "paths" => paths,
+          "last_error" => last_error,
+          "goal_known" =>
+            is_binary(goal) and goal != "" and goal != "continue work" and goal != "nil"
+        })
+
+      true ->
+        Arvo.Session.Warm.empty()
+    end
+  end
+
+  defp capture_packet_field(content, key) when is_binary(content) do
+    case Regex.run(~r/^#{key}:\s*(.*)$/m, content) do
+      [_, v] -> String.trim(v)
+      _ -> nil
+    end
+  end
+
+  defp capture_packet_paths(content) when is_binary(content) do
+    case capture_packet_field(content, "paths") do
+      nil ->
+        []
+
+      s ->
+        # inspect list form: ["/a", "/b"] or empty
+        case Regex.scan(~r/"([^"]+)"/, s) do
+          [] -> []
+          matches -> Enum.map(matches, fn [_, p] -> p end)
+        end
+    end
   end
 
   defp confine_session_path(path) when is_binary(path) do

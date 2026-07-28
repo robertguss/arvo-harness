@@ -31,3 +31,23 @@ Synchronous UI busy claim before fire-and-forget product chat spawn. Blocks doub
 ### Turn-busy
 
 Session’s live-Task predicate used to refuse identity/HEAD rewrites (resume, rewind, open_new, rebind, handoff) while a product turn is running.
+
+### Progressive attention
+
+Harness-owned management of what the model sees each turn: budgeted hot context, structured warm work-delta, and session-complete addressable cold evidence. Not a permanent mind and not a markdown knowledge base; “learning” means reuse of cold evidence plus warm state. Distinct from Keepers (optional live process cache over cold).
+
+### Dual view
+
+Human-facing transcript may stay rich for debugging while the model’s hot messages stay progressive (stubs/budgeted). Inspect reconciles the two; honesty means labeling what the model saw, not forcing identical full dumps in both views.
+
+### Warm work-delta
+
+Small structured workshop state (paths, command/exit signals, failures, goal line) maintained primarily from the tool/session trace. Injected into hot under budget; handoff packet snapshots it. Rebuildable from cold/tools; must not grow into essay prose agents re-ingest as scripture.
+
+### Cold evidence
+
+Full tool bodies kept addressable under stable ids for the open session (v1 session-scoped completeness). Stubs in hot point here; expand/recall pulls bounded slices back under caps. Cross-session GC/immortality is deferred; Keepers if present are live caches over cold, not replacements.
+
+### Context firewall
+
+Product policy that large tool results enter model hot context as stubs by default while full bodies land in cold—enforced by the harness, not model self-discipline. Fidelity exceptions (small, error, pin, edit targets) keep coding usable.

@@ -300,6 +300,9 @@ defmodule Arvo.TUI do
       /resume [n|path]   list sessions, or resume by index/path
       /rewind [n]        move HEAD back n steps (default 1); next msg forks
       /handoff           new session with work-delta packet (no silent compact)
+      /inspect [id]      warm + cold list; /inspect <cold-id> full body
+      /memory [id]       alias for /inspect
+      /recall <id>       expand cold entry into view under size caps
       /compact [focus]   power: summarize older turns (optional focus text)
       /quit              exit#{plugin_cmds}
     Keys (Focus): Enter send · Esc cancel turn · / for slash
@@ -440,6 +443,59 @@ defmodule Arvo.TUI do
     end
   end
 
+  defp do_slash(state, cmd, args) when cmd in ["inspect", "memory"] do
+    arg = String.trim(args || "")
+    snap = Arvo.Session.inspect_attention()
+
+    text =
+      if arg == "" do
+        format_inspect_summary(snap)
+      else
+        path = Arvo.Session.get().path
+
+        cond do
+          not is_binary(path) ->
+            "no open session"
+
+          true ->
+            case Arvo.Session.Cold.fetch(path, arg) do
+              {:ok, body} ->
+                "cold #{arg} (#{byte_size(body)} bytes):\n" <> String.slice(body, 0, 8_000)
+
+              {:error, :not_found} ->
+                "cold id not found: #{arg}"
+
+              {:error, reason} ->
+                "inspect failed: #{inspect(reason)}"
+            end
+        end
+      end
+
+    {{:ok, :handled, text}, state}
+  end
+
+  defp do_slash(state, "recall", args) do
+    id = String.trim(args || "")
+
+    if id == "" do
+      {{:ok, :handled, "usage: /recall <cold-id>"}, state}
+    else
+      case Arvo.Session.recall(id, actor: :user) do
+        {:ok, slice} ->
+          {{:ok, :handled, "expanded #{id} (#{byte_size(slice)} bytes):\n" <> slice}, state}
+
+        {:error, :not_found} ->
+          {{:ok, :handled, "recall failed: cold id not found (#{id})"}, state}
+
+        {:error, :over_cap} ->
+          {{:ok, :handled, "recall denied: over expand cap for #{id}"}, state}
+
+        {:error, reason} ->
+          {{:ok, :handled, "recall failed: #{inspect(reason)}"}, state}
+      end
+    end
+  end
+
   defp do_slash(state, "compact", args) do
     instructions = if String.trim(args) == "", do: nil, else: String.trim(args)
     sess = Arvo.Session.get()
@@ -477,6 +533,39 @@ defmodule Arvo.TUI do
       _ ->
         {{:ok, :unknown, "unknown command: /#{other}"}, state}
     end
+  end
+
+  defp format_inspect_summary(snap) when is_map(snap) do
+    warm = snap.warm || %{}
+    cold = snap.cold || []
+    metrics = snap.metrics || %{}
+
+    goal =
+      if warm["goal_known"],
+        do: warm["goal"],
+        else: "(unknown)"
+
+    cold_lines =
+      cold
+      |> Enum.take(-20)
+      |> Enum.map_join("\n", fn e ->
+        "  #{e["id"]} tool=#{e["tool"]} bytes=#{e["size"]} path=#{e["source_path"] || "-"}"
+      end)
+
+    cold_lines = if cold_lines == "", do: "  (none)", else: cold_lines
+
+    """
+    Progressive attention: #{if snap.progressive_attention, do: "on", else: "off"}
+    Warm:
+      goal: #{goal}
+      paths: #{inspect(Enum.take(warm["paths"] || [], 12))}
+      last_error: #{warm["last_error"] || ""}
+    Cold entries (#{length(cold)}):
+    #{cold_lines}
+    Metrics: store=#{metrics[:store_cold] || 0} stub=#{metrics[:stub_in_hot] || 0} full_hot=#{metrics[:full_hot] || 0} full_ingest_bytes=#{metrics[:full_ingest_bytes] || 0} same_path_reinvoke=#{metrics[:same_path_reinvoke] || 0} expand=#{metrics[:expand] || 0}
+    /inspect <id> for full cold body; /recall <id> to expand under caps.
+    """
+    |> String.trim()
   end
 
   defp rehydrate_from_resume(state, resumed) do

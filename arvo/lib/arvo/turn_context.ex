@@ -61,6 +61,14 @@ defmodule Arvo.TurnContext do
 
     session_id = Keyword.get(opts, :session_id, sess[:id])
 
+    # Inject live warm work-delta into hot context under budget (R5)
+    messages =
+      if Keyword.get(opts, :inject_warm, true) do
+        inject_warm(messages, sess)
+      else
+        messages
+      end
+
     %{
       messages: messages,
       tools: tools,
@@ -69,5 +77,48 @@ defmodule Arvo.TurnContext do
       session_id: session_id,
       prior_len: length(messages)
     }
+  end
+
+  defp inject_warm(messages, sess) when is_list(messages) do
+    warm = Map.get(sess, :warm) || Map.get(sess, "warm")
+
+    cond do
+      is_nil(warm) ->
+        messages
+
+      warm == Arvo.Session.Warm.empty() ->
+        messages
+
+      true ->
+        block = Arvo.Session.Warm.format_for_hot(warm)
+        # Drop any previous warm inject so we do not stack essays
+        messages = Enum.reject(messages, &warm_message?/1)
+        warm_msg = %{role: "system", content: block}
+        # Place after leading system messages if any, else at front of product history
+        insert_warm(messages, warm_msg)
+    end
+  rescue
+    _ -> messages
+  end
+
+  defp warm_message?(%{role: role, content: content})
+       when role in ["system", :system] and is_binary(content) do
+    String.starts_with?(content, "[warm work-delta]")
+  end
+
+  defp warm_message?(%{"role" => role, "content" => content})
+       when role in ["system", "System"] and is_binary(content) do
+    String.starts_with?(content, "[warm work-delta]")
+  end
+
+  defp warm_message?(_), do: false
+
+  defp insert_warm(messages, warm_msg) do
+    {leading_system, rest} =
+      Enum.split_while(messages, fn m ->
+        (m[:role] || m["role"]) in ["system", :system]
+      end)
+
+    leading_system ++ [warm_msg | rest]
   end
 end

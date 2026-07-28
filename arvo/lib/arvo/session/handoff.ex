@@ -41,12 +41,15 @@ defmodule Arvo.Session.Handoff do
           parent_session_id: sess.id
         )
 
+      child_warm = Arvo.Session.Warm.from_packet(packet)
+
       seed = %{
         "type" => "message",
         "role" => "user",
         "content" => packet_blob(packet),
         "parent_id" => meta["id"],
-        "handoff_packet" => true
+        "handoff_packet" => true,
+        "warm" => child_warm
       }
 
       written = Arvo.Session.Store.append!(child_path, seed)
@@ -84,7 +87,8 @@ defmodule Arvo.Session.Handoff do
            cwd: cwd,
            model: meta["model"],
            profile: meta["profile"],
-           tokens: Arvo.Session.Tokens.new()
+           tokens: Arvo.Session.Tokens.new(),
+           warm: child_warm
          }
        }}
     rescue
@@ -94,9 +98,12 @@ defmodule Arvo.Session.Handoff do
   end
 
   def packet_blob(packet) when is_map(packet) do
+    goal_known = Map.get(packet, "goal_known", true)
+
     """
     [handoff packet]
     goal: #{packet["goal"]}
+    goal_known: #{goal_known}
     done: #{packet["done"]}
     not_done: #{packet["not_done"]}
     paths: #{inspect(packet["paths"])}
@@ -113,19 +120,48 @@ defmodule Arvo.Session.Handoff do
     users = Enum.filter(messages, &((&1[:role] || &1["role"]) == "user"))
     assts = Enum.filter(messages, &((&1[:role] || &1["role"]) == "assistant"))
 
-    goal =
-      Keyword.get(opts, :goal) ||
-        case List.last(users) do
-          nil -> "continue work"
-          m -> String.slice(to_string(m[:content] || m["content"] || ""), 0, 200)
-        end
+    warm = Map.get(sess, :warm) || Map.get(sess, "warm") || Arvo.Session.Warm.empty()
+    warm = Arvo.Session.Warm.normalize(warm)
+    warm_fields = Arvo.Session.Warm.to_packet_fields(warm)
+
+    # Goal: opts pin > live warm (product-valid) > last user line > honesty unknown
+    {goal, goal_known} =
+      cond do
+        is_binary(Keyword.get(opts, :goal)) and String.trim(Keyword.get(opts, :goal)) != "" ->
+          {String.slice(String.trim(Keyword.get(opts, :goal)), 0, 200), true}
+
+        warm_fields["goal_known"] and is_binary(warm_fields["goal"]) ->
+          {warm_fields["goal"], true}
+
+        true ->
+          case List.last(users) do
+            nil ->
+              {nil, false}
+
+            m ->
+              content = String.slice(to_string(m[:content] || m["content"] || ""), 0, 200)
+
+              if content == "" or content =~ "[handoff packet]" or content =~ "[warm work-delta]" do
+                {nil, false}
+              else
+                {content, true}
+              end
+          end
+      end
+
+    paths = Keyword.get(opts, :paths) || warm_fields["paths"] || []
+    last_error = Keyword.get(opts, :last_error) || warm_fields["last_error"] || ""
+
+    goal_display =
+      if goal_known, do: goal, else: "(unknown — not set by user/pin/handoff)"
 
     %{
-      "goal" => goal,
+      "goal" => goal_display,
+      "goal_known" => goal_known,
       "done" => Keyword.get(opts, :done) || summarize_done(assts),
-      "not_done" => Keyword.get(opts, :not_done) || goal,
-      "paths" => Keyword.get(opts, :paths) || [],
-      "last_error" => Keyword.get(opts, :last_error) || "",
+      "not_done" => Keyword.get(opts, :not_done) || if(goal_known, do: goal, else: goal_display),
+      "paths" => paths,
+      "last_error" => last_error,
       "next_steps" => Keyword.get(opts, :next_steps) || "Continue from handoff packet.",
       "parent_session_id" => sess.id
     }

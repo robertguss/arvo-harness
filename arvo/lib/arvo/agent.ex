@@ -188,19 +188,75 @@ defmodule Arvo.Agent do
             end
         end
 
-      event_fun.({:tool_call_end, %{id: id, name: name, is_error: is_error, text: text}})
+      projected = project_tool_result(ctx, name, args, text, is_error, id)
+      model_content = Map.get(projected, :content) || text
+      human_text = Map.get(projected, :full_text) || text
+
+      event_fun.({
+        :tool_call_end,
+        %{
+          id: id,
+          name: name,
+          is_error: is_error,
+          # Dual view: human transcript may keep full body; model path uses projected content
+          text: human_text,
+          model_text: model_content,
+          cold_id: Map.get(projected, :cold_id),
+          attention_action: Map.get(projected, :action) || :full_hot
+        }
+      })
 
       msg = %{
         role: "tool",
         tool_call_id: id,
         name: name,
-        content: text,
+        content: model_content,
         is_error: is_error
       }
+
+      msg =
+        if cold_id = Map.get(projected, :cold_id) do
+          Map.put(msg, :cold_id, cold_id)
+        else
+          msg
+        end
 
       {msg, acc ++ [msg]}
     end)
     |> then(fn {tool_msgs, results} -> {tool_msgs, results} end)
+  end
+
+  # Progressive attention: project tool bodies for model hot context (KTD1).
+  # Injectable via context.project_tool_result/5 or identity when unset.
+  defp project_tool_result(ctx, name, args, text, is_error, tool_call_id) do
+    case Map.get(ctx, :project_tool_result) do
+      fun when is_function(fun, 5) ->
+        case fun.(name, args, text, is_error, %{tool_call_id: tool_call_id}) do
+          %{} = projected -> projected
+          content when is_binary(content) -> %{content: content, full_text: text, action: :full_hot}
+          _ -> %{content: text, full_text: text, action: :full_hot}
+        end
+
+      fun when is_function(fun, 4) ->
+        case fun.(name, args, text, is_error) do
+          %{} = projected -> projected
+          content when is_binary(content) -> %{content: content, full_text: text, action: :full_hot}
+          _ -> %{content: text, full_text: text, action: :full_hot}
+        end
+
+      _ ->
+        %{content: text, full_text: text, action: :full_hot, cold_id: nil}
+    end
+  rescue
+    e ->
+      # Fail open to full text so a projection bug does not kill the turn
+      %{
+        content: text,
+        full_text: text,
+        action: :full_hot,
+        cold_id: nil,
+        project_error: Exception.message(e)
+      }
   end
 
   defp normalize_args(args) when is_binary(args) do

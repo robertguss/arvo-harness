@@ -67,9 +67,8 @@ defmodule Arvo.TUI.Render do
     cum = tokens[:cumulative] || 0
     win = tokens[:window] || 500_000
     status = status_label(state)
-    # Prefer Session-fresh panes when available so reaper teardown clears chrome
-    # even if TUI state was not refreshed this frame.
-    panes = live_panes_label(refresh_panes_for_ghost(state))
+    # Use TUI-cached live_panes only — Session push updates on register/teardown.
+    panes = live_panes_label(state)
 
     line =
       if panes == "" do
@@ -659,22 +658,7 @@ defmodule Arvo.TUI.Render do
   defp status_label(%{status: :idle}), do: "idle"
   defp status_label(_), do: "idle"
 
-  defp refresh_panes_for_ghost(state) do
-    case Process.whereis(Arvo.Session) do
-      pid when is_pid(pid) ->
-        try do
-          panes = Arvo.Session.owned_panes()
-          Map.put(state, :live_panes, panes)
-        catch
-          :exit, _ -> state
-        end
-
-      _ ->
-        state
-    end
-  end
-
-  # R11b: show Arvo-owned pane work even when Session is idle after long_lived return.
+  # Show Arvo-owned pane work even when Session is idle after long_lived return.
   defp live_panes_label(state) do
     panes = state[:live_panes] || []
 
@@ -684,14 +668,7 @@ defmodule Arvo.TUI.Render do
 
       [one | _] ->
         cmd = Map.get(one, :command) || Map.get(one, "command") || "pane"
-
-        cmd =
-          cmd
-          |> to_string()
-          |> String.replace(~r/\s+/, " ")
-          |> String.trim()
-          |> String.slice(0, 40)
-
+        cmd = cmd |> to_string() |> Arvo.TUI.Activity.collapse_ws() |> String.slice(0, 40)
         n = length(panes)
 
         if n == 1 do

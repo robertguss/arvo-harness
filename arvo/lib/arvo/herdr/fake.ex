@@ -4,8 +4,10 @@ defmodule Arvo.Herdr.Fake do
 
   Start with `Arvo.Herdr.Fake.start_link/1` (or use Application env
   `:herdr_adapter` → this module after `start_link`). Scriptable via
-  `configure/1` and `script/1`.
+  `configure/1`.
   """
+
+  @max_calls 200
 
   @behaviour Arvo.Herdr.Adapter
 
@@ -51,8 +53,8 @@ defmodule Arvo.Herdr.Fake do
 
   Options:
   - `:available` — boolean (default true)
-  - `:close_delay_ms` — artificial close latency
-  - `:close_error` — if set, close returns `{:error, msg}` once or always
+  - `:close_delay_ms` — artificial close latency applied outside the GenServer
+  - `:close_error` — if set, close returns `{:error, msg}` until cleared
   - `:process_alive` — map pane_id => boolean for process_info
   - `:wait_outputs` — map pane_id => text to return from wait_output
   - `:read_outputs` — map pane_id => text
@@ -87,7 +89,12 @@ defmodule Arvo.Herdr.Fake do
   def wait_output(pane_id, opts), do: GenServer.call(@name, {:wait_output, pane_id, opts})
 
   @impl true
-  def close(pane_id), do: GenServer.call(@name, {:close, pane_id}, 30_000)
+  def close(pane_id) do
+    # Sleep outside the GenServer so concurrent closes are not serialized.
+    delay = GenServer.call(@name, :close_delay_ms)
+    if is_integer(delay) and delay > 0, do: Process.sleep(delay)
+    GenServer.call(@name, {:close, pane_id}, 30_000)
+  end
 
   @impl true
   def process_info(pane_id), do: GenServer.call(@name, {:process_info, pane_id})
@@ -130,6 +137,7 @@ defmodule Arvo.Herdr.Fake do
   def handle_call(:panes, _from, state), do: {:reply, state.panes, state}
   def handle_call(:calls, _from, state), do: {:reply, Enum.reverse(state.calls), state}
   def handle_call(:available?, _from, state), do: {:reply, state.available, state}
+  def handle_call(:close_delay_ms, _from, state), do: {:reply, state.close_delay_ms, state}
 
   def handle_call({:set_process_alive, pane_id, alive?}, _from, state) do
     {:reply, :ok, put_in(state, [:process_alive, pane_id], alive?)}
@@ -139,13 +147,12 @@ defmodule Arvo.Herdr.Fake do
     id = "fake:p#{state.next_id}"
     pane = %{id: id, command: nil, opts: opts, open: true}
 
-    state = %{
+    state =
       state
-      | next_id: state.next_id + 1,
-        panes: Map.put(state.panes, id, pane),
-        process_alive: Map.put(state.process_alive, id, true),
-        calls: [{:split, opts, id} | state.calls]
-    }
+      |> Map.put(:next_id, state.next_id + 1)
+      |> Map.put(:panes, Map.put(state.panes, id, pane))
+      |> Map.put(:process_alive, Map.put(state.process_alive, id, true))
+      |> record_call({:split, opts, id})
 
     {:reply, {:ok, id}, state}
   end
@@ -153,18 +160,17 @@ defmodule Arvo.Herdr.Fake do
   def handle_call({:run, pane_id, command}, _from, state) do
     case Map.get(state.panes, pane_id) do
       nil ->
-        {:reply, {:error, "pane #{pane_id} not found"},
-         %{state | calls: [{:run, pane_id, command, :error} | state.calls]}}
+        state = record_call(state, {:run, pane_id, command, :error})
+        {:reply, {:error, "pane #{pane_id} not found"}, state}
 
       pane ->
         pane = %{pane | command: command}
 
-        state = %{
+        state =
           state
-          | panes: Map.put(state.panes, pane_id, pane),
-            process_alive: Map.put(state.process_alive, pane_id, true),
-            calls: [{:run, pane_id, command} | state.calls]
-        }
+          |> Map.put(:panes, Map.put(state.panes, pane_id, pane))
+          |> Map.put(:process_alive, Map.put(state.process_alive, pane_id, true))
+          |> record_call({:run, pane_id, command})
 
         {:reply, :ok, state}
     end
@@ -178,7 +184,7 @@ defmodule Arvo.Herdr.Fake do
           _ -> ""
         end
 
-    state = %{state | calls: [{:read, pane_id, opts} | state.calls]}
+    state = record_call(state, {:read, pane_id, opts})
     {:reply, {:ok, text}, state}
   end
 
@@ -192,42 +198,39 @@ defmodule Arvo.Herdr.Fake do
     alive? = Map.get(state.process_alive, pane_id, true)
     match = Keyword.get(opts, :match) || Keyword.get(opts, :regex)
 
-    {reply, state} =
+    reply =
       cond do
         is_binary(state.wait_error) ->
-          {{:error, state.wait_error}, state}
+          {:error, state.wait_error}
 
         is_binary(match) and match != "" ->
-          {{:ok, %{matched_line: text, text: text}}, state}
+          {:ok, %{matched_line: text, text: text}}
 
         alive? == false ->
-          {{:ok, %{matched_line: nil, text: text, exited: true}}, state}
+          {:ok, %{matched_line: nil, text: text, exited: true}}
 
         is_integer(timeout) and timeout <= 1 ->
-          {{:error, "timed out waiting for output match"}, state}
+          {:error, "timed out waiting for output match"}
 
         true ->
-          {{:ok, %{matched_line: text, text: text}}, state}
+          {:ok, %{matched_line: text, text: text}}
       end
 
-    state = %{state | calls: [{:wait_output, pane_id, opts} | state.calls]}
+    state = record_call(state, {:wait_output, pane_id, opts})
     {:reply, reply, state}
   end
 
   def handle_call({:close, pane_id}, _from, state) do
-    if state.close_delay_ms > 0, do: Process.sleep(state.close_delay_ms)
+    state = record_call(state, {:close, pane_id})
 
-    state = %{state | calls: [{:close, pane_id} | state.calls]}
-
-    cond do
-      is_binary(state.close_error) ->
+    case Map.get(state.panes, pane_id) do
+      _ when is_binary(state.close_error) ->
         {:reply, {:error, state.close_error}, state}
 
-      not Map.has_key?(state.panes, pane_id) ->
+      nil ->
         {:reply, {:error, "pane #{pane_id} not found"}, state}
 
-      true ->
-        pane = Map.get(state.panes, pane_id)
+      pane ->
         pane = %{pane | open: false}
 
         state = %{
@@ -251,7 +254,7 @@ defmodule Arvo.Herdr.Fake do
         [%{"name" => "zsh", "cmdline" => "-zsh", "argv" => ["-zsh"]}]
       end
 
-    state = %{state | calls: [{:process_info, pane_id} | state.calls]}
+    state = record_call(state, {:process_info, pane_id})
 
     {:reply,
      {:ok,
@@ -261,6 +264,10 @@ defmodule Arvo.Herdr.Fake do
         foreground_processes: foreground,
         raw: %{}
       }}, state}
+  end
+
+  defp record_call(state, call) do
+    %{state | calls: Enum.take([call | state.calls], @max_calls)}
   end
 
   defp base_state(opts) do

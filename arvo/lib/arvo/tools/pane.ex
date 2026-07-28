@@ -164,15 +164,16 @@ defmodule Arvo.Tools.Pane do
             ok
 
           {:error, msg} ->
-            if mode == :long_lived do
-              # Best-effort started if match never appears
-              {:ok, :best_effort}
-            else
-              if String.contains?(to_string(msg), "timed out") do
+            cond do
+              mode == :long_lived ->
+                # Best-effort started if match never appears
+                {:ok, :best_effort}
+
+              String.contains?(to_string(msg), "timed out") ->
                 {:error, :timeout}
-              else
+
+              true ->
                 {:error, msg}
-              end
             end
         end
 
@@ -204,8 +205,9 @@ defmodule Arvo.Tools.Pane do
       case Arvo.Herdr.process_info(pane_id) do
         {:ok, info} ->
           cond do
-            not process_exited?(info) ->
-              Process.sleep(200)
+            not Arvo.Herdr.process_exited?(info) ->
+              # Slow down after first non-shell sighting to cut process_info forks.
+              Process.sleep(if(seen_work?, do: 500, else: 200))
               do_wait_exit(pane_id, deadline, started_at, true)
 
             seen_work? ->
@@ -228,16 +230,6 @@ defmodule Arvo.Tools.Pane do
       end
     end
   end
-
-  defp process_exited?(%{foreground_processes: procs}) when is_list(procs) do
-    Enum.all?(procs, fn p ->
-      name = to_string(p["name"] || p[:name] || "")
-      base = String.trim_leading(name, "-")
-      base in ["zsh", "bash", "sh", "fish", "nu", "dash", "ksh", "tcsh", "csh"]
-    end)
-  end
-
-  defp process_exited?(_), do: false
 
   defp cleanup_pane(pane_id) do
     status =
@@ -303,9 +295,7 @@ defmodule Arvo.Tools.Pane do
     |> String.trim()
   end
 
-  defp normalize_mode("long_lived"), do: :long_lived
-  defp normalize_mode(:long_lived), do: :long_lived
-  defp normalize_mode(_), do: :finite
+  defp normalize_mode(mode), do: Arvo.Herdr.normalize_mode(mode)
 
   defp default_timeout(:long_lived), do: 30
   defp default_timeout(_), do: 300

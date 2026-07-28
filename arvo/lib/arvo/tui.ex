@@ -201,6 +201,10 @@ defmodule Arvo.TUI do
     {:noreply, reduce_event(state, event)}
   end
 
+  def handle_cast(:refresh_live_panes, state) do
+    {:noreply, %{state | live_panes: load_live_panes()}}
+  end
+
   @doc false
   def handle_key(state, key) do
     cond do
@@ -228,10 +232,10 @@ defmodule Arvo.TUI do
       key == :esc and state[:palette] != nil ->
         {:ok, %{state | palette: nil}}
 
-      # Idle Esc with Arvo-owned panes: explicit teardown (R12 / KTD3).
-      key == :esc and state.status != :running and owned_panes_present?() ->
+      # Idle Esc with Arvo-owned panes: explicit teardown.
+      key == :esc and state.status != :running and load_live_panes() != [] ->
         {:ok, results} = Arvo.Session.teardown_owned_panes(:idle_esc)
-        note = format_idle_pane_teardown(results)
+        note = Arvo.Herdr.format_teardown_note(:idle_esc, results)
 
         state =
           state
@@ -375,7 +379,7 @@ defmodule Arvo.TUI do
         |> Map.put(:cold_id, cold_id)
       end)
 
-    # Refresh pane chrome mid-turn after long_lived returns (R11b).
+    # Refresh pane chrome mid-turn after long_lived returns.
     %{state | tool_name: nil, transcript: transcript, live_panes: load_live_panes()}
   end
 
@@ -616,7 +620,6 @@ defmodule Arvo.TUI do
           case Arvo.Session.jump_to(id) do
             {:ok, %{head_id: _hid, messages: msgs} = result} ->
               teardown = Map.get(result, :pane_teardown) || []
-              teardown_note = format_jump_pane_teardown(teardown)
 
               state =
                 state
@@ -630,8 +633,9 @@ defmodule Arvo.TUI do
               notes = [%{kind: :system, text: nav}]
 
               notes =
-                if teardown_note do
-                  notes ++ [%{kind: :system, text: teardown_note}]
+                if teardown != [] do
+                  notes ++
+                    [%{kind: :system, text: Arvo.Herdr.format_teardown_note(:jump, teardown)}]
                 else
                   notes
                 end
@@ -1172,15 +1176,6 @@ defmodule Arvo.TUI do
     end
   end
 
-  defp owned_panes_present? do
-    case Arvo.Session.owned_panes() do
-      list when is_list(list) and list != [] -> true
-      _ -> false
-    end
-  rescue
-    _ -> false
-  end
-
   defp load_live_panes do
     case Arvo.Session.owned_panes() do
       list when is_list(list) -> list
@@ -1189,38 +1184,6 @@ defmodule Arvo.TUI do
   rescue
     _ -> []
   end
-
-  defp format_idle_pane_teardown(results) when is_list(results) do
-    cmds =
-      results
-      |> Enum.map(fn r ->
-        cmd = Map.get(r, :command) || Map.get(r, "command") || Map.get(r, :pane_id)
-        status = Map.get(r, :status) || "?"
-        "#{cmd} (#{status})"
-      end)
-      |> Enum.join("; ")
-
-    "[arvo: tore down #{length(results)} pane(s) on idle Esc: #{cmds}]"
-  end
-
-  defp format_idle_pane_teardown(_), do: "[arvo: tore down panes on idle Esc]"
-
-  defp format_jump_pane_teardown([]), do: nil
-
-  defp format_jump_pane_teardown(results) when is_list(results) do
-    cmds =
-      results
-      |> Enum.map(fn r ->
-        cmd = Map.get(r, :command) || Map.get(r, "command") || Map.get(r, :pane_id) || "?"
-        status = Map.get(r, :status) || "?"
-        "#{cmd} (#{status})"
-      end)
-      |> Enum.join("; ")
-
-    "[arvo: tore down #{length(results)} pane(s) on HEAD jump: #{cmds}]"
-  end
-
-  defp format_jump_pane_teardown(_), do: nil
 
   defp append_system_note(state, note) when is_binary(note) do
     entry = %{kind: :system, text: note}

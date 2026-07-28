@@ -58,7 +58,8 @@ defmodule Arvo.TUI.Activity do
   defp normalize_args(args) when is_list(args), do: Map.new(args)
   defp normalize_args(_), do: %{}
 
-  defp collapse_ws(s) when is_binary(s) do
+  @doc "Collapse runs of whitespace for compact chrome labels."
+  def collapse_ws(s) when is_binary(s) do
     s
     |> String.replace(~r/\s+/, " ")
     |> String.trim()

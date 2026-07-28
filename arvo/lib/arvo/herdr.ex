@@ -1,6 +1,6 @@
 defmodule Arvo.Herdr do
   @moduledoc """
-  Herdr pane control facade (KTD1/KTD2).
+  Herdr pane control facade.
 
   Production uses `Arvo.Herdr.CLI` (subprocess). Tests inject
   `Application.put_env(:arvo, :herdr_adapter, Fake)`.
@@ -9,6 +9,9 @@ defmodule Arvo.Herdr do
   @type pane_id :: String.t()
   @type result :: :ok | {:ok, term()} | {:error, String.t()}
 
+  @shell_names MapSet.new(["zsh", "bash", "sh", "fish", "nu", "dash", "ksh", "tcsh", "csh"])
+  @available_cache_key {__MODULE__, :available?}
+
   @doc "Adapter module (Application env `:herdr_adapter`, default CLI)."
   def adapter do
     Application.get_env(:arvo, :herdr_adapter, Arvo.Herdr.CLI)
@@ -16,8 +19,52 @@ defmodule Arvo.Herdr do
 
   @doc "True when Herdr is available for live panes (env + binary)."
   def available? do
-    adapter().available?()
+    case :persistent_term.get(@available_cache_key, :miss) do
+      :miss ->
+        # Adapter may be swapped in tests; only cache the production CLI path.
+        if adapter() == Arvo.Herdr.CLI do
+          val = adapter().available?()
+          :persistent_term.put(@available_cache_key, val)
+          val
+        else
+          adapter().available?()
+        end
+
+      val ->
+        val
+    end
   end
+
+  @doc "Clear cached `available?/0` (tests or after adapter/env change)."
+  def clear_available_cache do
+    :persistent_term.erase(@available_cache_key)
+    :ok
+  end
+
+  @doc "Normalize pane mode: `:finite` | `:long_lived`."
+  def normalize_mode("long_lived"), do: :long_lived
+  def normalize_mode(:long_lived), do: :long_lived
+  def normalize_mode(_), do: :finite
+
+  @doc """
+  True when process-info shows only shell processes (or empty) — command finished.
+  Shared by finite wait and the long_lived reaper.
+  """
+  def process_exited?(%{foreground_processes: procs}) when is_list(procs) do
+    Enum.all?(procs, fn p ->
+      name = to_string(p["name"] || p[:name] || "")
+      shell_name?(name)
+    end)
+  end
+
+  def process_exited?(_), do: false
+
+  @doc false
+  def shell_name?(name) when is_binary(name) do
+    MapSet.member?(@shell_names, String.trim_leading(name, "-"))
+  end
+
+  def shell_name?(_), do: false
 
   @doc """
   Split a sibling pane. Options: `:direction` (`:right` | `:down`), `:cwd`,
@@ -54,5 +101,35 @@ defmodule Arvo.Herdr do
   @doc "Process info for a pane (foreground processes, shell pid)."
   def process_info(pane_id) when is_binary(pane_id) do
     adapter().process_info(pane_id)
+  end
+
+  @doc """
+  Format operator-visible teardown summary for transcript/TUI.
+
+  `reason` may be an atom (`:cancel`, `:jump`, `:idle_esc`) or a string label.
+  """
+  def format_teardown_note(reason, results) when is_list(results) do
+    label =
+      case reason do
+        :idle_esc -> "idle Esc"
+        :jump -> "HEAD jump"
+        :rewind -> "rewind"
+        :cancel -> "cancel"
+        other when is_atom(other) -> Atom.to_string(other)
+        other -> to_string(other)
+      end
+
+    cmds =
+      results
+      |> Enum.map(fn r ->
+        pane_id = Map.get(r, :pane_id) || Map.get(r, "pane_id") || "?"
+        command = Map.get(r, :command) || Map.get(r, "command") || ""
+        status = Map.get(r, :status) || Map.get(r, "status") || "?"
+        cmd = if command == "", do: pane_id, else: command
+        "#{cmd} (#{status})"
+      end)
+      |> Enum.join("; ")
+
+    "[arvo: tore down #{length(results)} pane(s) on #{label}: #{cmds}]"
   end
 end

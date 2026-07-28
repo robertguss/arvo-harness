@@ -185,7 +185,7 @@ defmodule Arvo.TUI.Focus do
       paste_insert_chunk?(data, local) ->
         absorb_paste_or_bulk(data, local)
 
-      # Esc: tree → palette → cancel turn
+      # Esc: tree → palette → cancel turn → idle pane teardown (via TUI.key)
       data == "\e" or data == "\e\e" ->
         cond do
           tree_open? ->
@@ -200,6 +200,8 @@ defmodule Arvo.TUI.Focus do
             {:cont, local}
 
           true ->
+            # Idle: forward so TUI can tear down Arvo-owned Herdr panes (R12).
+            _ = Arvo.TUI.key(:esc)
             {:cont, local}
         end
 

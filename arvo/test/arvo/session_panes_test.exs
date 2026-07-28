@@ -93,6 +93,30 @@ defmodule Arvo.SessionPanesTest do
     assert Enum.any?(Arvo.Herdr.Fake.calls(), &match?({:close, ^id}, &1))
   end
 
+  test "Focus idle Esc forwards to TUI and tears down owned panes" do
+    # Regression: Focus used to swallow idle Esc (`true -> {:cont, local}`) so
+    # live operators never hit TUI idle-Esc teardown (R12) even though unit
+    # tests calling Arvo.TUI.key(:esc) directly passed.
+    {:ok, id} = Arvo.Herdr.split([])
+
+    assert :ok =
+             Arvo.Session.register_pane(%{
+               pane_id: id,
+               mode: :long_lived,
+               command: "python3 -m http.server 8765",
+               start_reaper: false
+             })
+
+    :ok = Arvo.TUI.reset_idle()
+
+    local = %{input: "", paste: false, pending: "", scroll: 0, palette: nil}
+    st = %{status: :idle, tree: nil}
+
+    assert {:cont, _loc} = Arvo.TUI.Focus.apply_keys("\e", local, st)
+    assert Arvo.Session.owned_panes() == []
+    assert Enum.any?(Arvo.Herdr.Fake.calls(), &match?({:close, ^id}, &1))
+  end
+
   test "jump_to tears down remaining panes", %{tmp: tmp} do
     {:ok, path} = Arvo.Session.open_new(tmp)
     {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "u1"})

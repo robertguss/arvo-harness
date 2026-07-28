@@ -3,10 +3,14 @@ defmodule Arvo.HerdrTest do
 
   setup do
     old = Application.get_env(:arvo, :herdr_adapter)
+    # Live CLI tests cache a positive available? result; clear so Fake tests
+    # are not stuck returning true for the rest of the BEAM.
+    _ = Arvo.Herdr.clear_available_cache()
     {:ok, _pid} = Arvo.Herdr.Fake.start_link()
     Application.put_env(:arvo, :herdr_adapter, Arvo.Herdr.Fake)
 
     on_exit(fn ->
+      _ = Arvo.Herdr.clear_available_cache()
       Arvo.Herdr.Fake.stop()
 
       if old do
@@ -72,6 +76,22 @@ defmodule Arvo.HerdrTest do
     assert match?({:error, _}, result)
   end
 
+  test "CLI run_argv keeps multi-word command as one argv (no bash -c split)" do
+    # Regression: previous implementation passed ["bash", "-c", command] as
+    # separate argv. Herdr joins with spaces → `bash -c python3 -m http.server …`
+    # which only runs `python3` (REPL), dropping `-m` and later args.
+    cmd = "python3 -m http.server 8765"
+    args = Arvo.Herdr.CLI.run_argv("w1:p1", cmd)
+
+    assert args == ["pane", "run", "w1:p1", cmd]
+    assert length(args) == 4
+    refute "bash" in args
+    refute "-c" in args
+    # Entire multi-word command is the last argv element, not tokenized.
+    assert List.last(args) == cmd
+    assert String.contains?(List.last(args), "http.server")
+  end
+
   @tag :herdr
   test "live CLI smoke: split run read close when HERDR_ENV=1" do
     if System.get_env("HERDR_ENV") == "1" and System.find_executable("herdr") do
@@ -86,6 +106,39 @@ defmodule Arvo.HerdrTest do
       assert :ok = Arvo.Herdr.close(id)
     else
       # Skip when not inside Herdr.
+      assert true
+    end
+  end
+
+  @tag :herdr
+  test "live CLI multi-word run preserves args after first word" do
+    # Marker must appear only after python -c executes — not as a substring of
+    # the typed command line (which wait_output would match even if -c never ran).
+    # Old bug: bash -c python3 -c "…" → interactive python3 REPL, no marker.
+    marker = "ARVO_MW_OK"
+    # base64("ARVO_MW_OK") so the source command does not contain the marker.
+    cmd =
+      ~s|python3 -c "import base64; print(base64.b64decode('QVJWT19NV19PSw==').decode())"|
+
+    refute String.contains?(cmd, marker)
+
+    if System.get_env("HERDR_ENV") == "1" and System.find_executable("herdr") do
+      Application.put_env(:arvo, :herdr_adapter, Arvo.Herdr.CLI)
+      assert {:ok, id} = Arvo.Herdr.split(direction: :right, no_focus: true)
+
+      try do
+        assert :ok = Arvo.Herdr.run(id, cmd)
+
+        assert {:ok, wait} =
+                 Arvo.Herdr.wait_output(id, match: marker, timeout: 8000)
+
+        matched = wait[:matched_line] || Map.get(wait, :matched_line) || ""
+        text = wait[:text] || Map.get(wait, :text) || ""
+        assert matched =~ marker or text =~ marker
+      after
+        _ = Arvo.Herdr.close(id)
+      end
+    else
       assert true
     end
   end

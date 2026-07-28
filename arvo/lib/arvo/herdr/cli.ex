@@ -38,10 +38,22 @@ defmodule Arvo.Herdr.CLI do
     end
   end
 
+  @doc """
+  Argv for `herdr pane run`. Exposed for tests.
+
+  Herdr joins remaining args with spaces before send-text. The command must
+  therefore be a single trailing argv — never `bash`, `-c`, and the script as
+  separate tokens (that yields `bash -c python3 -m …` and only runs `python3`).
+  The target pane already has an interactive shell.
+  """
+  def run_argv(pane_id, command)
+      when is_binary(pane_id) and is_binary(command) do
+    ["pane", "run", pane_id, command]
+  end
+
   @impl true
   def run(pane_id, command) when is_binary(pane_id) and is_binary(command) do
-    # Prefer bash -c so multi-statement shell commands work as one argv unit.
-    case cmd(["pane", "run", pane_id, "bash", "-c", command]) do
+    case cmd(run_argv(pane_id, command)) do
       {:ok, _} -> :ok
       {:error, _} = err -> err
     end

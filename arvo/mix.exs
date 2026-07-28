@@ -29,7 +29,11 @@ defmodule Arvo.MixProject do
       {:req, "~> 0.5"},
       {:req_llm, "~> 1.17"},
       {:termite, "~> 0.4.3"},
-      {:rustler, "~> 0.36", runtime: false}
+      {:rustler, "~> 0.36", runtime: false},
+      # Focus transcript: CommonMark → ANSI (MDEx) + Makeup code highlighting
+      {:marcli, "~> 0.3.1"},
+      {:makeup, "~> 1.2"},
+      {:makeup_elixir, "~> 1.0"}
     ]
   end
 

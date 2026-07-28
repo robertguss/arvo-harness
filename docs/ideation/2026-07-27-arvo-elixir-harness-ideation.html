@@ -1,537 +1,1189 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ideation: Arvo the Elixir harness</title>
-<style>
-  :root {
-    --bg: #0f1419;
-    --surface: #1a2332;
-    --surface-2: #243044;
-    --border: #2d3a4f;
-    --text: #e7ecf3;
-    --muted: #9aabbf;
-    --accent: #6eb5ff;
-    --accent-soft: #1a334d;
-    --accent-text: #9dceff;
-    --ok: #6bcf8e;
-    --ok-soft: #1a3324;
-    --warn: #e0b44f;
-    --warn-soft: #332b14;
-    --chip: #2a3648;
-    --measure: 72ch;
-    --radius: 10px;
-    font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    line-height: 1.55;
-    font-size: 15px;
-  }
-  .page {
-    max-width: 920px;
-    margin: 0 auto;
-    padding: 2.5rem 1.5rem 4rem;
-  }
-  header.doc-header {
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 1.5rem;
-    margin-bottom: 2rem;
-  }
-  .eyebrow {
-    font-size: 0.72rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--accent-text);
-    font-weight: 600;
-    margin: 0 0 0.5rem;
-  }
-  h1 {
-    font-size: 1.85rem;
-    line-height: 1.2;
-    margin: 0 0 1rem;
-    font-weight: 650;
-  }
-  .meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-  .chip {
-    display: inline-block;
-    background: var(--chip);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 0.2rem 0.7rem;
-    font-size: 0.8rem;
-  }
-  .chip.accent { background: var(--accent-soft); color: var(--accent-text); border-color: #2a4d70; }
-  .chip.ok { background: var(--ok-soft); color: var(--ok); border-color: #2a5a3c; }
-  .chip.warn { background: var(--warn-soft); color: var(--warn); border-color: #5a4a1e; }
-  nav.toc {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 1rem 1.25rem;
-    margin-bottom: 2rem;
-  }
-  nav.toc strong { display: block; margin-bottom: 0.5rem; font-size: 0.85rem; color: var(--muted); }
-  nav.toc ul { margin: 0; padding-left: 1.1rem; }
-  nav.toc a { color: var(--accent); text-decoration: none; }
-  nav.toc a:hover { text-decoration: underline; }
-  section { margin-bottom: 2.5rem; }
-  h2 {
-    font-size: 1.25rem;
-    margin: 0 0 0.85rem;
-    padding-bottom: 0.4rem;
-    border-bottom: 1px solid var(--border);
-  }
-  h3 { font-size: 1.05rem; margin: 0 0 0.6rem; }
-  p, li { max-width: var(--measure); }
-  .prose p { margin: 0 0 0.85rem; color: var(--text); }
-  .muted { color: var(--muted); }
-  .grounding-grid {
-    display: grid;
-    gap: 0.85rem;
-  }
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 1rem 1.15rem;
-  }
-  .card h3 { margin-top: 0; font-size: 0.95rem; color: var(--accent-text); }
-  .card p, .card li { font-size: 0.92rem; color: var(--text); }
-  .axes {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.45rem;
-    list-style: none;
-    padding: 0;
-    margin: 0;
-  }
-  .axes li {
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.45rem 0.75rem;
-    font-size: 0.9rem;
-  }
-  .jump {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 0.85rem 1rem;
-    margin-bottom: 1.25rem;
-  }
-  .jump ol { margin: 0.4rem 0 0; padding-left: 1.25rem; }
-  .jump a { color: var(--accent); text-decoration: none; }
-  .jump a:hover { text-decoration: underline; }
-  article.idea {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 1.25rem 1.35rem;
-    margin-bottom: 1.25rem;
-  }
-  article.idea header {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0.5rem 0.75rem;
-    margin-bottom: 0.75rem;
-  }
-  article.idea .rank {
-    font-weight: 700;
-    color: var(--accent-text);
-    font-size: 0.95rem;
-  }
-  article.idea h3 {
-    flex: 1 1 auto;
-    margin: 0;
-    font-size: 1.1rem;
-  }
-  .meta-strip {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-    margin-bottom: 0.85rem;
-  }
-  dl.fields {
-    display: grid;
-    grid-template-columns: 7.5rem 1fr;
-    gap: 0.45rem 0.75rem;
-    margin: 0.75rem 0 0;
-  }
-  dl.fields dt {
-    color: var(--muted);
-    font-size: 0.78rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    font-weight: 600;
-    padding-top: 0.15rem;
-  }
-  dl.fields dd {
-    margin: 0;
-    font-size: 0.92rem;
-  }
-  .diagram {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.75rem;
-    margin: 0.85rem 0;
-    overflow-x: auto;
-  }
-  .diagram svg { display: block; max-width: 100%; height: auto; }
-  .diagram .caption {
-    font-size: 0.8rem;
-    color: var(--muted);
-    margin: 0.5rem 0 0;
-    max-width: none;
-  }
-  table.reject {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.88rem;
-  }
-  table.reject th, table.reject td {
-    border: 1px solid var(--border);
-    padding: 0.55rem 0.7rem;
-    text-align: left;
-    vertical-align: top;
-  }
-  table.reject th {
-    background: var(--surface-2);
-    color: var(--muted);
-    font-weight: 600;
-    font-size: 0.78rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  table.reject tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
-  footer.composition-signal {
-    margin-top: 3rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--border);
-    color: var(--muted);
-    font-size: 0.82rem;
-  }
-  code {
-    font-family: "IBM Plex Mono", ui-monospace, monospace;
-    font-size: 0.88em;
-    background: var(--surface-2);
-    padding: 0.1em 0.35em;
-    border-radius: 4px;
-  }
-  strong { color: inherit; font-weight: 650; }
-  a { color: var(--accent); }
-</style>
-</head>
-<body>
-<div class="page">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ideation: Arvo the Elixir harness</title>
+    <style>
+      :root {
+        --bg: #0f1419;
+        --surface: #1a2332;
+        --surface-2: #243044;
+        --border: #2d3a4f;
+        --text: #e7ecf3;
+        --muted: #9aabbf;
+        --accent: #6eb5ff;
+        --accent-soft: #1a334d;
+        --accent-text: #9dceff;
+        --ok: #6bcf8e;
+        --ok-soft: #1a3324;
+        --warn: #e0b44f;
+        --warn-soft: #332b14;
+        --chip: #2a3648;
+        --measure: 72ch;
+        --radius: 10px;
+        font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.55;
+        font-size: 15px;
+      }
+      .page {
+        max-width: 920px;
+        margin: 0 auto;
+        padding: 2.5rem 1.5rem 4rem;
+      }
+      header.doc-header {
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 1.5rem;
+        margin-bottom: 2rem;
+      }
+      .eyebrow {
+        font-size: 0.72rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--accent-text);
+        font-weight: 600;
+        margin: 0 0 0.5rem;
+      }
+      h1 {
+        font-size: 1.85rem;
+        line-height: 1.2;
+        margin: 0 0 1rem;
+        font-weight: 650;
+      }
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      .chip {
+        display: inline-block;
+        background: var(--chip);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 0.2rem 0.7rem;
+        font-size: 0.8rem;
+      }
+      .chip.accent {
+        background: var(--accent-soft);
+        color: var(--accent-text);
+        border-color: #2a4d70;
+      }
+      .chip.ok {
+        background: var(--ok-soft);
+        color: var(--ok);
+        border-color: #2a5a3c;
+      }
+      .chip.warn {
+        background: var(--warn-soft);
+        color: var(--warn);
+        border-color: #5a4a1e;
+      }
+      nav.toc {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1rem 1.25rem;
+        margin-bottom: 2rem;
+      }
+      nav.toc strong {
+        display: block;
+        margin-bottom: 0.5rem;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+      nav.toc ul {
+        margin: 0;
+        padding-left: 1.1rem;
+      }
+      nav.toc a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      nav.toc a:hover {
+        text-decoration: underline;
+      }
+      section {
+        margin-bottom: 2.5rem;
+      }
+      h2 {
+        font-size: 1.25rem;
+        margin: 0 0 0.85rem;
+        padding-bottom: 0.4rem;
+        border-bottom: 1px solid var(--border);
+      }
+      h3 {
+        font-size: 1.05rem;
+        margin: 0 0 0.6rem;
+      }
+      p,
+      li {
+        max-width: var(--measure);
+      }
+      .prose p {
+        margin: 0 0 0.85rem;
+        color: var(--text);
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .grounding-grid {
+        display: grid;
+        gap: 0.85rem;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1rem 1.15rem;
+      }
+      .card h3 {
+        margin-top: 0;
+        font-size: 0.95rem;
+        color: var(--accent-text);
+      }
+      .card p,
+      .card li {
+        font-size: 0.92rem;
+        color: var(--text);
+      }
+      .axes {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+      .axes li {
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.45rem 0.75rem;
+        font-size: 0.9rem;
+      }
+      .jump {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 0.85rem 1rem;
+        margin-bottom: 1.25rem;
+      }
+      .jump ol {
+        margin: 0.4rem 0 0;
+        padding-left: 1.25rem;
+      }
+      .jump a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      .jump a:hover {
+        text-decoration: underline;
+      }
+      article.idea {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1.25rem 1.35rem;
+        margin-bottom: 1.25rem;
+      }
+      article.idea header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 0.5rem 0.75rem;
+        margin-bottom: 0.75rem;
+      }
+      article.idea .rank {
+        font-weight: 700;
+        color: var(--accent-text);
+        font-size: 0.95rem;
+      }
+      article.idea h3 {
+        flex: 1 1 auto;
+        margin: 0;
+        font-size: 1.1rem;
+      }
+      .meta-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        margin-bottom: 0.85rem;
+      }
+      dl.fields {
+        display: grid;
+        grid-template-columns: 7.5rem 1fr;
+        gap: 0.45rem 0.75rem;
+        margin: 0.75rem 0 0;
+      }
+      dl.fields dt {
+        color: var(--muted);
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        font-weight: 600;
+        padding-top: 0.15rem;
+      }
+      dl.fields dd {
+        margin: 0;
+        font-size: 0.92rem;
+      }
+      .diagram {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.75rem;
+        margin: 0.85rem 0;
+        overflow-x: auto;
+      }
+      .diagram svg {
+        display: block;
+        max-width: 100%;
+        height: auto;
+      }
+      .diagram .caption {
+        font-size: 0.8rem;
+        color: var(--muted);
+        margin: 0.5rem 0 0;
+        max-width: none;
+      }
+      table.reject {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.88rem;
+      }
+      table.reject th,
+      table.reject td {
+        border: 1px solid var(--border);
+        padding: 0.55rem 0.7rem;
+        text-align: left;
+        vertical-align: top;
+      }
+      table.reject th {
+        background: var(--surface-2);
+        color: var(--muted);
+        font-weight: 600;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      table.reject tr:nth-child(even) td {
+        background: rgba(255, 255, 255, 0.02);
+      }
+      footer.composition-signal {
+        margin-top: 3rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+      code {
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 0.88em;
+        background: var(--surface-2);
+        padding: 0.1em 0.35em;
+        border-radius: 4px;
+      }
+      strong {
+        color: inherit;
+        font-weight: 650;
+      }
+      a {
+        color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="doc-header">
+        <p class="eyebrow">Ideation</p>
+        <h1>Arvo the Elixir harness</h1>
+        <div class="meta">
+          <span class="chip accent"
+            >date <time datetime="2026-07-27">2026-07-27</time></span
+          >
+          <span class="chip">topic arvo-elixir-harness</span>
+          <span class="chip">focus arvo the elixir harness</span>
+          <span class="chip ok">mode repo-grounded</span>
+          <span class="chip">7 survivors · ~40 raw · 19 cut</span>
+        </div>
+      </header>
 
-<header class="doc-header">
-  <p class="eyebrow">Ideation</p>
-  <h1>Arvo the Elixir harness</h1>
-  <div class="meta">
-    <span class="chip accent">date <time datetime="2026-07-27">2026-07-27</time></span>
-    <span class="chip">topic arvo-elixir-harness</span>
-    <span class="chip">focus arvo the elixir harness</span>
-    <span class="chip ok">mode repo-grounded</span>
-    <span class="chip">7 survivors · ~40 raw · 19 cut</span>
-  </div>
-</header>
+      <nav class="toc" aria-label="Document sections">
+        <strong>Sections</strong>
+        <ul>
+          <li><a href="#grounding-context">Grounding Context</a></li>
+          <li><a href="#topic-axes">Topic Axes</a></li>
+          <li><a href="#ranked-ideas">Ranked Ideas</a></li>
+          <li><a href="#rejection-summary">Rejection Summary</a></li>
+        </ul>
+      </nav>
 
-<nav class="toc" aria-label="Document sections">
-  <strong>Sections</strong>
-  <ul>
-    <li><a href="#grounding-context">Grounding Context</a></li>
-    <li><a href="#topic-axes">Topic Axes</a></li>
-    <li><a href="#ranked-ideas">Ranked Ideas</a></li>
-    <li><a href="#rejection-summary">Rejection Summary</a></li>
-  </ul>
-</nav>
+      <section id="grounding-context">
+        <h2>Grounding Context</h2>
+        <div class="grounding-grid">
+          <div class="card">
+            <h3>Codebase context</h3>
+            <p>
+              Arvo is the Elixir/BEAM twin of Rust Ore: OTP app with pure
+              <code>Arvo.Agent.run/3</code>, Session GenServer (JSONL tree under
+              <code>~/.arvo/sessions/</code>), TUI GenServer
+              <code>mode: :raw_v0</code>, line <code>Arvo.Repl</code>,
+              Plugin/Profile set-diff, core tools Read/Bash/Edit/Write via jido,
+              flagship fff (Rustler), xAI auth + completion.
+            </p>
+            <p class="muted">
+              Gaps that dominate grounding: product chat path calls
+              <code>Agent.run</code> directly (Esc/steering second-class);
+              completion hardcodes non-stream <code>Req.post</code> to xAI
+              despite ADR-0002/req_llm; tip-only resume on a parent_id tree with
+              no rewind API; skills/hooks/commands under-wired; docs lag (README
+              Pre-code, SPEC.md missing).
+            </p>
+          </div>
+          <div class="card">
+            <h3>Past learnings</h3>
+            <p>
+              ADR-0001: BEAM is curriculum (OTP, live profile load,
+              process-per-agent open). ADR-0002: own experimental seams
+              only—wrap tools, consume req_llm types for providers. Profile is
+              the product unit; observe-only hooks; philosophy refusals are
+              design constraints (no MCP/plan/todo/permission rails; Esc is the
+              brake). Ore post-v0.1 ideation ranked continuity → profile
+              completeness → providers → memory; import lessons, exploit BEAM
+              where Ore paid Rust tax.
+            </p>
+          </div>
+          <div class="card">
+            <h3>External context</h3>
+            <p>
+              Crowded TS/Go/Rust TUI category. Closest philosophy peer: Pi (tiny
+              core, JSONL session trees, extensions, multi-mode). Goose Recipes
+              ≈ named Profiles. agentskills.io progressive disclosure is
+              cross-tool standard. Loom/Jido show BEAM agent stacks. Scarce
+              edge: personal BEAM harness that stays small—OTP concurrency +
+              named Profiles, not Claude Code feature parity.
+            </p>
+          </div>
+        </div>
+      </section>
 
-<section id="grounding-context">
-  <h2>Grounding Context</h2>
-  <div class="grounding-grid">
-    <div class="card">
-      <h3>Codebase context</h3>
-      <p>Arvo is the Elixir/BEAM twin of Rust Ore: OTP app with pure <code>Arvo.Agent.run/3</code>, Session GenServer (JSONL tree under <code>~/.arvo/sessions/</code>), TUI GenServer <code>mode: :raw_v0</code>, line <code>Arvo.Repl</code>, Plugin/Profile set-diff, core tools Read/Bash/Edit/Write via jido, flagship fff (Rustler), xAI auth + completion.</p>
-      <p class="muted">Gaps that dominate grounding: product chat path calls <code>Agent.run</code> directly (Esc/steering second-class); completion hardcodes non-stream <code>Req.post</code> to xAI despite ADR-0002/req_llm; tip-only resume on a parent_id tree with no rewind API; skills/hooks/commands under-wired; docs lag (README Pre-code, SPEC.md missing).</p>
+      <section id="topic-axes">
+        <h2>Topic Axes</h2>
+        <ul class="axes">
+          <li>Session continuity</li>
+          <li>Profiles &amp; plugins</li>
+          <li>TUI &amp; interaction</li>
+          <li>Agent loop &amp; concurrency</li>
+          <li>Providers &amp; completion</li>
+        </ul>
+      </section>
+
+      <section id="ranked-ideas">
+        <h2>Ranked Ideas</h2>
+        <div class="jump">
+          <strong>Jump to idea</strong>
+          <ol>
+            <li>
+              <a href="#idea-1"
+                >One turn owner: Esc is real on the product path</a
+              >
+            </li>
+            <li><a href="#idea-2">Navigable workshop memory</a></li>
+            <li><a href="#idea-3">Profile becomes the product</a></li>
+            <li>
+              <a href="#idea-4">Finish ADR-0002: real streaming completion</a>
+            </li>
+            <li><a href="#idea-5">Event-first multi-surface</a></li>
+            <li>
+              <a href="#idea-6">Length-error → auto-compact policy turn</a>
+            </li>
+            <li>
+              <a href="#idea-7">Parallel pure tools under Task.Supervisor</a>
+            </li>
+          </ol>
+        </div>
+
+        <article class="idea" id="idea-1">
+          <header>
+            <span class="rank">1.</span>
+            <h3>One turn owner: Esc is real on the product path</h3>
+          </header>
+          <div class="meta-strip">
+            <span class="chip accent">Agent loop &amp; concurrency</span>
+            <span class="chip ok">Conf 92%</span>
+            <span class="chip">Complexity Medium</span>
+          </div>
+          <p>
+            Every interactive chat turn must be owned by
+            <code>Session.start_turn</code> (supervised Task, steering drain,
+            <code>cancel_turn</code> / <code>:brutal_kill</code>). Delete the
+            product path where <code>Arvo.Repl.run_chat</code> calls
+            <code>Arvo.Agent.run</code> on the REPL process. Pure
+            <code>Agent.run</code> remains the library core for tests and
+            headless injectors—but <code>bin/arvo</code> never bypasses Session.
+            Pair with a killable input owner (raw terminal or TUI key path) so
+            Esc can fire while a turn is running, not only between
+            <code>IO.gets</code> prompts.
+          </p>
+          <div class="diagram" aria-hidden="false">
+            <svg
+              viewBox="0 0 720 200"
+              xmlns="http://www.w3.org/2000/svg"
+              role="img"
+              aria-label="Before dual turn paths vs after single Session-owned path"
+            >
+              <rect
+                x="0"
+                y="0"
+                width="720"
+                height="200"
+                fill="#0f1419"
+                rx="6"
+              />
+              <text
+                x="20"
+                y="28"
+                fill="#9aabbf"
+                font-size="12"
+                font-family="system-ui,sans-serif"
+              >
+                BEFORE
+              </text>
+              <rect
+                x="20"
+                y="40"
+                width="130"
+                height="48"
+                rx="6"
+                fill="#1a2332"
+                stroke="#2d3a4f"
+              />
+              <text
+                x="40"
+                y="68"
+                fill="#e7ecf3"
+                font-size="13"
+                font-family="system-ui,sans-serif"
+              >
+                Repl · Agent.run
+              </text>
+              <rect
+                x="180"
+                y="40"
+                width="150"
+                height="48"
+                rx="6"
+                fill="#1a2332"
+                stroke="#2d3a4f"
+              />
+              <text
+                x="195"
+                y="68"
+                fill="#e7ecf3"
+                font-size="13"
+                font-family="system-ui,sans-serif"
+              >
+                Session.start_turn
+              </text>
+              <text
+                x="340"
+                y="68"
+                fill="#e0b44f"
+                font-size="12"
+                font-family="system-ui,sans-serif"
+              >
+                Esc only works here
+              </text>
+              <text
+                x="20"
+                y="120"
+                fill="#9aabbf"
+                font-size="12"
+                font-family="system-ui,sans-serif"
+              >
+                AFTER
+              </text>
+              <rect
+                x="20"
+                y="132"
+                width="110"
+                height="48"
+                rx="6"
+                fill="#1a334d"
+                stroke="#2a4d70"
+              />
+              <text
+                x="45"
+                y="160"
+                fill="#9dceff"
+                font-size="13"
+                font-family="system-ui,sans-serif"
+              >
+                stdin / TUI
+              </text>
+              <path
+                d="M135 156 H175"
+                stroke="#6eb5ff"
+                stroke-width="2"
+                marker-end="url(#arr)"
+              />
+              <rect
+                x="180"
+                y="132"
+                width="200"
+                height="48"
+                rx="6"
+                fill="#1a3324"
+                stroke="#2a5a3c"
+              />
+              <text
+                x="200"
+                y="152"
+                fill="#6bcf8e"
+                font-size="13"
+                font-family="system-ui,sans-serif"
+              >
+                Session.start_turn only
+              </text>
+              <text
+                x="200"
+                y="168"
+                fill="#9aabbf"
+                font-size="11"
+                font-family="system-ui,sans-serif"
+              >
+                Task · cancel · steering · persist
+              </text>
+              <path d="M385 156 H425" stroke="#6eb5ff" stroke-width="2" />
+              <rect
+                x="430"
+                y="132"
+                width="150"
+                height="48"
+                rx="6"
+                fill="#1a2332"
+                stroke="#2d3a4f"
+              />
+              <text
+                x="455"
+                y="160"
+                fill="#e7ecf3"
+                font-size="13"
+                font-family="system-ui,sans-serif"
+              >
+                Agent.run (pure)
+              </text>
+              <defs>
+                <marker
+                  id="arr"
+                  markerWidth="8"
+                  markerHeight="8"
+                  refX="6"
+                  refY="3"
+                  orient="auto"
+                >
+                  <path d="M0,0 L6,3 L0,6 Z" fill="#6eb5ff" />
+                </marker>
+              </defs>
+            </svg>
+            <p class="caption">
+              Illustrative: dual drivers collapse so Esc, steering, and
+              cancel-survives attach to the path users actually run.
+            </p>
+          </div>
+          <dl class="fields">
+            <dt>Basis</dt>
+            <dd>
+              <code>direct:</code> <code>arvo/lib/arvo/repl.ex</code> product
+              chat invokes <code>Arvo.Agent.run</code> inline; Session owns
+              <code>start_turn</code>/<code>cancel_turn</code>/<code
+                >turn_task</code
+              >
+              and tests prove kill-survives-session—but only on that path. TUI
+              Esc → <code>Session.cancel_turn</code> while Repl is blocked in
+              completion.
+            </dd>
+            <dt>Rationale</dt>
+            <dd>
+              Philosophy’s single brake is Esc. Until product path and cancel
+              path are the same path, every UX claim about mid-turn steering and
+              supervised turns is true only in tests. This is the unlock for
+              continuity, streaming cancel feel, and multi-surface.
+            </dd>
+            <dt>Downsides</dt>
+            <dd>
+              Repl becomes thinner; tests that assumed direct
+              <code>Agent.run</code> need rewiring; raw-mode input is extra work
+              beyond “just call start_turn.”
+            </dd>
+          </dl>
+        </article>
+
+        <article class="idea" id="idea-2">
+          <header>
+            <span class="rank">2.</span>
+            <h3>Navigable workshop memory</h3>
+          </header>
+          <div class="meta-strip">
+            <span class="chip accent">Session continuity</span>
+            <span class="chip ok">Conf 90%</span>
+            <span class="chip warn">Complexity High</span>
+          </div>
+          <p>
+            Treat the JSONL store as a navigable DAG product, not a linear chat
+            log with accidental parent_ids. Ship four primitives together:
+            explicit <strong>HEAD</strong> (not tip = last file line);
+            <strong>fork/rewind</strong> that only appends and moves HEAD;
+            <strong>cancel-as-fork</strong> (Esc leaves a cancel leaf and
+            preserves last good parent); and
+            <strong>JSONL as process of record</strong> so resume rehydrates
+            messages, cumulative tokens, model, and active profile from the
+            log—Session GenServer is a disposable open-handle cache.
+          </p>
+          <div class="diagram">
+            <svg
+              viewBox="0 0 720 210"
+              xmlns="http://www.w3.org/2000/svg"
+              role="img"
+              aria-label="Session tree with HEAD pointer and a cancelled branch"
+            >
+              <rect width="720" height="210" fill="#0f1419" rx="6" />
+              <circle cx="80" cy="100" r="22" fill="#1a334d" stroke="#6eb5ff" />
+              <text
+                x="72"
+                y="104"
+                fill="#e7ecf3"
+                font-size="11"
+                font-family="system-ui,sans-serif"
+              >
+                u1
+              </text>
+              <circle
+                cx="200"
+                cy="100"
+                r="22"
+                fill="#1a334d"
+                stroke="#6eb5ff"
+              />
+              <text
+                x="192"
+                y="104"
+                fill="#e7ecf3"
+                font-size="11"
+                font-family="system-ui,sans-serif"
+              >
+                a1
+              </text>
+              <circle cx="320" cy="60" r="22" fill="#1a2332" stroke="#9aabbf" />
+              <text
+                x="308"
+                y="64"
+                fill="#9aabbf"
+                font-size="11"
+                font-family="system-ui,sans-serif"
+              >
+                bad
+              </text>
+              <circle
+                cx="320"
+                cy="140"
+                r="22"
+                fill="#1a3324"
+                stroke="#6bcf8e"
+              />
+              <text
+                x="308"
+                y="144"
+                fill="#6bcf8e"
+                font-size="11"
+                font-family="system-ui,sans-serif"
+              >
+                ok2
+              </text>
+              <circle
+                cx="440"
+                cy="140"
+                r="22"
+                fill="#1a3324"
+                stroke="#6bcf8e"
+              />
+              <text
+                x="428"
+                y="144"
+                fill="#6bcf8e"
+                font-size="11"
+                font-family="system-ui,sans-serif"
+              >
+                HEAD
+              </text>
+              <line
+                x1="102"
+                y1="100"
+                x2="178"
+                y2="100"
+                stroke="#6eb5ff"
+                stroke-width="2"
+              />
+              <line
+                x1="222"
+                y1="90"
+                x2="298"
+                y2="70"
+                stroke="#9aabbf"
+                stroke-width="2"
+              />
+              <line
+                x1="222"
+                y1="110"
+                x2="298"
+                y2="130"
+                stroke="#6bcf8e"
+                stroke-width="2"
+              />
+              <line
+                x1="342"
+                y1="140"
+                x2="418"
+                y2="140"
+                stroke="#6bcf8e"
+                stroke-width="2"
+              />
+              <text
+                x="300"
+                y="30"
+                fill="#9aabbf"
+                font-size="12"
+                font-family="system-ui,sans-serif"
+              >
+                abandoned / Esc branch stays
+              </text>
+              <text
+                x="480"
+                y="145"
+                fill="#6eb5ff"
+                font-size="12"
+                font-family="system-ui,sans-serif"
+              >
+                rewind = move HEAD, never rewrite
+              </text>
+              <text
+                x="20"
+                y="190"
+                fill="#9aabbf"
+                font-size="12"
+                font-family="system-ui,sans-serif"
+              >
+                Chess/PGN analogy: tip is active variation, not the only truth
+                in the file.
+              </text>
+            </svg>
+            <p class="caption">
+              Illustrative: append-only tree with a movable HEAD makes Esc,
+              retry, and compact into first-class navigation.
+            </p>
+          </div>
+          <dl class="fields">
+            <dt>Basis</dt>
+            <dd>
+              <code>direct:</code> Store already appends
+              <code>{id, parent_id}</code> and rebuilds via
+              <code>messages_to_tip</code>; resume uses
+              <code>List.last(entries)</code> only; no
+              rewind/branch/last_surface API; resume reloads history but not
+              tokens. <code>external:</code> Pi JSONL session trees; chess/PGN
+              variation boards. Continuity was the top scarce Ore bet.
+            </dd>
+            <dt>Rationale</dt>
+            <dd>
+              Continuity without navigable history is crash durability. The tree
+              investment only pays when HEAD is choosable and durable state is
+              reconstructed from disk—the scarce daily-driver trust surface.
+            </dd>
+            <dt>Downsides</dt>
+            <dd>
+              Largest surface area of the set; UX for node pick matters;
+              compaction nodes must become navigable fork points carefully so
+              users don’t lose the “kept” window story.
+            </dd>
+          </dl>
+        </article>
+
+        <article class="idea" id="idea-3">
+          <header>
+            <span class="rank">3.</span>
+            <h3>Profile becomes the product</h3>
+          </header>
+          <div class="meta-strip">
+            <span class="chip accent">Profiles &amp; plugins</span>
+            <span class="chip ok">Conf 88%</span>
+            <span class="chip">Complexity Medium</span>
+          </div>
+          <p>
+            Finish the Profile coinage as one shippable unit: wire remaining
+            manifest consumers (progressive skills name+desc until Read,
+            namespaced plugin slash, observe-only hooks on the event bus);
+            expand profile TOML from plugin set-diff to a
+            <strong>runtime constitution</strong> (default model, max_turns,
+            compaction window, skill allowlist, visible core tools); and treat
+            profile packages under <code>~/.arvo/profiles/</code> as the
+            shareable artifact (Goose Recipes class, no MCP-in-core). Activation
+            remains set-diff under always-on <code>base</code>; trust stays on
+            project plugin dirs only.
+          </p>
+          <dl class="fields">
+            <dt>Basis</dt>
+            <dd>
+              <code>direct:</code> Manifest normalizes
+              tools/skills/children/commands/hooks; Registry activates tools +
+              OTP children only; Repl context often omits
+              <code>:skills</code> so <code>build_system</code> sees
+              <code>[]</code>; TUI slash is a closed core set. CONTEXT.md:
+              Profile is why the plugin seam exists.
+              <code>external:</code> Goose Recipes; agentskills.io progressive
+              disclosure; Pi packages.
+            </dd>
+            <dt>Rationale</dt>
+            <dd>
+              Without skills+slash+hooks on the wire, Profile is a tool-pack
+              swap. Completing consumers once multiplies every future plugin;
+              constitution fields make <code>/profile rust</code> a trustworthy
+              mode switch without plan mode or permission rails.
+            </dd>
+            <dt>Downsides</dt>
+            <dd>
+              Constitution fields tempt config sprawl; package format needs a
+              minimal schema so Ore twin experiments stay aligned without
+              premature marketplace energy.
+            </dd>
+          </dl>
+        </article>
+
+        <article class="idea" id="idea-4">
+          <header>
+            <span class="rank">4.</span>
+            <h3>Finish ADR-0002: real streaming completion</h3>
+          </header>
+          <div class="meta-strip">
+            <span class="chip accent">Providers &amp; completion</span>
+            <span class="chip ok">Conf 91%</span>
+            <span class="chip">Complexity Medium</span>
+          </div>
+          <p>
+            Delete the hand-rolled <code>chat_via_http</code> path that
+            hardcodes <code>api.x.ai</code> with <code>stream: false</code> and
+            post-hoc full-body <code>on_delta</code>. Default
+            <code>complete_fun</code> consumes req_llm streaming types; Registry
+            (prefix, base_url, auth via TokenManager) becomes the mount plate.
+            No second Provider behaviour—finish the asymmetric design already
+            chosen. Real chunk deltas unlock honest TUI chrome and make Esc
+            meaningful mid-model, not only after a 120s receive timeout.
+          </p>
+          <dl class="fields">
+            <dt>Basis</dt>
+            <dd>
+              <code>direct:</code> ADR-0002 (core speaks req_llm types; harness
+              owns registry/auth/selection only); mix depends on
+              <code>req_llm</code> but no live <code>ReqLLM.</code> call sites
+              in completion; Registry <code>base_url</code> unused by
+              Completion; product tests encode current non-stream behavior.
+            </dd>
+            <dt>Rationale</dt>
+            <dd>
+              One deletion collapses fake streaming, dead registry fields, and
+              double-normalizer risk. Multi-provider later is a side effect of
+              finishing the mount—not a marketplace race.
+            </dd>
+            <dt>Downsides</dt>
+            <dd>
+              req_llm streaming edge cases and tool-call deltas need careful
+              event mapping; temporary breakage of product_path tests that
+              freeze current strings.
+            </dd>
+          </dl>
+        </article>
+
+        <article class="idea" id="idea-5">
+          <header>
+            <span class="rank">5.</span>
+            <h3>Event-first multi-surface</h3>
+          </header>
+          <div class="meta-strip">
+            <span class="chip accent">TUI &amp; interaction</span>
+            <span class="chip">Conf 78%</span>
+            <span class="chip warn">Complexity Medium–High</span>
+          </div>
+          <p>
+            Freeze a small versioned event schema emitted only from
+            Session/Agent (turn start, deltas, tool start/end, usage, cancel,
+            compact). Every surface is a pure projector: line Repl printer,
+            ambient “flight strip” chrome (model/profile/tokens/tool), headless
+            NDJSON, later cell-diff painter, iex. Make an explicit product
+            decision that BEAM differentiates on process events and cancel
+            semantics—not on racing Charm/OpenCode paint. “Polished” means zero
+            missing events and honest cancel chrome first; renderer investment
+            is optional forever.
+          </p>
+          <dl class="fields">
+            <dt>Basis</dt>
+            <dd>
+              <code>direct:</code> TUI GenServer already claims event-derived
+              state but Repl dual-writes <code>IO.write</code> deltas;
+              <code>mode: :raw_v0</code>; mix.exs has no TUI renderer dep;
+              ADR-0001 accepted hand-rolled differential cost. Scarce external
+              bet: headless event bus. Philosophy: no dialogs; Esc is brake.
+            </dd>
+            <dt>Rationale</dt>
+            <dd>
+              Renderer upgrades stop rewriting interaction logic. Tests and CI
+              stop scraping stdout. Multi-surface (TUI + headless + later)
+              compounds on one bus—the Pi four-modes idea on OTP without a Node
+              worker split.
+            </dd>
+            <dt>Downsides</dt>
+            <dd>
+              Tensions with “polished TUI day one” wording; requires deliberate
+              ADR/STRATEGY note so the zero-paint strategy is not misread as
+              abandonment of feel.
+            </dd>
+          </dl>
+        </article>
+
+        <article class="idea" id="idea-6">
+          <header>
+            <span class="rank">6.</span>
+            <h3>Length-error → auto-compact policy turn</h3>
+          </header>
+          <div class="meta-strip">
+            <span class="chip accent">Providers &amp; completion</span>
+            <span class="chip ok">Conf 86%</span>
+            <span class="chip">Complexity Low–Medium</span>
+          </div>
+          <p>
+            When completion hits context length, Session (policy outside the
+            pure loop) runs one compact using existing compaction entry shape,
+            then re-invokes the same user turn once. Keep
+            <code>/compact</code> for intentional focus text; remove it as the
+            only recovery path when the model already failed. Prefer a real
+            model summarizer over the 200-character role-slice default before
+            auto-retry, so the silent path doesn’t destroy nuance.
+          </p>
+          <dl class="fields">
+            <dt>Basis</dt>
+            <dd>
+              <code>direct:</code> Length error message explicitly says run
+              <code>/compact</code>, no automatic retry; auto-compact exists on
+              token threshold path only; <code>default_summarize</code> slices
+              content; pure Agent invites external policy; product_path tests
+              assert the homework message.
+            </dd>
+            <dt>Rationale</dt>
+            <dd>
+              Long sessions are the continuity bet; dying mid-turn with a
+              manual, lossy compact is the sharpest daily friction. Automating
+              once is high leverage relative to surface area.
+            </dd>
+            <dt>Downsides</dt>
+            <dd>
+              Bad auto-summaries can hide failure modes; need Esc still cancel
+              mid-compact; risk of infinite compact loops if threshold mis-set
+              (cap at one retry).
+            </dd>
+          </dl>
+        </article>
+
+        <article class="idea" id="idea-7">
+          <header>
+            <span class="rank">7.</span>
+            <h3>Parallel pure tools under Task.Supervisor</h3>
+          </header>
+          <div class="meta-strip">
+            <span class="chip accent">Agent loop &amp; concurrency</span>
+            <span class="chip ok">Conf 84%</span>
+            <span class="chip">Complexity Medium</span>
+          </div>
+          <p>
+            Keep tool results sequential in the model transcript contract if
+            needed, but execute independent pure tools (Read, search,
+            non-mutating helpers) concurrently under a Task.Supervisor when a
+            turn emits a multi-tool batch. Esc still brutal-kills the whole turn
+            group. Leave write/bash serialization conservative. This is the
+            cheapest place BEAM should feel different from Ore’s single-threaded
+            story without inventing multi-agent chat democracy.
+          </p>
+          <dl class="fields">
+            <dt>Basis</dt>
+            <dd>
+              <code>direct:</code> <code>run_tools_sequential</code> via
+              map_reduce; Session one-at-a-time <code>turn_task</code>; ADR-0001
+              process-per-agent openness; no worktree workers yet. Philosophy
+              sequential tools was about cancel simplicity, not wall-clock
+              latency as destiny.
+            </dd>
+            <dt>Rationale</dt>
+            <dd>
+              Multi-read/multi-search turns are common and currently serialize
+              wall clock on a runtime built for isolation. Parallel-safe batches
+              are curriculum payoff without MCP or permission rails.
+            </dd>
+            <dt>Downsides</dt>
+            <dd>
+              Ordering and error aggregation need a crisp contract;
+              misclassifying a impure tool as pure is dangerous; TUI tool chrome
+              must show concurrent tags honestly.
+            </dd>
+          </dl>
+        </article>
+      </section>
+
+      <section id="rejection-summary">
+        <h2>Rejection Summary</h2>
+        <table class="reject">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Idea</th>
+              <th>Reason rejected</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>X1 as “Esc fiction without streaming”</td>
+              <td>
+                Verifier: overclaims coupling—D1+killable owner make cancel
+                real; streaming improves feel (kept as #4) but is not required
+                for Esc existence
+              </td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>Same-cwd auto-resume (D8)</td>
+              <td>
+                Sound but lower leverage than navigable memory stack; UX risk of
+                surprising session attach—brainstorm variant of #2
+              </td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td>Ambient file-watch profile (D9)</td>
+              <td>
+                Weaker than full Profile product (#3); mid-session magic can
+                fight explicit set-diff UX
+              </td>
+            </tr>
+            <tr>
+              <td>4</td>
+              <td>ATC flight-strip chrome alone (D12)</td>
+              <td>
+                Weak packaging of status chrome already partly present; fold
+                into event-first #5
+              </td>
+            </tr>
+            <tr>
+              <td>5</td>
+              <td>F1 tire-compound UX (D17)</td>
+              <td>Celebration of set-diff without new capability beyond #3</td>
+            </tr>
+            <tr>
+              <td>6</td>
+              <td>Plugin children as multi-agent seam (D18)</td>
+              <td>
+                DynamicSupervisor already runs children; oversells existing
+                infra as the move
+              </td>
+            </tr>
+            <tr>
+              <td>7</td>
+              <td>Worktree multi-car grid (D19)</td>
+              <td>
+                Sound scarce bet but high burden; better after one-turn-owner +
+                event bus land
+              </td>
+            </tr>
+            <tr>
+              <td>8</td>
+              <td>Mail-forward last_surface (D21)</td>
+              <td>Gap real but premature until multi-surface (#5) exists</td>
+            </tr>
+            <tr>
+              <td>9</td>
+              <td>Zero-paint as standalone (D13)</td>
+              <td>
+                Merged into event-first strategy #5 rather than a separate
+                survivor
+              </td>
+            </tr>
+            <tr>
+              <td>10</td>
+              <td>Standalone cancel-as-fork / apoptotic entry (D7)</td>
+              <td>Merged into navigable workshop memory #2</td>
+            </tr>
+            <tr>
+              <td>11</td>
+              <td>Resume tokens-only (D3)</td>
+              <td>Merged into #2 rehydrate bundle</td>
+            </tr>
+            <tr>
+              <td>12</td>
+              <td>JSONL-as-process alone (D14)</td>
+              <td>Merged into #2</td>
+            </tr>
+            <tr>
+              <td>13</td>
+              <td>HEAD/fork alone (D2)</td>
+              <td>Merged into #2</td>
+            </tr>
+            <tr>
+              <td>14</td>
+              <td>Manifest consumers alone (D4)</td>
+              <td>Merged into Profile product #3</td>
+            </tr>
+            <tr>
+              <td>15</td>
+              <td>Progressive skills alone (D10)</td>
+              <td>Merged into #3</td>
+            </tr>
+            <tr>
+              <td>16</td>
+              <td>Profile constitution alone (D15)</td>
+              <td>Merged into #3</td>
+            </tr>
+            <tr>
+              <td>17</td>
+              <td>Profile packages alone (D16)</td>
+              <td>Merged into #3</td>
+            </tr>
+            <tr>
+              <td>18</td>
+              <td>Event bus alone (D11)</td>
+              <td>Merged into #5</td>
+            </tr>
+            <tr>
+              <td>19</td>
+              <td>Duplicate “finish ADR-0002” clones</td>
+              <td>Duplicates of survivor #4 from multiple frames</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="muted" style="margin-top: 0.85rem">
+          Axis coverage: all five axes have at least one survivor. No recovery
+          dispatch required.
+        </p>
+      </section>
+
+      <footer class="composition-signal">
+        Composed 2026-07-27T00:11Z by ce-ideate from focus “arvo the elixir
+        harness” · run 438bc25c
+      </footer>
     </div>
-    <div class="card">
-      <h3>Past learnings</h3>
-      <p>ADR-0001: BEAM is curriculum (OTP, live profile load, process-per-agent open). ADR-0002: own experimental seams only—wrap tools, consume req_llm types for providers. Profile is the product unit; observe-only hooks; philosophy refusals are design constraints (no MCP/plan/todo/permission rails; Esc is the brake). Ore post-v0.1 ideation ranked continuity → profile completeness → providers → memory; import lessons, exploit BEAM where Ore paid Rust tax.</p>
-    </div>
-    <div class="card">
-      <h3>External context</h3>
-      <p>Crowded TS/Go/Rust TUI category. Closest philosophy peer: Pi (tiny core, JSONL session trees, extensions, multi-mode). Goose Recipes ≈ named Profiles. agentskills.io progressive disclosure is cross-tool standard. Loom/Jido show BEAM agent stacks. Scarce edge: personal BEAM harness that stays small—OTP concurrency + named Profiles, not Claude Code feature parity.</p>
-    </div>
-  </div>
-</section>
-
-<section id="topic-axes">
-  <h2>Topic Axes</h2>
-  <ul class="axes">
-    <li>Session continuity</li>
-    <li>Profiles &amp; plugins</li>
-    <li>TUI &amp; interaction</li>
-    <li>Agent loop &amp; concurrency</li>
-    <li>Providers &amp; completion</li>
-  </ul>
-</section>
-
-<section id="ranked-ideas">
-  <h2>Ranked Ideas</h2>
-  <div class="jump">
-    <strong>Jump to idea</strong>
-    <ol>
-      <li><a href="#idea-1">One turn owner: Esc is real on the product path</a></li>
-      <li><a href="#idea-2">Navigable workshop memory</a></li>
-      <li><a href="#idea-3">Profile becomes the product</a></li>
-      <li><a href="#idea-4">Finish ADR-0002: real streaming completion</a></li>
-      <li><a href="#idea-5">Event-first multi-surface</a></li>
-      <li><a href="#idea-6">Length-error → auto-compact policy turn</a></li>
-      <li><a href="#idea-7">Parallel pure tools under Task.Supervisor</a></li>
-    </ol>
-  </div>
-
-  <article class="idea" id="idea-1">
-    <header>
-      <span class="rank">1.</span>
-      <h3>One turn owner: Esc is real on the product path</h3>
-    </header>
-    <div class="meta-strip">
-      <span class="chip accent">Agent loop &amp; concurrency</span>
-      <span class="chip ok">Conf 92%</span>
-      <span class="chip">Complexity Medium</span>
-    </div>
-    <p>Every interactive chat turn must be owned by <code>Session.start_turn</code> (supervised Task, steering drain, <code>cancel_turn</code> / <code>:brutal_kill</code>). Delete the product path where <code>Arvo.Repl.run_chat</code> calls <code>Arvo.Agent.run</code> on the REPL process. Pure <code>Agent.run</code> remains the library core for tests and headless injectors—but <code>bin/arvo</code> never bypasses Session. Pair with a killable input owner (raw terminal or TUI key path) so Esc can fire while a turn is running, not only between <code>IO.gets</code> prompts.</p>
-    <div class="diagram" aria-hidden="false">
-      <svg viewBox="0 0 720 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Before dual turn paths vs after single Session-owned path">
-        <rect x="0" y="0" width="720" height="200" fill="#0f1419" rx="6"/>
-        <text x="20" y="28" fill="#9aabbf" font-size="12" font-family="system-ui,sans-serif">BEFORE</text>
-        <rect x="20" y="40" width="130" height="48" rx="6" fill="#1a2332" stroke="#2d3a4f"/>
-        <text x="40" y="68" fill="#e7ecf3" font-size="13" font-family="system-ui,sans-serif">Repl · Agent.run</text>
-        <rect x="180" y="40" width="150" height="48" rx="6" fill="#1a2332" stroke="#2d3a4f"/>
-        <text x="195" y="68" fill="#e7ecf3" font-size="13" font-family="system-ui,sans-serif">Session.start_turn</text>
-        <text x="340" y="68" fill="#e0b44f" font-size="12" font-family="system-ui,sans-serif">Esc only works here</text>
-        <text x="20" y="120" fill="#9aabbf" font-size="12" font-family="system-ui,sans-serif">AFTER</text>
-        <rect x="20" y="132" width="110" height="48" rx="6" fill="#1a334d" stroke="#2a4d70"/>
-        <text x="45" y="160" fill="#9dceff" font-size="13" font-family="system-ui,sans-serif">stdin / TUI</text>
-        <path d="M135 156 H175" stroke="#6eb5ff" stroke-width="2" marker-end="url(#arr)"/>
-        <rect x="180" y="132" width="200" height="48" rx="6" fill="#1a3324" stroke="#2a5a3c"/>
-        <text x="200" y="152" fill="#6bcf8e" font-size="13" font-family="system-ui,sans-serif">Session.start_turn only</text>
-        <text x="200" y="168" fill="#9aabbf" font-size="11" font-family="system-ui,sans-serif">Task · cancel · steering · persist</text>
-        <path d="M385 156 H425" stroke="#6eb5ff" stroke-width="2"/>
-        <rect x="430" y="132" width="150" height="48" rx="6" fill="#1a2332" stroke="#2d3a4f"/>
-        <text x="455" y="160" fill="#e7ecf3" font-size="13" font-family="system-ui,sans-serif">Agent.run (pure)</text>
-        <defs><marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#6eb5ff"/></marker></defs>
-      </svg>
-      <p class="caption">Illustrative: dual drivers collapse so Esc, steering, and cancel-survives attach to the path users actually run.</p>
-    </div>
-    <dl class="fields">
-      <dt>Basis</dt>
-      <dd><code>direct:</code> <code>arvo/lib/arvo/repl.ex</code> product chat invokes <code>Arvo.Agent.run</code> inline; Session owns <code>start_turn</code>/<code>cancel_turn</code>/<code>turn_task</code> and tests prove kill-survives-session—but only on that path. TUI Esc → <code>Session.cancel_turn</code> while Repl is blocked in completion.</dd>
-      <dt>Rationale</dt>
-      <dd>Philosophy’s single brake is Esc. Until product path and cancel path are the same path, every UX claim about mid-turn steering and supervised turns is true only in tests. This is the unlock for continuity, streaming cancel feel, and multi-surface.</dd>
-      <dt>Downsides</dt>
-      <dd>Repl becomes thinner; tests that assumed direct <code>Agent.run</code> need rewiring; raw-mode input is extra work beyond “just call start_turn.”</dd>
-    </dl>
-  </article>
-
-  <article class="idea" id="idea-2">
-    <header>
-      <span class="rank">2.</span>
-      <h3>Navigable workshop memory</h3>
-    </header>
-    <div class="meta-strip">
-      <span class="chip accent">Session continuity</span>
-      <span class="chip ok">Conf 90%</span>
-      <span class="chip warn">Complexity High</span>
-    </div>
-    <p>Treat the JSONL store as a navigable DAG product, not a linear chat log with accidental parent_ids. Ship four primitives together: explicit <strong>HEAD</strong> (not tip = last file line); <strong>fork/rewind</strong> that only appends and moves HEAD; <strong>cancel-as-fork</strong> (Esc leaves a cancel leaf and preserves last good parent); and <strong>JSONL as process of record</strong> so resume rehydrates messages, cumulative tokens, model, and active profile from the log—Session GenServer is a disposable open-handle cache.</p>
-    <div class="diagram">
-      <svg viewBox="0 0 720 210" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Session tree with HEAD pointer and a cancelled branch">
-        <rect width="720" height="210" fill="#0f1419" rx="6"/>
-        <circle cx="80" cy="100" r="22" fill="#1a334d" stroke="#6eb5ff"/>
-        <text x="72" y="104" fill="#e7ecf3" font-size="11" font-family="system-ui,sans-serif">u1</text>
-        <circle cx="200" cy="100" r="22" fill="#1a334d" stroke="#6eb5ff"/>
-        <text x="192" y="104" fill="#e7ecf3" font-size="11" font-family="system-ui,sans-serif">a1</text>
-        <circle cx="320" cy="60" r="22" fill="#1a2332" stroke="#9aabbf"/>
-        <text x="308" y="64" fill="#9aabbf" font-size="11" font-family="system-ui,sans-serif">bad</text>
-        <circle cx="320" cy="140" r="22" fill="#1a3324" stroke="#6bcf8e"/>
-        <text x="308" y="144" fill="#6bcf8e" font-size="11" font-family="system-ui,sans-serif">ok2</text>
-        <circle cx="440" cy="140" r="22" fill="#1a3324" stroke="#6bcf8e"/>
-        <text x="428" y="144" fill="#6bcf8e" font-size="11" font-family="system-ui,sans-serif">HEAD</text>
-        <line x1="102" y1="100" x2="178" y2="100" stroke="#6eb5ff" stroke-width="2"/>
-        <line x1="222" y1="90" x2="298" y2="70" stroke="#9aabbf" stroke-width="2"/>
-        <line x1="222" y1="110" x2="298" y2="130" stroke="#6bcf8e" stroke-width="2"/>
-        <line x1="342" y1="140" x2="418" y2="140" stroke="#6bcf8e" stroke-width="2"/>
-        <text x="300" y="30" fill="#9aabbf" font-size="12" font-family="system-ui,sans-serif">abandoned / Esc branch stays</text>
-        <text x="480" y="145" fill="#6eb5ff" font-size="12" font-family="system-ui,sans-serif">rewind = move HEAD, never rewrite</text>
-        <text x="20" y="190" fill="#9aabbf" font-size="12" font-family="system-ui,sans-serif">Chess/PGN analogy: tip is active variation, not the only truth in the file.</text>
-      </svg>
-      <p class="caption">Illustrative: append-only tree with a movable HEAD makes Esc, retry, and compact into first-class navigation.</p>
-    </div>
-    <dl class="fields">
-      <dt>Basis</dt>
-      <dd><code>direct:</code> Store already appends <code>{id, parent_id}</code> and rebuilds via <code>messages_to_tip</code>; resume uses <code>List.last(entries)</code> only; no rewind/branch/last_surface API; resume reloads history but not tokens. <code>external:</code> Pi JSONL session trees; chess/PGN variation boards. Continuity was the top scarce Ore bet.</dd>
-      <dt>Rationale</dt>
-      <dd>Continuity without navigable history is crash durability. The tree investment only pays when HEAD is choosable and durable state is reconstructed from disk—the scarce daily-driver trust surface.</dd>
-      <dt>Downsides</dt>
-      <dd>Largest surface area of the set; UX for node pick matters; compaction nodes must become navigable fork points carefully so users don’t lose the “kept” window story.</dd>
-    </dl>
-  </article>
-
-  <article class="idea" id="idea-3">
-    <header>
-      <span class="rank">3.</span>
-      <h3>Profile becomes the product</h3>
-    </header>
-    <div class="meta-strip">
-      <span class="chip accent">Profiles &amp; plugins</span>
-      <span class="chip ok">Conf 88%</span>
-      <span class="chip">Complexity Medium</span>
-    </div>
-    <p>Finish the Profile coinage as one shippable unit: wire remaining manifest consumers (progressive skills name+desc until Read, namespaced plugin slash, observe-only hooks on the event bus); expand profile TOML from plugin set-diff to a <strong>runtime constitution</strong> (default model, max_turns, compaction window, skill allowlist, visible core tools); and treat profile packages under <code>~/.arvo/profiles/</code> as the shareable artifact (Goose Recipes class, no MCP-in-core). Activation remains set-diff under always-on <code>base</code>; trust stays on project plugin dirs only.</p>
-    <dl class="fields">
-      <dt>Basis</dt>
-      <dd><code>direct:</code> Manifest normalizes tools/skills/children/commands/hooks; Registry activates tools + OTP children only; Repl context often omits <code>:skills</code> so <code>build_system</code> sees <code>[]</code>; TUI slash is a closed core set. CONTEXT.md: Profile is why the plugin seam exists. <code>external:</code> Goose Recipes; agentskills.io progressive disclosure; Pi packages.</dd>
-      <dt>Rationale</dt>
-      <dd>Without skills+slash+hooks on the wire, Profile is a tool-pack swap. Completing consumers once multiplies every future plugin; constitution fields make <code>/profile rust</code> a trustworthy mode switch without plan mode or permission rails.</dd>
-      <dt>Downsides</dt>
-      <dd>Constitution fields tempt config sprawl; package format needs a minimal schema so Ore twin experiments stay aligned without premature marketplace energy.</dd>
-    </dl>
-  </article>
-
-  <article class="idea" id="idea-4">
-    <header>
-      <span class="rank">4.</span>
-      <h3>Finish ADR-0002: real streaming completion</h3>
-    </header>
-    <div class="meta-strip">
-      <span class="chip accent">Providers &amp; completion</span>
-      <span class="chip ok">Conf 91%</span>
-      <span class="chip">Complexity Medium</span>
-    </div>
-    <p>Delete the hand-rolled <code>chat_via_http</code> path that hardcodes <code>api.x.ai</code> with <code>stream: false</code> and post-hoc full-body <code>on_delta</code>. Default <code>complete_fun</code> consumes req_llm streaming types; Registry (prefix, base_url, auth via TokenManager) becomes the mount plate. No second Provider behaviour—finish the asymmetric design already chosen. Real chunk deltas unlock honest TUI chrome and make Esc meaningful mid-model, not only after a 120s receive timeout.</p>
-    <dl class="fields">
-      <dt>Basis</dt>
-      <dd><code>direct:</code> ADR-0002 (core speaks req_llm types; harness owns registry/auth/selection only); mix depends on <code>req_llm</code> but no live <code>ReqLLM.</code> call sites in completion; Registry <code>base_url</code> unused by Completion; product tests encode current non-stream behavior.</dd>
-      <dt>Rationale</dt>
-      <dd>One deletion collapses fake streaming, dead registry fields, and double-normalizer risk. Multi-provider later is a side effect of finishing the mount—not a marketplace race.</dd>
-      <dt>Downsides</dt>
-      <dd>req_llm streaming edge cases and tool-call deltas need careful event mapping; temporary breakage of product_path tests that freeze current strings.</dd>
-    </dl>
-  </article>
-
-  <article class="idea" id="idea-5">
-    <header>
-      <span class="rank">5.</span>
-      <h3>Event-first multi-surface</h3>
-    </header>
-    <div class="meta-strip">
-      <span class="chip accent">TUI &amp; interaction</span>
-      <span class="chip">Conf 78%</span>
-      <span class="chip warn">Complexity Medium–High</span>
-    </div>
-    <p>Freeze a small versioned event schema emitted only from Session/Agent (turn start, deltas, tool start/end, usage, cancel, compact). Every surface is a pure projector: line Repl printer, ambient “flight strip” chrome (model/profile/tokens/tool), headless NDJSON, later cell-diff painter, iex. Make an explicit product decision that BEAM differentiates on process events and cancel semantics—not on racing Charm/OpenCode paint. “Polished” means zero missing events and honest cancel chrome first; renderer investment is optional forever.</p>
-    <dl class="fields">
-      <dt>Basis</dt>
-      <dd><code>direct:</code> TUI GenServer already claims event-derived state but Repl dual-writes <code>IO.write</code> deltas; <code>mode: :raw_v0</code>; mix.exs has no TUI renderer dep; ADR-0001 accepted hand-rolled differential cost. Scarce external bet: headless event bus. Philosophy: no dialogs; Esc is brake.</dd>
-      <dt>Rationale</dt>
-      <dd>Renderer upgrades stop rewriting interaction logic. Tests and CI stop scraping stdout. Multi-surface (TUI + headless + later) compounds on one bus—the Pi four-modes idea on OTP without a Node worker split.</dd>
-      <dt>Downsides</dt>
-      <dd>Tensions with “polished TUI day one” wording; requires deliberate ADR/STRATEGY note so the zero-paint strategy is not misread as abandonment of feel.</dd>
-    </dl>
-  </article>
-
-  <article class="idea" id="idea-6">
-    <header>
-      <span class="rank">6.</span>
-      <h3>Length-error → auto-compact policy turn</h3>
-    </header>
-    <div class="meta-strip">
-      <span class="chip accent">Providers &amp; completion</span>
-      <span class="chip ok">Conf 86%</span>
-      <span class="chip">Complexity Low–Medium</span>
-    </div>
-    <p>When completion hits context length, Session (policy outside the pure loop) runs one compact using existing compaction entry shape, then re-invokes the same user turn once. Keep <code>/compact</code> for intentional focus text; remove it as the only recovery path when the model already failed. Prefer a real model summarizer over the 200-character role-slice default before auto-retry, so the silent path doesn’t destroy nuance.</p>
-    <dl class="fields">
-      <dt>Basis</dt>
-      <dd><code>direct:</code> Length error message explicitly says run <code>/compact</code>, no automatic retry; auto-compact exists on token threshold path only; <code>default_summarize</code> slices content; pure Agent invites external policy; product_path tests assert the homework message.</dd>
-      <dt>Rationale</dt>
-      <dd>Long sessions are the continuity bet; dying mid-turn with a manual, lossy compact is the sharpest daily friction. Automating once is high leverage relative to surface area.</dd>
-      <dt>Downsides</dt>
-      <dd>Bad auto-summaries can hide failure modes; need Esc still cancel mid-compact; risk of infinite compact loops if threshold mis-set (cap at one retry).</dd>
-    </dl>
-  </article>
-
-  <article class="idea" id="idea-7">
-    <header>
-      <span class="rank">7.</span>
-      <h3>Parallel pure tools under Task.Supervisor</h3>
-    </header>
-    <div class="meta-strip">
-      <span class="chip accent">Agent loop &amp; concurrency</span>
-      <span class="chip ok">Conf 84%</span>
-      <span class="chip">Complexity Medium</span>
-    </div>
-    <p>Keep tool results sequential in the model transcript contract if needed, but execute independent pure tools (Read, search, non-mutating helpers) concurrently under a Task.Supervisor when a turn emits a multi-tool batch. Esc still brutal-kills the whole turn group. Leave write/bash serialization conservative. This is the cheapest place BEAM should feel different from Ore’s single-threaded story without inventing multi-agent chat democracy.</p>
-    <dl class="fields">
-      <dt>Basis</dt>
-      <dd><code>direct:</code> <code>run_tools_sequential</code> via map_reduce; Session one-at-a-time <code>turn_task</code>; ADR-0001 process-per-agent openness; no worktree workers yet. Philosophy sequential tools was about cancel simplicity, not wall-clock latency as destiny.</dd>
-      <dt>Rationale</dt>
-      <dd>Multi-read/multi-search turns are common and currently serialize wall clock on a runtime built for isolation. Parallel-safe batches are curriculum payoff without MCP or permission rails.</dd>
-      <dt>Downsides</dt>
-      <dd>Ordering and error aggregation need a crisp contract; misclassifying a impure tool as pure is dangerous; TUI tool chrome must show concurrent tags honestly.</dd>
-    </dl>
-  </article>
-</section>
-
-<section id="rejection-summary">
-  <h2>Rejection Summary</h2>
-  <table class="reject">
-    <thead>
-      <tr><th>#</th><th>Idea</th><th>Reason rejected</th></tr>
-    </thead>
-    <tbody>
-      <tr><td>1</td><td>X1 as “Esc fiction without streaming”</td><td>Verifier: overclaims coupling—D1+killable owner make cancel real; streaming improves feel (kept as #4) but is not required for Esc existence</td></tr>
-      <tr><td>2</td><td>Same-cwd auto-resume (D8)</td><td>Sound but lower leverage than navigable memory stack; UX risk of surprising session attach—brainstorm variant of #2</td></tr>
-      <tr><td>3</td><td>Ambient file-watch profile (D9)</td><td>Weaker than full Profile product (#3); mid-session magic can fight explicit set-diff UX</td></tr>
-      <tr><td>4</td><td>ATC flight-strip chrome alone (D12)</td><td>Weak packaging of status chrome already partly present; fold into event-first #5</td></tr>
-      <tr><td>5</td><td>F1 tire-compound UX (D17)</td><td>Celebration of set-diff without new capability beyond #3</td></tr>
-      <tr><td>6</td><td>Plugin children as multi-agent seam (D18)</td><td>DynamicSupervisor already runs children; oversells existing infra as the move</td></tr>
-      <tr><td>7</td><td>Worktree multi-car grid (D19)</td><td>Sound scarce bet but high burden; better after one-turn-owner + event bus land</td></tr>
-      <tr><td>8</td><td>Mail-forward last_surface (D21)</td><td>Gap real but premature until multi-surface (#5) exists</td></tr>
-      <tr><td>9</td><td>Zero-paint as standalone (D13)</td><td>Merged into event-first strategy #5 rather than a separate survivor</td></tr>
-      <tr><td>10</td><td>Standalone cancel-as-fork / apoptotic entry (D7)</td><td>Merged into navigable workshop memory #2</td></tr>
-      <tr><td>11</td><td>Resume tokens-only (D3)</td><td>Merged into #2 rehydrate bundle</td></tr>
-      <tr><td>12</td><td>JSONL-as-process alone (D14)</td><td>Merged into #2</td></tr>
-      <tr><td>13</td><td>HEAD/fork alone (D2)</td><td>Merged into #2</td></tr>
-      <tr><td>14</td><td>Manifest consumers alone (D4)</td><td>Merged into Profile product #3</td></tr>
-      <tr><td>15</td><td>Progressive skills alone (D10)</td><td>Merged into #3</td></tr>
-      <tr><td>16</td><td>Profile constitution alone (D15)</td><td>Merged into #3</td></tr>
-      <tr><td>17</td><td>Profile packages alone (D16)</td><td>Merged into #3</td></tr>
-      <tr><td>18</td><td>Event bus alone (D11)</td><td>Merged into #5</td></tr>
-      <tr><td>19</td><td>Duplicate “finish ADR-0002” clones</td><td>Duplicates of survivor #4 from multiple frames</td></tr>
-    </tbody>
-  </table>
-  <p class="muted" style="margin-top:0.85rem">Axis coverage: all five axes have at least one survivor. No recovery dispatch required.</p>
-</section>
-
-<footer class="composition-signal">
-  Composed 2026-07-27T00:11Z by ce-ideate from focus “arvo the elixir harness” · run 438bc25c
-</footer>
-
-</div>
-</body>
+  </body>
 </html>

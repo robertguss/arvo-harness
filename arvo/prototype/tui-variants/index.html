@@ -1,422 +1,810 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PROTOTYPE — Arvo TUI variants</title>
-<style>
-  /* PROTOTYPE throwaway — not production Arvo UI */
-  :root {
-    --bg: #0b0f14;
-    --panel: #121820;
-    --panel2: #1a222d;
-    --border: #2a3544;
-    --text: #e6edf5;
-    --muted: #8b9bb0;
-    --accent: #6eb5ff;
-    --accent2: #8bd5a0;
-    --warn: #e0b44f;
-    --err: #f07178;
-    --user: #c4b5fd;
-    --tool: #5c6b7a;
-    --mono: "JetBrains Mono", "SF Mono", "Fira Code", ui-monospace, monospace;
-    --sans: "IBM Plex Sans", system-ui, sans-serif;
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: #06080c; color: var(--text); font-family: var(--sans); }
-  body { display: flex; flex-direction: column; min-height: 100vh; padding-bottom: 72px; }
-
-  .proto-banner {
-    background: #3d2a00;
-    color: #ffd27a;
-    font-size: 12px;
-    padding: 8px 16px;
-    letter-spacing: 0.02em;
-    border-bottom: 1px solid #6a4f12;
-  }
-  .proto-banner code { background: rgba(0,0,0,.25); padding: 1px 6px; border-radius: 4px; }
-  .proto-banner a { color: #ffe6a8; }
-
-  .stage {
-    flex: 1;
-    display: flex;
-    align-items: stretch;
-    justify-content: center;
-    padding: 20px;
-    gap: 16px;
-  }
-
-  /* Outer terminal chrome */
-  .term {
-    width: min(1100px, 100%);
-    height: min(720px, calc(100vh - 120px));
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    box-shadow: 0 24px 80px rgba(0,0,0,.55);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    font-family: var(--mono);
-    font-size: 13px;
-    line-height: 1.45;
-  }
-  .term-titlebar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    background: #0e131a;
-    border-bottom: 1px solid var(--border);
-    color: var(--muted);
-    font-size: 12px;
-    font-family: var(--sans);
-  }
-  .dot { width: 10px; height: 10px; border-radius: 50%; }
-  .dot.r { background: #ff5f57; }
-  .dot.y { background: #febc2e; }
-  .dot.g { background: #28c840; }
-  .term-titlebar .path { margin-left: 8px; flex: 1; }
-  .term-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-
-  .muted { color: var(--muted); }
-  .accent { color: var(--accent); }
-  .ok { color: var(--accent2); }
-  .warn { color: var(--warn); }
-  .err { color: var(--err); }
-  .user { color: var(--user); }
-  .dim { opacity: 0.75; }
-
-  /* Shared message bits */
-  .msg { padding: 8px 14px; border-bottom: 1px solid transparent; }
-  .msg .role { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
-  .msg.user .role { color: var(--user); }
-  .msg.asst .role { color: var(--accent2); }
-  .msg.tool { background: rgba(255,255,255,0.02); }
-  .msg.tool .role { color: var(--tool); }
-  .msg .body { white-space: pre-wrap; word-break: break-word; }
-  .tool-head { display: flex; gap: 8px; align-items: center; color: var(--tool); }
-  .tool-head .tag {
-    font-size: 10px; border: 1px solid var(--border); border-radius: 4px;
-    padding: 0 6px; color: var(--muted);
-  }
-  .fold { color: var(--muted); font-size: 12px; margin-top: 4px; }
-  .cursor-blink::after {
-    content: "▌";
-    color: var(--accent);
-    animation: blink 1s step-end infinite;
-  }
-  @keyframes blink { 50% { opacity: 0; } }
-
-  .input-box {
-    border-top: 1px solid var(--border);
-    background: var(--panel);
-    padding: 10px 12px;
-  }
-  .input-box .prompt-row {
-    display: flex; gap: 8px; align-items: flex-start;
-  }
-  .input-box .gt { color: var(--accent); user-select: none; }
-  .input-box .fake-input {
-    flex: 1; min-height: 44px; color: var(--text);
-    border: 1px solid var(--border); border-radius: 8px;
-    background: var(--bg); padding: 8px 10px;
-  }
-  .input-box .hint { margin-top: 6px; font-size: 11px; color: var(--muted); font-family: var(--sans); }
-
-  .strip {
-    display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center;
-    padding: 6px 12px; background: var(--panel2); border-bottom: 1px solid var(--border);
-    font-size: 12px; color: var(--muted); font-family: var(--sans);
-  }
-  .strip .pill {
-    display: inline-flex; gap: 6px; align-items: center;
-    padding: 2px 8px; border-radius: 999px; background: rgba(255,255,255,0.04);
-    border: 1px solid var(--border);
-  }
-  .strip .pill b { color: var(--text); font-weight: 600; }
-  .strip .run { color: var(--warn); }
-  .strip .idle { color: var(--accent2); }
-
-  .transcript { flex: 1; overflow: auto; min-height: 0; }
-
-  /* ===== VARIANT A: Classic stack ===== */
-  .va { display: flex; flex-direction: column; height: 100%; }
-  .va .brand-line {
-    padding: 10px 14px 0; font-family: var(--sans); font-size: 12px; color: var(--muted);
-  }
-  .va .brand-line strong { color: var(--text); }
-
-  /* ===== VARIANT B: Three-pane IDE ===== */
-  .vb { display: grid; grid-template-columns: 200px 1fr 240px; grid-template-rows: auto 1fr auto; height: 100%; }
-  .vb .strip { grid-column: 1 / -1; }
-  .vb .side, .vb .rail {
-    background: #0d1218; border-right: 1px solid var(--border);
-    padding: 10px 8px; font-family: var(--sans); font-size: 12px; overflow: auto;
-  }
-  .vb .rail { border-right: 0; border-left: 1px solid var(--border); }
-  .vb .side h4, .vb .rail h4 {
-    margin: 0 0 8px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
-  }
-  .vb .nav-item {
-    padding: 6px 8px; border-radius: 6px; margin-bottom: 2px; cursor: default;
-  }
-  .vb .nav-item.active { background: var(--panel2); color: var(--accent); }
-  .vb .nav-item .sub { display: block; font-size: 10px; color: var(--muted); }
-  .vb .center { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-  .vb .input-box { grid-column: 2 / -1; }
-  .vb .activity {
-    padding: 6px 8px; margin-bottom: 6px; border-radius: 6px;
-    background: rgba(255,255,255,0.03); border: 1px solid var(--border);
-    font-family: var(--mono); font-size: 11px;
-  }
-
-  /* ===== VARIANT C: Bottom-heavy command center ===== */
-  .vc { display: flex; flex-direction: column; height: 100%; }
-  .vc .top-meta {
-    display: flex; gap: 8px; flex-wrap: wrap; padding: 8px 12px;
-    font-family: var(--sans); font-size: 11px;
-  }
-  .vc .chip {
-    padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border);
-    background: var(--panel); color: var(--muted);
-  }
-  .vc .chip b { color: var(--text); }
-  .vc .transcript { flex: 1; max-height: 42%; }
-  .vc .cmd {
-    flex: 1; display: flex; flex-direction: column; min-height: 0;
-    border-top: 2px solid var(--accent); background: #0e1520;
-  }
-  .vc .slash-dock {
-    display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 12px;
-    border-bottom: 1px solid var(--border); font-family: var(--sans); font-size: 11px;
-  }
-  .vc .slash-dock span {
-    padding: 4px 8px; border-radius: 6px; background: var(--panel2);
-    border: 1px solid var(--border); color: var(--accent);
-  }
-  .vc .big-input {
-    flex: 1; padding: 12px 14px; color: var(--text); overflow: auto;
-  }
-  .vc .footer-keys {
-    padding: 8px 12px; font-size: 11px; color: var(--muted); font-family: var(--sans);
-    border-top: 1px solid var(--border);
-  }
-  .vc .key { color: var(--text); background: var(--panel2); border: 1px solid var(--border);
-    padding: 1px 6px; border-radius: 4px; font-family: var(--mono); font-size: 10px; }
-
-  /* ===== VARIANT D: Minimal zen ===== */
-  .vd { display: flex; flex-direction: column; height: 100%; background: #090c10; }
-  .vd .ghost-strip {
-    text-align: center; padding: 10px; font-size: 11px; color: #556274;
-    font-family: var(--sans); letter-spacing: 0.04em;
-  }
-  .vd .measure {
-    flex: 1; max-width: 68ch; margin: 0 auto; width: 100%;
-    overflow: auto; padding: 8px 16px 24px;
-  }
-  .vd .msg { border: 0; padding: 14px 4px; }
-  .vd .msg.user { border-left: 2px solid var(--user); padding-left: 12px; }
-  .vd .msg.asst { border-left: 2px solid transparent; padding-left: 12px; }
-  .vd .msg.tool { background: transparent; opacity: 0.55; font-size: 12px; }
-  .vd .zen-input {
-    max-width: 68ch; margin: 0 auto 20px; width: calc(100% - 32px);
-    border: 0; border-bottom: 1px solid #2a3544; background: transparent;
-    padding: 12px 4px; color: var(--text); font-family: var(--mono);
-  }
-  .vd .zen-hint { text-align: center; font-size: 11px; color: #445060; font-family: var(--sans); margin-bottom: 12px; }
-
-  /* ===== VARIANT E: Fat dashboard header ===== */
-  .ve { display: flex; flex-direction: column; height: 100%; }
-  .ve .dash {
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
-    padding: 12px; background: linear-gradient(180deg, #141c28, #0b0f14);
-    border-bottom: 1px solid var(--border); font-family: var(--sans);
-  }
-  .ve .card {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-    padding: 10px 12px;
-  }
-  .ve .card .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); }
-  .ve .card .val { font-size: 15px; font-weight: 650; margin-top: 4px; color: var(--text); font-family: var(--mono); }
-  .ve .card .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
-  .ve .card.live { border-color: #4a6a30; background: #121a14; }
-  .ve .card.live .val { color: var(--warn); }
-  .ve .dock {
-    display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end;
-    padding: 10px 12px; border-top: 1px solid var(--border); background: var(--panel);
-  }
-  .ve .slash-hints {
-    display: flex; flex-direction: column; gap: 4px; font-family: var(--sans); font-size: 11px; color: var(--muted);
-    padding-bottom: 4px;
-  }
-  .ve .slash-hints code { color: var(--accent); }
-
-  /* Notes panel beside term on wide screens */
-  .notes {
-    width: 240px; flex-shrink: 0; font-size: 13px; color: var(--muted);
-    font-family: var(--sans); line-height: 1.5;
-  }
-  .notes h2 { margin: 0 0 8px; font-size: 14px; color: var(--text); }
-  .notes ul { margin: 0; padding-left: 1.1rem; }
-  .notes li { margin-bottom: 6px; }
-  @media (max-width: 980px) { .notes { display: none; } }
-
-  /* Floating prototype switcher */
-  .switcher {
-    position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
-    z-index: 100; display: flex; align-items: center; gap: 4px;
-    background: #f4f6f8; color: #111; border-radius: 999px;
-    padding: 6px 8px; box-shadow: 0 8px 32px rgba(0,0,0,.45);
-    font-family: var(--sans); font-size: 13px; font-weight: 600;
-    border: 2px solid #111;
-  }
-  .switcher button {
-    border: 0; background: #111; color: #fff; width: 36px; height: 36px;
-    border-radius: 50%; cursor: pointer; font-size: 16px; line-height: 1;
-  }
-  .switcher button:hover { background: #333; }
-  .switcher .label {
-    min-width: 220px; text-align: center; padding: 0 10px;
-    user-select: none;
-  }
-  .switcher .label small { display: block; font-weight: 500; color: #555; font-size: 11px; margin-top: 1px; }
-</style>
-</head>
-<body>
-<div class="proto-banner">
-  <strong>PROTOTYPE — throwaway.</strong>
-  Arvo TUI visual variants for design selection. Not production.
-  Switch with the bar below or <code>←</code>/<code>→</code>.
-  Open: <code>arvo/prototype/tui-variants/index.html</code>
-</div>
-
-<div class="stage">
-  <div class="term" id="term">
-    <div class="term-titlebar">
-      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
-      <span class="path">arvo · ~/projects/coding-agent-harness · prototype</span>
-      <span id="term-variant-tag">A</span>
-    </div>
-    <div class="term-body" id="mount"></div>
-  </div>
-  <aside class="notes" id="notes"></aside>
-</div>
-
-<div class="switcher" id="switcher" aria-label="Prototype variant switcher">
-  <button type="button" id="prev" title="Previous variant">←</button>
-  <div class="label" id="switcher-label">A — Classic stack</div>
-  <button type="button" id="next" title="Next variant">→</button>
-</div>
-
-<script>
-/* PROTOTYPE: mock transcript data shared across variants */
-const MOCK = {
-  strip: { model: "grok-3", profile: "search", tokens: "12.4k", status: "running", tool: "bash" },
-  messages: [
-    { kind: "user", body: "Find where Session.start_turn is called and why Repl bypasses it." },
-    { kind: "asst", body: "I'll search the codebase for start_turn and the Repl chat path." },
-    { kind: "tool", name: "fff_search", tag: "ok", body: "12 hits · arvo/lib/arvo/session.ex, repl.ex, …", folded: true },
-    { kind: "tool", name: "read", tag: "ok", body: "arvo/lib/arvo/repl.ex:189  case Arvo.Agent.run(...)", folded: false },
-    { kind: "asst", body: "Product chat calls Agent.run inline on the Repl process. Session.start_turn owns cancel/steering, so Esc is second-class on the path you actually run.\n\nFix: route every interactive turn through Session.start_turn.", streaming: true },
-  ],
-  sessions: [
-    { id: "a1f3", title: "start_turn audit", active: true, when: "now" },
-    { id: "9c20", title: "fff profile wire", active: false, when: "2h" },
-    { id: "44be", title: "handoff packet", active: false, when: "yday" },
-  ],
-  profiles: ["base", "search", "implement"],
-  activity: [
-    { t: "0.0s", e: "turn_start" },
-    { t: "0.2s", e: "tool fff_search" },
-    { t: "1.1s", e: "tool read" },
-    { t: "1.4s", e: "delta ×48" },
-  ],
-  slashes: ["/help", "/model", "/profile", "/rewind", "/handoff", "/usage"],
-};
-
-const VARIANTS = [
-  {
-    key: "A",
-    name: "Classic stack",
-    blurb: "Pi/Claude-like: thin top strip, transcript, bottom input. Default daily-driver shape.",
-    points: [
-      "Familiar coding-agent layout",
-      "Max transcript height",
-      "Tools inline (folded)",
-      "Lowest learning curve",
-    ],
-  },
-  {
-    key: "B",
-    name: "Three-pane IDE",
-    blurb: "Sessions/profiles left, chat center, live activity right. Power-user density.",
-    points: [
-      "Session graph visible",
-      "Profile switch without slash-only",
-      "Activity rail = event bus made visible",
-      "Costs horizontal space",
-    ],
-  },
-  {
-    key: "C",
-    name: "Command center",
-    blurb: "Small transcript, large input + always-on slash dock. Input-first workshop.",
-    points: [
-      "Multiline / paste hero zone",
-      "Slash discoverability maxed",
-      "Transcript is secondary log",
-      "Best if you steer a lot",
-    ],
-  },
-  {
-    key: "D",
-    name: "Minimal zen",
-    blurb: "Narrow measure, almost no chrome. Speed/minimal UX philosophy taken literally.",
-    points: [
-      "On-brand with refusal of clutter",
-      "Reading comfort (68ch)",
-      "Status almost invisible until needed",
-      "May feel 'unfinished' without polish",
-    ],
-  },
-  {
-    key: "E",
-    name: "Dashboard header",
-    blurb: "Fat metric cards (model/profile/tokens/status), then stream + dock with slash hints.",
-    points: [
-      "Tokens/status always glanceable",
-      "Running state hard to miss",
-      "More chrome than zen",
-      "Good handoff/usage storytelling",
-    ],
-  },
-];
-
-function esc(s) {
-  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-}
-
-function renderMessages(opts = {}) {
-  const { compactTools = false, zen = false } = opts;
-  return MOCK.messages.map((m) => {
-    if (m.kind === "user") {
-      return `<div class="msg user"><div class="role">you</div><div class="body">${esc(m.body)}</div></div>`;
-    }
-    if (m.kind === "tool") {
-      if (compactTools && m.folded) {
-        return `<div class="msg tool"><div class="tool-head"><span class="tag">tool</span><span>${esc(m.name)}</span><span class="tag">${esc(m.tag)}</span><span class="fold">▸ ${esc(m.body)}</span></div></div>`;
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PROTOTYPE — Arvo TUI variants</title>
+    <style>
+      /* PROTOTYPE throwaway — not production Arvo UI */
+      :root {
+        --bg: #0b0f14;
+        --panel: #121820;
+        --panel2: #1a222d;
+        --border: #2a3544;
+        --text: #e6edf5;
+        --muted: #8b9bb0;
+        --accent: #6eb5ff;
+        --accent2: #8bd5a0;
+        --warn: #e0b44f;
+        --err: #f07178;
+        --user: #c4b5fd;
+        --tool: #5c6b7a;
+        --mono:
+          "JetBrains Mono", "SF Mono", "Fira Code", ui-monospace, monospace;
+        --sans: "IBM Plex Sans", system-ui, sans-serif;
       }
-      return `<div class="msg tool"><div class="tool-head"><span class="tag">tool</span><span>${esc(m.name)}</span><span class="tag">${esc(m.tag)}</span></div><div class="body dim">${esc(m.body)}</div></div>`;
-    }
-    const stream = m.streaming ? " cursor-blink" : "";
-    return `<div class="msg asst"><div class="role">arvo</div><div class="body${stream}">${esc(m.body)}</div></div>`;
-  }).join("");
-}
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #06080c;
+        color: var(--text);
+        font-family: var(--sans);
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+        padding-bottom: 72px;
+      }
 
-function stripHTML(s) {
-  const st = s || MOCK.strip;
-  return `
+      .proto-banner {
+        background: #3d2a00;
+        color: #ffd27a;
+        font-size: 12px;
+        padding: 8px 16px;
+        letter-spacing: 0.02em;
+        border-bottom: 1px solid #6a4f12;
+      }
+      .proto-banner code {
+        background: rgba(0, 0, 0, 0.25);
+        padding: 1px 6px;
+        border-radius: 4px;
+      }
+      .proto-banner a {
+        color: #ffe6a8;
+      }
+
+      .stage {
+        flex: 1;
+        display: flex;
+        align-items: stretch;
+        justify-content: center;
+        padding: 20px;
+        gap: 16px;
+      }
+
+      /* Outer terminal chrome */
+      .term {
+        width: min(1100px, 100%);
+        height: min(720px, calc(100vh - 120px));
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        font-family: var(--mono);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .term-titlebar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        background: #0e131a;
+        border-bottom: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 12px;
+        font-family: var(--sans);
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+      }
+      .dot.r {
+        background: #ff5f57;
+      }
+      .dot.y {
+        background: #febc2e;
+      }
+      .dot.g {
+        background: #28c840;
+      }
+      .term-titlebar .path {
+        margin-left: 8px;
+        flex: 1;
+      }
+      .term-body {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+      .accent {
+        color: var(--accent);
+      }
+      .ok {
+        color: var(--accent2);
+      }
+      .warn {
+        color: var(--warn);
+      }
+      .err {
+        color: var(--err);
+      }
+      .user {
+        color: var(--user);
+      }
+      .dim {
+        opacity: 0.75;
+      }
+
+      /* Shared message bits */
+      .msg {
+        padding: 8px 14px;
+        border-bottom: 1px solid transparent;
+      }
+      .msg .role {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 4px;
+      }
+      .msg.user .role {
+        color: var(--user);
+      }
+      .msg.asst .role {
+        color: var(--accent2);
+      }
+      .msg.tool {
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .msg.tool .role {
+        color: var(--tool);
+      }
+      .msg .body {
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .tool-head {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        color: var(--tool);
+      }
+      .tool-head .tag {
+        font-size: 10px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 0 6px;
+        color: var(--muted);
+      }
+      .fold {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 4px;
+      }
+      .cursor-blink::after {
+        content: "▌";
+        color: var(--accent);
+        animation: blink 1s step-end infinite;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0;
+        }
+      }
+
+      .input-box {
+        border-top: 1px solid var(--border);
+        background: var(--panel);
+        padding: 10px 12px;
+      }
+      .input-box .prompt-row {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+      }
+      .input-box .gt {
+        color: var(--accent);
+        user-select: none;
+      }
+      .input-box .fake-input {
+        flex: 1;
+        min-height: 44px;
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--bg);
+        padding: 8px 10px;
+      }
+      .input-box .hint {
+        margin-top: 6px;
+        font-size: 11px;
+        color: var(--muted);
+        font-family: var(--sans);
+      }
+
+      .strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 14px;
+        align-items: center;
+        padding: 6px 12px;
+        background: var(--panel2);
+        border-bottom: 1px solid var(--border);
+        font-size: 12px;
+        color: var(--muted);
+        font-family: var(--sans);
+      }
+      .strip .pill {
+        display: inline-flex;
+        gap: 6px;
+        align-items: center;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--border);
+      }
+      .strip .pill b {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .strip .run {
+        color: var(--warn);
+      }
+      .strip .idle {
+        color: var(--accent2);
+      }
+
+      .transcript {
+        flex: 1;
+        overflow: auto;
+        min-height: 0;
+      }
+
+      /* ===== VARIANT A: Classic stack ===== */
+      .va {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+      .va .brand-line {
+        padding: 10px 14px 0;
+        font-family: var(--sans);
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .va .brand-line strong {
+        color: var(--text);
+      }
+
+      /* ===== VARIANT B: Three-pane IDE ===== */
+      .vb {
+        display: grid;
+        grid-template-columns: 200px 1fr 240px;
+        grid-template-rows: auto 1fr auto;
+        height: 100%;
+      }
+      .vb .strip {
+        grid-column: 1 / -1;
+      }
+      .vb .side,
+      .vb .rail {
+        background: #0d1218;
+        border-right: 1px solid var(--border);
+        padding: 10px 8px;
+        font-family: var(--sans);
+        font-size: 12px;
+        overflow: auto;
+      }
+      .vb .rail {
+        border-right: 0;
+        border-left: 1px solid var(--border);
+      }
+      .vb .side h4,
+      .vb .rail h4 {
+        margin: 0 0 8px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }
+      .vb .nav-item {
+        padding: 6px 8px;
+        border-radius: 6px;
+        margin-bottom: 2px;
+        cursor: default;
+      }
+      .vb .nav-item.active {
+        background: var(--panel2);
+        color: var(--accent);
+      }
+      .vb .nav-item .sub {
+        display: block;
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .vb .center {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+      }
+      .vb .input-box {
+        grid-column: 2 / -1;
+      }
+      .vb .activity {
+        padding: 6px 8px;
+        margin-bottom: 6px;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid var(--border);
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+
+      /* ===== VARIANT C: Bottom-heavy command center ===== */
+      .vc {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+      .vc .top-meta {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        padding: 8px 12px;
+        font-family: var(--sans);
+        font-size: 11px;
+      }
+      .vc .chip {
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        color: var(--muted);
+      }
+      .vc .chip b {
+        color: var(--text);
+      }
+      .vc .transcript {
+        flex: 1;
+        max-height: 42%;
+      }
+      .vc .cmd {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        border-top: 2px solid var(--accent);
+        background: #0e1520;
+      }
+      .vc .slash-dock {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border);
+        font-family: var(--sans);
+        font-size: 11px;
+      }
+      .vc .slash-dock span {
+        padding: 4px 8px;
+        border-radius: 6px;
+        background: var(--panel2);
+        border: 1px solid var(--border);
+        color: var(--accent);
+      }
+      .vc .big-input {
+        flex: 1;
+        padding: 12px 14px;
+        color: var(--text);
+        overflow: auto;
+      }
+      .vc .footer-keys {
+        padding: 8px 12px;
+        font-size: 11px;
+        color: var(--muted);
+        font-family: var(--sans);
+        border-top: 1px solid var(--border);
+      }
+      .vc .key {
+        color: var(--text);
+        background: var(--panel2);
+        border: 1px solid var(--border);
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-family: var(--mono);
+        font-size: 10px;
+      }
+
+      /* ===== VARIANT D: Minimal zen ===== */
+      .vd {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        background: #090c10;
+      }
+      .vd .ghost-strip {
+        text-align: center;
+        padding: 10px;
+        font-size: 11px;
+        color: #556274;
+        font-family: var(--sans);
+        letter-spacing: 0.04em;
+      }
+      .vd .measure {
+        flex: 1;
+        max-width: 68ch;
+        margin: 0 auto;
+        width: 100%;
+        overflow: auto;
+        padding: 8px 16px 24px;
+      }
+      .vd .msg {
+        border: 0;
+        padding: 14px 4px;
+      }
+      .vd .msg.user {
+        border-left: 2px solid var(--user);
+        padding-left: 12px;
+      }
+      .vd .msg.asst {
+        border-left: 2px solid transparent;
+        padding-left: 12px;
+      }
+      .vd .msg.tool {
+        background: transparent;
+        opacity: 0.55;
+        font-size: 12px;
+      }
+      .vd .zen-input {
+        max-width: 68ch;
+        margin: 0 auto 20px;
+        width: calc(100% - 32px);
+        border: 0;
+        border-bottom: 1px solid #2a3544;
+        background: transparent;
+        padding: 12px 4px;
+        color: var(--text);
+        font-family: var(--mono);
+      }
+      .vd .zen-hint {
+        text-align: center;
+        font-size: 11px;
+        color: #445060;
+        font-family: var(--sans);
+        margin-bottom: 12px;
+      }
+
+      /* ===== VARIANT E: Fat dashboard header ===== */
+      .ve {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+      .ve .dash {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+        padding: 12px;
+        background: linear-gradient(180deg, #141c28, #0b0f14);
+        border-bottom: 1px solid var(--border);
+        font-family: var(--sans);
+      }
+      .ve .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+      }
+      .ve .card .lbl {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        color: var(--muted);
+      }
+      .ve .card .val {
+        font-size: 15px;
+        font-weight: 650;
+        margin-top: 4px;
+        color: var(--text);
+        font-family: var(--mono);
+      }
+      .ve .card .sub {
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+      .ve .card.live {
+        border-color: #4a6a30;
+        background: #121a14;
+      }
+      .ve .card.live .val {
+        color: var(--warn);
+      }
+      .ve .dock {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        align-items: end;
+        padding: 10px 12px;
+        border-top: 1px solid var(--border);
+        background: var(--panel);
+      }
+      .ve .slash-hints {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-family: var(--sans);
+        font-size: 11px;
+        color: var(--muted);
+        padding-bottom: 4px;
+      }
+      .ve .slash-hints code {
+        color: var(--accent);
+      }
+
+      /* Notes panel beside term on wide screens */
+      .notes {
+        width: 240px;
+        flex-shrink: 0;
+        font-size: 13px;
+        color: var(--muted);
+        font-family: var(--sans);
+        line-height: 1.5;
+      }
+      .notes h2 {
+        margin: 0 0 8px;
+        font-size: 14px;
+        color: var(--text);
+      }
+      .notes ul {
+        margin: 0;
+        padding-left: 1.1rem;
+      }
+      .notes li {
+        margin-bottom: 6px;
+      }
+      @media (max-width: 980px) {
+        .notes {
+          display: none;
+        }
+      }
+
+      /* Floating prototype switcher */
+      .switcher {
+        position: fixed;
+        left: 50%;
+        bottom: 16px;
+        transform: translateX(-50%);
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        background: #f4f6f8;
+        color: #111;
+        border-radius: 999px;
+        padding: 6px 8px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+        font-family: var(--sans);
+        font-size: 13px;
+        font-weight: 600;
+        border: 2px solid #111;
+      }
+      .switcher button {
+        border: 0;
+        background: #111;
+        color: #fff;
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        cursor: pointer;
+        font-size: 16px;
+        line-height: 1;
+      }
+      .switcher button:hover {
+        background: #333;
+      }
+      .switcher .label {
+        min-width: 220px;
+        text-align: center;
+        padding: 0 10px;
+        user-select: none;
+      }
+      .switcher .label small {
+        display: block;
+        font-weight: 500;
+        color: #555;
+        font-size: 11px;
+        margin-top: 1px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="proto-banner">
+      <strong>PROTOTYPE — throwaway.</strong>
+      Arvo TUI visual variants for design selection. Not production. Switch with
+      the bar below or <code>←</code>/<code>→</code>. Open:
+      <code>arvo/prototype/tui-variants/index.html</code>
+    </div>
+
+    <div class="stage">
+      <div class="term" id="term">
+        <div class="term-titlebar">
+          <span class="dot r"></span><span class="dot y"></span
+          ><span class="dot g"></span>
+          <span class="path"
+            >arvo · ~/projects/coding-agent-harness · prototype</span
+          >
+          <span id="term-variant-tag">A</span>
+        </div>
+        <div class="term-body" id="mount"></div>
+      </div>
+      <aside class="notes" id="notes"></aside>
+    </div>
+
+    <div class="switcher" id="switcher" aria-label="Prototype variant switcher">
+      <button type="button" id="prev" title="Previous variant">←</button>
+      <div class="label" id="switcher-label">A — Classic stack</div>
+      <button type="button" id="next" title="Next variant">→</button>
+    </div>
+
+    <script>
+      /* PROTOTYPE: mock transcript data shared across variants */
+      const MOCK = {
+        strip: {
+          model: "grok-3",
+          profile: "search",
+          tokens: "12.4k",
+          status: "running",
+          tool: "bash",
+        },
+        messages: [
+          {
+            kind: "user",
+            body: "Find where Session.start_turn is called and why Repl bypasses it.",
+          },
+          {
+            kind: "asst",
+            body: "I'll search the codebase for start_turn and the Repl chat path.",
+          },
+          {
+            kind: "tool",
+            name: "fff_search",
+            tag: "ok",
+            body: "12 hits · arvo/lib/arvo/session.ex, repl.ex, …",
+            folded: true,
+          },
+          {
+            kind: "tool",
+            name: "read",
+            tag: "ok",
+            body: "arvo/lib/arvo/repl.ex:189  case Arvo.Agent.run(...)",
+            folded: false,
+          },
+          {
+            kind: "asst",
+            body: "Product chat calls Agent.run inline on the Repl process. Session.start_turn owns cancel/steering, so Esc is second-class on the path you actually run.\n\nFix: route every interactive turn through Session.start_turn.",
+            streaming: true,
+          },
+        ],
+        sessions: [
+          { id: "a1f3", title: "start_turn audit", active: true, when: "now" },
+          { id: "9c20", title: "fff profile wire", active: false, when: "2h" },
+          { id: "44be", title: "handoff packet", active: false, when: "yday" },
+        ],
+        profiles: ["base", "search", "implement"],
+        activity: [
+          { t: "0.0s", e: "turn_start" },
+          { t: "0.2s", e: "tool fff_search" },
+          { t: "1.1s", e: "tool read" },
+          { t: "1.4s", e: "delta ×48" },
+        ],
+        slashes: [
+          "/help",
+          "/model",
+          "/profile",
+          "/rewind",
+          "/handoff",
+          "/usage",
+        ],
+      };
+
+      const VARIANTS = [
+        {
+          key: "A",
+          name: "Classic stack",
+          blurb:
+            "Pi/Claude-like: thin top strip, transcript, bottom input. Default daily-driver shape.",
+          points: [
+            "Familiar coding-agent layout",
+            "Max transcript height",
+            "Tools inline (folded)",
+            "Lowest learning curve",
+          ],
+        },
+        {
+          key: "B",
+          name: "Three-pane IDE",
+          blurb:
+            "Sessions/profiles left, chat center, live activity right. Power-user density.",
+          points: [
+            "Session graph visible",
+            "Profile switch without slash-only",
+            "Activity rail = event bus made visible",
+            "Costs horizontal space",
+          ],
+        },
+        {
+          key: "C",
+          name: "Command center",
+          blurb:
+            "Small transcript, large input + always-on slash dock. Input-first workshop.",
+          points: [
+            "Multiline / paste hero zone",
+            "Slash discoverability maxed",
+            "Transcript is secondary log",
+            "Best if you steer a lot",
+          ],
+        },
+        {
+          key: "D",
+          name: "Minimal zen",
+          blurb:
+            "Narrow measure, almost no chrome. Speed/minimal UX philosophy taken literally.",
+          points: [
+            "On-brand with refusal of clutter",
+            "Reading comfort (68ch)",
+            "Status almost invisible until needed",
+            "May feel 'unfinished' without polish",
+          ],
+        },
+        {
+          key: "E",
+          name: "Dashboard header",
+          blurb:
+            "Fat metric cards (model/profile/tokens/status), then stream + dock with slash hints.",
+          points: [
+            "Tokens/status always glanceable",
+            "Running state hard to miss",
+            "More chrome than zen",
+            "Good handoff/usage storytelling",
+          ],
+        },
+      ];
+
+      function esc(s) {
+        return String(s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+
+      function renderMessages(opts = {}) {
+        const { compactTools = false, zen = false } = opts;
+        return MOCK.messages
+          .map((m) => {
+            if (m.kind === "user") {
+              return `<div class="msg user"><div class="role">you</div><div class="body">${esc(m.body)}</div></div>`;
+            }
+            if (m.kind === "tool") {
+              if (compactTools && m.folded) {
+                return `<div class="msg tool"><div class="tool-head"><span class="tag">tool</span><span>${esc(m.name)}</span><span class="tag">${esc(m.tag)}</span><span class="fold">▸ ${esc(m.body)}</span></div></div>`;
+              }
+              return `<div class="msg tool"><div class="tool-head"><span class="tag">tool</span><span>${esc(m.name)}</span><span class="tag">${esc(m.tag)}</span></div><div class="body dim">${esc(m.body)}</div></div>`;
+            }
+            const stream = m.streaming ? " cursor-blink" : "";
+            return `<div class="msg asst"><div class="role">arvo</div><div class="body${stream}">${esc(m.body)}</div></div>`;
+          })
+          .join("");
+      }
+
+      function stripHTML(s) {
+        const st = s || MOCK.strip;
+        return `
     <div class="strip">
       <span class="pill"><span class="muted">model</span> <b>${esc(st.model)}</b></span>
       <span class="pill"><span class="muted">profile</span> <b>${esc(st.profile)}</b></span>
@@ -424,10 +812,10 @@ function stripHTML(s) {
       <span class="pill ${st.status === "running" ? "run" : "idle"}"><b>${esc(st.status)}</b>${st.tool ? " · " + esc(st.tool) : ""}</span>
       <span class="muted" style="margin-left:auto">Esc cancel · ↑ history</span>
     </div>`;
-}
+      }
 
-function inputHTML(hint) {
-  return `
+      function inputHTML(hint) {
+        return `
     <div class="input-box">
       <div class="prompt-row">
         <span class="gt">❯</span>
@@ -435,29 +823,38 @@ function inputHTML(hint) {
       </div>
       <div class="hint">${hint || "Enter send · Shift+Enter newline · / slash · Esc cancel turn"}</div>
     </div>`;
-}
+      }
 
-const renderers = {
-  A() {
-    return `
+      const renderers = {
+        A() {
+          return `
       <div class="va">
         <div class="brand-line"><strong>arvo</strong> <span class="muted">// daily driver · classic stack</span></div>
         ${stripHTML()}
         <div class="transcript">${renderMessages({ compactTools: true })}</div>
         ${inputHTML()}
       </div>`;
-  },
-  B() {
-    const sessions = MOCK.sessions.map((s) =>
-      `<div class="nav-item ${s.active ? "active" : ""}">${esc(s.title)}<span class="sub">${esc(s.id)} · ${esc(s.when)}</span></div>`
-    ).join("");
-    const profiles = MOCK.profiles.map((p) =>
-      `<div class="nav-item ${p === "search" ? "active" : ""}">${esc(p)}</div>`
-    ).join("");
-    const act = MOCK.activity.map((a) =>
-      `<div class="activity"><span class="muted">${esc(a.t)}</span> ${esc(a.e)}</div>`
-    ).join("");
-    return `
+        },
+        B() {
+          const sessions = MOCK.sessions
+            .map(
+              (s) =>
+                `<div class="nav-item ${s.active ? "active" : ""}">${esc(s.title)}<span class="sub">${esc(s.id)} · ${esc(s.when)}</span></div>`,
+            )
+            .join("");
+          const profiles = MOCK.profiles
+            .map(
+              (p) =>
+                `<div class="nav-item ${p === "search" ? "active" : ""}">${esc(p)}</div>`,
+            )
+            .join("");
+          const act = MOCK.activity
+            .map(
+              (a) =>
+                `<div class="activity"><span class="muted">${esc(a.t)}</span> ${esc(a.e)}</div>`,
+            )
+            .join("");
+          return `
       <div class="vb">
         ${stripHTML()}
         <aside class="side">
@@ -477,10 +874,12 @@ const renderers = {
         </aside>
         ${inputHTML("Input spans chat + events · /profile from left rail or slash")}
       </div>`;
-  },
-  C() {
-    const slashes = MOCK.slashes.map((s) => `<span>${esc(s)}</span>`).join("");
-    return `
+        },
+        C() {
+          const slashes = MOCK.slashes
+            .map((s) => `<span>${esc(s)}</span>`)
+            .join("");
+          return `
       <div class="vc">
         <div class="top-meta">
           <span class="chip">model <b>grok-3</b></span>
@@ -504,19 +903,21 @@ const renderers = {
           </div>
         </div>
       </div>`;
-  },
-  D() {
-    return `
+        },
+        D() {
+          return `
       <div class="vd">
         <div class="ghost-strip">grok-3 · search · 12.4k · running</div>
         <div class="measure">${renderMessages({ compactTools: true, zen: true })}</div>
         <div class="zen-input">continue — show the Session API sketch_</div>
         <div class="zen-hint">esc cancel · / for commands · almost no chrome</div>
       </div>`;
-  },
-  E() {
-    const hints = MOCK.slashes.map((s) => `<div><code>${esc(s)}</code></div>`).join("");
-    return `
+        },
+        E() {
+          const hints = MOCK.slashes
+            .map((s) => `<div><code>${esc(s)}</code></div>`)
+            .join("");
+          return `
       <div class="ve">
         <div class="dash">
           <div class="card"><div class="lbl">Model</div><div class="val">grok-3</div><div class="sub">xAI · /model</div></div>
@@ -534,55 +935,67 @@ const renderers = {
           <div class="slash-hints">${hints}</div>
         </div>
       </div>`;
-  },
-};
+        },
+      };
 
-function getVariantKey() {
-  const p = new URLSearchParams(location.search);
-  const v = (p.get("variant") || "A").toUpperCase();
-  return VARIANTS.some((x) => x.key === v) ? v : "A";
-}
+      function getVariantKey() {
+        const p = new URLSearchParams(location.search);
+        const v = (p.get("variant") || "A").toUpperCase();
+        return VARIANTS.some((x) => x.key === v) ? v : "A";
+      }
 
-function setVariantKey(key) {
-  const url = new URL(location.href);
-  url.searchParams.set("variant", key);
-  history.replaceState(null, "", url);
-  paint();
-}
+      function setVariantKey(key) {
+        const url = new URL(location.href);
+        url.searchParams.set("variant", key);
+        history.replaceState(null, "", url);
+        paint();
+      }
 
-function cycle(dir) {
-  const keys = VARIANTS.map((v) => v.key);
-  const i = keys.indexOf(getVariantKey());
-  const next = keys[(i + dir + keys.length) % keys.length];
-  setVariantKey(next);
-}
+      function cycle(dir) {
+        const keys = VARIANTS.map((v) => v.key);
+        const i = keys.indexOf(getVariantKey());
+        const next = keys[(i + dir + keys.length) % keys.length];
+        setVariantKey(next);
+      }
 
-function paint() {
-  const key = getVariantKey();
-  const meta = VARIANTS.find((v) => v.key === key);
-  document.getElementById("mount").innerHTML = renderers[key]();
-  document.getElementById("term-variant-tag").textContent = key;
-  document.getElementById("switcher-label").innerHTML =
-    `${key} — ${esc(meta.name)}<small>${esc(meta.blurb)}</small>`;
-  document.getElementById("notes").innerHTML = `
+      function paint() {
+        const key = getVariantKey();
+        const meta = VARIANTS.find((v) => v.key === key);
+        document.getElementById("mount").innerHTML = renderers[key]();
+        document.getElementById("term-variant-tag").textContent = key;
+        document.getElementById("switcher-label").innerHTML =
+          `${key} — ${esc(meta.name)}<small>${esc(meta.blurb)}</small>`;
+        document.getElementById("notes").innerHTML = `
     <h2>${esc(meta.name)}</h2>
     <p>${esc(meta.blurb)}</p>
     <ul>${meta.points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>
     <p style="margin-top:16px;font-size:12px">State: <code>?variant=${key}</code></p>
     <p style="font-size:12px">Keys: <code>←</code> <code>→</code> cycle variants</p>
   `;
-}
+      }
 
-document.getElementById("prev").onclick = () => cycle(-1);
-document.getElementById("next").onclick = () => cycle(1);
-document.addEventListener("keydown", (e) => {
-  const t = e.target;
-  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
-  if (e.key === "ArrowLeft") { e.preventDefault(); cycle(-1); }
-  if (e.key === "ArrowRight") { e.preventDefault(); cycle(1); }
-});
+      document.getElementById("prev").onclick = () => cycle(-1);
+      document.getElementById("next").onclick = () => cycle(1);
+      document.addEventListener("keydown", (e) => {
+        const t = e.target;
+        if (
+          t &&
+          (t.tagName === "INPUT" ||
+            t.tagName === "TEXTAREA" ||
+            t.isContentEditable)
+        )
+          return;
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          cycle(-1);
+        }
+        if (e.key === "ArrowRight") {
+          e.preventDefault();
+          cycle(1);
+        }
+      });
 
-paint();
-</script>
-</body>
+      paint();
+    </script>
+  </body>
 </html>

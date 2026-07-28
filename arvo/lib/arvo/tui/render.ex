@@ -4,6 +4,7 @@ defmodule Arvo.TUI.Render do
   No model calls — state in, ANSI string out.
   """
 
+  alias Arvo.TUI.Markdown
   alias Arvo.TUI.Theme
 
   # Visual width of role prefixes ("you  " / "arvo ") — ANSI not counted.
@@ -125,11 +126,11 @@ defmodule Arvo.TUI.Render do
   end
 
   defp wrap_entry(%{kind: :assistant, text: t, streaming: true}, width) do
-    wrap_role(Theme.accent("arvo") <> " ", String.duplicate(" ", @role_pad), to_string(t), width, true)
+    wrap_role_md(Theme.accent("arvo") <> " ", String.duplicate(" ", @role_pad), to_string(t), width, true)
   end
 
   defp wrap_entry(%{kind: :assistant, text: t}, width) do
-    wrap_role(Theme.accent("arvo") <> " ", String.duplicate(" ", @role_pad), to_string(t), width, false)
+    wrap_role_md(Theme.accent("arvo") <> " ", String.duplicate(" ", @role_pad), to_string(t), width, false)
   end
 
   defp wrap_entry(%{kind: :tool, text: t, name: n} = entry, width) do
@@ -180,6 +181,17 @@ defmodule Arvo.TUI.Render do
   defp wrap_role(first_prefix, cont_prefix, text, width, streaming?) do
     content_w = max(width - @role_pad, 1)
     lines = wrap_text(text, content_w)
+    apply_role_prefixes(first_prefix, cont_prefix, lines, streaming?)
+  end
+
+  # Assistant path: Marcli markdown → ANSI, then role-pad. Markdown owns wrap width.
+  defp wrap_role_md(first_prefix, cont_prefix, text, width, streaming?) do
+    content_w = max(width - @role_pad, 1)
+    lines = Markdown.format_lines(text, content_w)
+    apply_role_prefixes(first_prefix, cont_prefix, lines, streaming?)
+  end
+
+  defp apply_role_prefixes(first_prefix, cont_prefix, lines, streaming?) do
     lines = if lines == [], do: [""], else: lines
     last_i = length(lines) - 1
 

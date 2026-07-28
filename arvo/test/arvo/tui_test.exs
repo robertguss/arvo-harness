@@ -758,4 +758,59 @@ defmodule Arvo.TUITest do
     # Always leave tree closed for sibling tests sharing the TUI GenServer
     _ = Arvo.TUI.key(:esc)
   end
+
+  describe "live pane chrome (R11b)" do
+    setup do
+      old = Application.get_env(:arvo, :herdr_adapter)
+      {:ok, _} = Arvo.Herdr.Fake.start_link()
+      Application.put_env(:arvo, :herdr_adapter, Arvo.Herdr.Fake)
+      Arvo.Herdr.Fake.reset()
+      _ = Arvo.Session.teardown_owned_panes(:tui_setup)
+
+      on_exit(fn ->
+        _ = Arvo.Session.teardown_owned_panes(:tui_cleanup)
+        Arvo.Herdr.Fake.stop()
+
+        if old do
+          Application.put_env(:arvo, :herdr_adapter, old)
+        else
+          Application.delete_env(:arvo, :herdr_adapter)
+        end
+      end)
+
+      :ok
+    end
+
+    test "after long_lived return (idle), ghost shows pane command" do
+      {:ok, id} = Arvo.Herdr.split([])
+
+      assert :ok =
+               Arvo.Session.register_pane(%{
+                 pane_id: id,
+                 mode: :long_lived,
+                 command: "mix phx.server",
+                 start_reaper: false
+               })
+
+      :ok = Arvo.TUI.handle_event_sync({:agent_start, %{}})
+      :ok = Arvo.TUI.handle_event_sync({:agent_end, %{}})
+      st = Arvo.TUI.state()
+      assert st.status == :idle
+      assert length(st.live_panes) == 1
+
+      ghost = Arvo.TUI.Render.ghost_line(st, 120)
+      # ANSI-stripped check
+      plain = String.replace(ghost, ~r/\e\[[0-9;]*m/, "")
+      assert plain =~ "pane"
+      assert plain =~ "mix phx.server" or plain =~ "running"
+
+      assert {:ok, _} = Arvo.Session.teardown_owned_panes(:cancel)
+      panes = Arvo.TUI.refresh_live_panes()
+      assert panes == []
+      st = Arvo.TUI.state()
+      ghost2 = Arvo.TUI.Render.ghost_line(st, 120)
+      plain2 = String.replace(ghost2, ~r/\e\[[0-9;]*m/, "")
+      refute plain2 =~ "mix phx.server"
+    end
+  end
 end

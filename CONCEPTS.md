@@ -97,3 +97,31 @@ Product policy that large tool results enter model hot context as stubs by
 default while full bodies land in cold—enforced by the harness, not model
 self-discipline. Fidelity exceptions (small, error, pin, edit targets) keep
 coding usable.
+
+### Agent tile
+
+Arvo’s product surface: the conversation/agent window (Focus transcript,
+tools, Esc, tree). Distinct from workspace chrome. Arvo is one tile, not an
+embedded multi-pane IDE.
+
+### Workspace chrome
+
+Tabs, splits, and sibling terminals owned by Herdr (or a sibling terminal
+outside Herdr). Long-running interactive process UI lives here, not inside
+the agent tile.
+
+### Ephemeral work pane
+
+A Herdr sibling pane Arvo opens for long-running or interactive tool work.
+Not a sticky session shell. Finite jobs close after process exit and capture;
+intentionally long-lived jobs may return a running-state result to the model
+while the pane stays open and Arvo-owned until process exit, Esc, or HEAD
+jump. Esc and HEAD jump explicitly tear down Arvo-owned panes so live
+processes do not outlive abandoned conversation branches.
+
+### Pane tools
+
+First-class tools that wrap Herdr for long-running or interactive work. Tool
+choice vs ordinary `bash` is the product decision (no auto-classifier). Not a
+sub-agent primitive and not in-process background bash. Outside Herdr, pane
+tools fall back to labeled blocking bash (no joinable pane, no hidden job).

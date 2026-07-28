@@ -82,7 +82,7 @@ defmodule Arvo.Session do
 
   @doc "Cancel current turn Task (brutal kill). No success persist; writes cancel leaf."
   def cancel_turn do
-    GenServer.call(__MODULE__, :cancel_turn)
+    GenServer.call(__MODULE__, :cancel_turn, 30_000)
   end
 
   def await_turn(timeout \\ @default_await_timeout) do
@@ -113,7 +113,37 @@ defmodule Arvo.Session do
   Jump to current HEAD is a no-op (no new head_move).
   """
   def jump_to(entry_id) when is_binary(entry_id) do
-    GenServer.call(__MODULE__, {:jump_to, entry_id})
+    GenServer.call(__MODULE__, {:jump_to, entry_id}, 30_000)
+  end
+
+  @doc """
+  Register an Arvo-owned Herdr pane for Esc/HEAD teardown (KTD3).
+
+  attrs: `:pane_id` (required), `:mode` (`:finite` | `:long_lived`), `:command`,
+  `:turn_id`, `:start_reaper` (default true for long_lived).
+  """
+  def register_pane(attrs) when is_map(attrs) do
+    GenServer.call(__MODULE__, {:register_pane, attrs})
+  end
+
+  @doc "Unregister a pane after clean close (no Herdr kill)."
+  def unregister_pane(pane_id) when is_binary(pane_id) do
+    GenServer.call(__MODULE__, {:unregister_pane, pane_id})
+  end
+
+  @doc "List Arvo-owned panes currently registered (for TUI live status)."
+  def owned_panes do
+    GenServer.call(__MODULE__, :owned_panes)
+  end
+
+  @doc """
+  Explicitly kill/close all registered Arvo-owned panes with bounded I/O.
+
+  reason: `:cancel` | `:jump` | `:idle_esc` | atom. Returns
+  `{:ok, results}` where each result has `:pane_id`, `:command`, `:status`.
+  """
+  def teardown_owned_panes(reason \\ :cancel) do
+    GenServer.call(__MODULE__, {:teardown_owned_panes, reason}, 30_000)
   end
 
   @doc "Current HEAD entry id (explicit pointer, not necessarily file tip)."
@@ -226,7 +256,9 @@ defmodule Arvo.Session do
        turn_prior_len: nil,
        turn_generation: 0,
        cancelled_generation: nil,
-       tokens: Arvo.Session.Tokens.new()
+       tokens: Arvo.Session.Tokens.new(),
+       # Arvo-owned Herdr panes (KTD3): pane_id => meta map
+       owned_panes: %{}
      }
      |> put_attention_defaults()}
   end
@@ -257,6 +289,8 @@ defmodule Arvo.Session do
 
       {:ok, path, meta} = Arvo.Session.Store.create(cwd, opts)
 
+      {_results, state} = do_teardown_owned_panes(state, :open_new)
+
       state =
         %{
           state
@@ -267,7 +301,8 @@ defmodule Arvo.Session do
             history: [meta],
             model: meta["model"],
             profile: meta["profile"],
-            tokens: Arvo.Session.Tokens.new()
+            tokens: Arvo.Session.Tokens.new(),
+            owned_panes: %{}
         }
         |> put_attention_defaults()
 
@@ -359,15 +394,84 @@ defmodule Arvo.Session do
 
           entry ->
             if Arvo.Session.Store.jumpable_entry?(entry) do
+              # Tear down still-open Arvo-owned panes before HEAD rewrite (R13/AE5).
+              {teardown_results, state} = do_teardown_owned_panes(state, :jump)
+
               case apply_head_move(state, entry_id) do
-                {:ok, state, result} -> {:reply, {:ok, result}, state}
-                {:error, reason} -> {:reply, {:error, reason}, state}
+                {:ok, state, result} ->
+                  result = Map.put(result, :pane_teardown, teardown_results)
+                  {:reply, {:ok, result}, state}
+
+                {:error, reason} ->
+                  {:reply, {:error, reason}, state}
               end
             else
               {:reply, {:error, :not_jumpable}, state}
             end
         end
     end
+  end
+
+  def handle_call({:register_pane, attrs}, _from, state) do
+    pane_id = attrs[:pane_id] || attrs["pane_id"]
+
+    if not is_binary(pane_id) or pane_id == "" do
+      {:reply, {:error, :invalid_pane_id}, state}
+    else
+      mode = normalize_pane_mode(attrs[:mode] || attrs["mode"] || :finite)
+      command = attrs[:command] || attrs["command"] || ""
+      turn_id = attrs[:turn_id] || attrs["turn_id"]
+      start_reaper? = attrs[:start_reaper] || attrs["start_reaper"]
+
+      start_reaper? =
+        if is_nil(start_reaper?), do: mode == :long_lived, else: start_reaper? in [true, "true"]
+
+      reaper =
+        if start_reaper? do
+          spawn_pane_reaper(pane_id)
+        else
+          nil
+        end
+
+      meta = %{
+        pane_id: pane_id,
+        mode: mode,
+        command: command,
+        turn_id: turn_id,
+        reaper: reaper,
+        registered_at: System.system_time(:millisecond)
+      }
+
+      state = put_in(state, [:owned_panes, pane_id], meta)
+      {:reply, :ok, state}
+    end
+  end
+
+  def handle_call({:unregister_pane, pane_id}, _from, state) do
+    case Map.pop(state.owned_panes, pane_id) do
+      {nil, _} ->
+        {:reply, :ok, state}
+
+      {meta, panes} ->
+        stop_reaper(meta[:reaper])
+        {:reply, :ok, %{state | owned_panes: panes}}
+    end
+  end
+
+  def handle_call(:owned_panes, _from, state) do
+    list =
+      state.owned_panes
+      |> Map.values()
+      |> Enum.map(fn m ->
+        Map.take(m, [:pane_id, :mode, :command, :turn_id, :registered_at])
+      end)
+
+    {:reply, list, state}
+  end
+
+  def handle_call({:teardown_owned_panes, reason}, _from, state) do
+    {results, state} = do_teardown_owned_panes(state, reason)
+    {:reply, {:ok, results}, state}
   end
 
   def handle_call({:rewind, steps}, _from, state) do
@@ -649,6 +753,10 @@ defmodule Arvo.Session do
   end
 
   def handle_call(:cancel_turn, _from, state) do
+    # Always tear down Arvo-owned panes when registry non-empty (R12), even if
+    # turn_task is nil (idle long_lived panes after running-state return).
+    {_pane_results, state} = do_teardown_owned_panes(state, :cancel)
+
     case state.turn_task do
       %Task{pid: pid} = task ->
         # If the Task already finished, prefer success persist over a cancel leaf.
@@ -975,6 +1083,174 @@ defmodule Arvo.Session do
     match?(%Task{pid: pid} when is_pid(pid), state.turn_task) and
       Process.alive?(state.turn_task.pid)
   end
+
+  # --- Arvo-owned pane registry (KTD3/KTD7/KTD8) ---
+
+  @pane_close_timeout_ms 2_000
+  @pane_reaper_poll_ms 500
+
+  defp normalize_pane_mode(:long_lived), do: :long_lived
+  defp normalize_pane_mode("long_lived"), do: :long_lived
+  defp normalize_pane_mode(_), do: :finite
+
+  defp do_teardown_owned_panes(state, reason) do
+    panes = Map.values(state.owned_panes || %{})
+
+    if panes == [] do
+      {[], state}
+    else
+      adapter = Arvo.Herdr.adapter()
+
+      results =
+        Enum.map(panes, fn meta ->
+          stop_reaper(meta[:reaper])
+          pane_id = meta.pane_id
+          command = meta[:command] || ""
+
+          status =
+            try do
+              task = Task.async(fn -> adapter.close(pane_id) end)
+
+              case Task.yield(task, @pane_close_timeout_ms) || Task.shutdown(task, :brutal_kill) do
+                {:ok, :ok} ->
+                  :closed
+
+                {:ok, {:error, msg}} ->
+                  Logger.warning("Arvo.Session pane close error #{pane_id}: #{msg}")
+                  :error
+
+                _ ->
+                  Logger.warning("Arvo.Session pane close timeout #{pane_id}")
+                  :timeout
+              end
+            catch
+              :exit, reason ->
+                Logger.warning(
+                  "Arvo.Session pane close exit #{pane_id}: #{inspect(reason)}"
+                )
+
+                :error
+            end
+
+          %{pane_id: pane_id, command: command, status: status, reason: reason}
+        end)
+
+      note = format_pane_teardown_note(reason, results)
+      state = append_pane_teardown_note(state, note)
+      Logger.info(note)
+
+      {results, %{state | owned_panes: %{}}}
+    end
+  end
+
+  defp format_pane_teardown_note(reason, results) do
+    cmds =
+      results
+      |> Enum.map(fn r ->
+        cmd = if r.command == "", do: r.pane_id, else: r.command
+        "#{cmd} (#{r.status})"
+      end)
+      |> Enum.join("; ")
+
+    "[arvo: tore down #{length(results)} pane(s) on #{reason}: #{cmds}]"
+  end
+
+  defp append_pane_teardown_note(state, note) when is_binary(note) do
+    if is_binary(state.path) do
+      entry = %{
+        "type" => "message",
+        "role" => "assistant",
+        "content" => note,
+        "parent_id" => state.last_id,
+        "pane_teardown" => true
+      }
+
+      try do
+        written = Arvo.Session.Store.append!(state.path, entry)
+
+        %{
+          state
+          | last_id: written["id"],
+            history: state.history ++ [written]
+        }
+      rescue
+        e ->
+          Logger.warning("Arvo.Session pane teardown note failed: #{Exception.message(e)}")
+          state
+      end
+    else
+      state
+    end
+  end
+
+  defp spawn_pane_reaper(pane_id) when is_binary(pane_id) do
+    parent = self()
+
+    spawn(fn ->
+      pane_reaper_loop(pane_id, parent, 0)
+    end)
+  end
+
+  defp pane_reaper_loop(_pane_id, _session_pid, attempts) when attempts > 86_400 do
+    # ~12h at 500ms — give up quietly
+    :ok
+  end
+
+  defp pane_reaper_loop(pane_id, session_pid, attempts) do
+    Process.sleep(@pane_reaper_poll_ms)
+
+    case Arvo.Herdr.process_info(pane_id) do
+      {:ok, info} ->
+        if pane_process_exited?(info) do
+          _ = Arvo.Herdr.close(pane_id)
+
+          if Process.alive?(session_pid) do
+            # Best-effort unregister; ignore if Session already tore down.
+            try do
+              Arvo.Session.unregister_pane(pane_id)
+            catch
+              :exit, _ -> :ok
+            end
+          end
+        else
+          pane_reaper_loop(pane_id, session_pid, attempts + 1)
+        end
+
+      {:error, _} ->
+        # Pane gone — unregister if still registered
+        if Process.alive?(session_pid) do
+          try do
+            Arvo.Session.unregister_pane(pane_id)
+          catch
+            :exit, _ -> :ok
+          end
+        end
+    end
+  end
+
+  defp pane_process_exited?(%{foreground_processes: procs}) when is_list(procs) do
+    # Exited when only shell-like processes remain (or empty).
+    Enum.all?(procs, fn p ->
+      name = to_string(p["name"] || p[:name] || "")
+      shell_name?(name)
+    end)
+  end
+
+  defp pane_process_exited?(_), do: false
+
+  defp shell_name?(name) do
+    base = String.trim_leading(name, "-")
+    base in ["zsh", "bash", "sh", "fish", "nu", "dash", "ksh", "tcsh", "csh"]
+  end
+
+  defp stop_reaper(nil), do: :ok
+
+  defp stop_reaper(pid) when is_pid(pid) do
+    if Process.alive?(pid), do: Process.exit(pid, :kill)
+    :ok
+  end
+
+  defp stop_reaper(_), do: :ok
 
   # Shared HEAD rewrite used by jump_to (jumpable gate) and rewind (any ancestor).
   # No-op when already at entry_id: returns messages without appending head_move.

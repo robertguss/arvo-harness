@@ -16,6 +16,19 @@ defmodule Arvo.PromptTest do
     assert prompt =~ "read" or prompt =~ "Tools"
   end
 
+  test "system prompt teaches bash vs pane when pane tool present", %{tmp: tmp} do
+    prompt =
+      Arvo.Prompt.assemble(
+        cwd: tmp,
+        tools: Arvo.Tool.core_tools(),
+        date: "2026-07-28"
+      )
+
+    assert prompt =~ "pane" or prompt =~ "Shell vs pane"
+    assert prompt =~ "bash"
+    assert prompt =~ "long_lived" or prompt =~ "Herdr" or prompt =~ "sibling"
+  end
+
   test "missing AGENTS.md omits project block", %{tmp: tmp} do
     prompt = Arvo.Prompt.assemble(cwd: tmp, tools: [])
     refute prompt =~ "Project instructions"

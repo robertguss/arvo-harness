@@ -50,6 +50,11 @@ defmodule Arvo.TUI do
     GenServer.call(__MODULE__, :reset_idle)
   end
 
+  @doc "Refresh live-pane chrome from Session.owned_panes/0 (R11b)."
+  def refresh_live_panes do
+    GenServer.call(__MODULE__, :refresh_live_panes)
+  end
+
   @doc """
   Atomically claim product turn UI state if idle.
 
@@ -113,7 +118,9 @@ defmodule Arvo.TUI do
        focus_idx: nil,
        expand_all: nil,
        palette: nil,
-       tree: nil
+       tree: nil,
+       # Arvo-owned pane live-job chrome (R11b) — refreshed from Session
+       live_panes: []
      }}
   end
 
@@ -155,8 +162,14 @@ defmodule Arvo.TUI do
          buffer: "",
          last_error: nil,
          tree: nil,
-         palette: nil
+         palette: nil,
+         live_panes: load_live_panes()
      }}
+  end
+
+  def handle_call(:refresh_live_panes, _from, state) do
+    panes = load_live_panes()
+    {:reply, panes, %{state | live_panes: panes}}
   end
 
   def handle_call(:try_begin_turn, _from, state) do
@@ -204,7 +217,8 @@ defmodule Arvo.TUI do
              streaming: false,
              buffer: "",
              palette: nil,
-             tree: nil
+             tree: nil,
+             live_panes: []
          }}
 
       # Tree mode takes priority over palette / focus expand (KTD4 routing).
@@ -213,6 +227,18 @@ defmodule Arvo.TUI do
 
       key == :esc and state[:palette] != nil ->
         {:ok, %{state | palette: nil}}
+
+      # Idle Esc with Arvo-owned panes: explicit teardown (R12 / KTD3).
+      key == :esc and state.status != :running and owned_panes_present?() ->
+        {:ok, results} = Arvo.Session.teardown_owned_panes(:idle_esc)
+        note = format_idle_pane_teardown(results)
+
+        state =
+          state
+          |> Map.put(:live_panes, [])
+          |> append_system_note(note)
+
+        {:cancelled, state}
 
       key == :esc ->
         {:ignored, state}
@@ -386,7 +412,8 @@ defmodule Arvo.TUI do
         streaming: false,
         spinner: false,
         buffer: "",
-        transcript: transcript
+        transcript: transcript,
+        live_panes: load_live_panes()
     }
   end
 
@@ -394,6 +421,7 @@ defmodule Arvo.TUI do
     %{
       state
       | status: :idle,
+        live_panes: load_live_panes(),
         last_error: e,
         spinner: false,
         streaming: false,
@@ -1128,6 +1156,44 @@ defmodule Arvo.TUI do
       _ ->
         state
     end
+  end
+
+  defp owned_panes_present? do
+    case Arvo.Session.owned_panes() do
+      list when is_list(list) and list != [] -> true
+      _ -> false
+    end
+  rescue
+    _ -> false
+  end
+
+  defp load_live_panes do
+    case Arvo.Session.owned_panes() do
+      list when is_list(list) -> list
+      _ -> []
+    end
+  rescue
+    _ -> []
+  end
+
+  defp format_idle_pane_teardown(results) when is_list(results) do
+    cmds =
+      results
+      |> Enum.map(fn r ->
+        cmd = Map.get(r, :command) || Map.get(r, "command") || Map.get(r, :pane_id)
+        status = Map.get(r, :status) || "?"
+        "#{cmd} (#{status})"
+      end)
+      |> Enum.join("; ")
+
+    "[arvo: tore down #{length(results)} pane(s) on idle Esc: #{cmds}]"
+  end
+
+  defp format_idle_pane_teardown(_), do: "[arvo: tore down panes on idle Esc]"
+
+  defp append_system_note(state, note) when is_binary(note) do
+    entry = %{kind: :system, text: note}
+    %{state | transcript: state.transcript ++ [entry]}
   end
 
   defp normalize_key(:esc), do: :esc

@@ -225,6 +225,96 @@ defmodule Arvo.Session.Store do
     })
   end
 
+  @doc """
+  Project history into ordered tree-navigator rows (excludes `head_move` / `session_meta`).
+
+  Each row: `%{id, parent_id, kind, preview, jumpable?, head?, tip?, aborted?}`.
+  Kinds: `:user | :assistant | :tool | :other`. Jump targets are message nodes
+  with role user/assistant (tool rows orient only).
+  """
+  def tree_nodes(path) when is_binary(path), do: tree_nodes(read_all(path))
+
+  def tree_nodes(entries) when is_list(entries) do
+    head_id = resolve_head(entries)
+
+    tip_id =
+      case tip(entries) do
+        %{"id" => id} -> id
+        _ -> nil
+      end
+
+    entries
+    |> Enum.reject(&(&1["type"] in ["head_move", "session_meta"]))
+    |> Enum.map(fn e ->
+      %{
+        id: e["id"],
+        parent_id: e["parent_id"],
+        kind: node_kind(e),
+        preview: node_preview(e),
+        jumpable?: jumpable_entry?(e),
+        head?: e["id"] == head_id,
+        tip?: e["id"] == tip_id,
+        aborted?: aborted_entry?(e)
+      }
+    end)
+  end
+
+  @doc "True when entry is a valid Focus jump target (user/assistant message)."
+  def jumpable_entry?(%{"type" => "message"} = e) do
+    role = e["role"] || "user"
+    # Tool result rows have tool_call_id; assistants with tool_calls remain jumpable.
+    role in ["user", "assistant"] and is_nil(e["tool_call_id"])
+  end
+
+  def jumpable_entry?(_), do: false
+
+  defp node_kind(%{"type" => "message"} = e) do
+    cond do
+      e["role"] == "tool" or not is_nil(e["tool_call_id"]) -> :tool
+      e["role"] == "assistant" -> :assistant
+      e["role"] == "user" -> :user
+      true -> :other
+    end
+  end
+
+  defp node_kind(_), do: :other
+
+  defp aborted_entry?(%{"type" => "message", "role" => "assistant"} = e) do
+    e["incomplete"] == true or e["stop_reason"] in ["cancelled", "aborted"]
+  end
+
+  defp aborted_entry?(_), do: false
+
+  defp node_preview(%{"type" => "message"} = e) do
+    cond do
+      e["role"] == "tool" or not is_nil(e["tool_call_id"]) ->
+        name = e["name"] || "tool"
+        body = e["content"] || ""
+        truncate_preview(name <> ": " <> first_line(body))
+
+      true ->
+        truncate_preview(first_line(e["content"] || ""))
+    end
+  end
+
+  defp node_preview(%{"type" => "compaction"} = e) do
+    truncate_preview("[compacted] " <> first_line(e["summary"] || ""))
+  end
+
+  defp node_preview(_), do: ""
+
+  defp first_line(s) when is_binary(s) do
+    s
+    |> String.split("\n", parts: 2)
+    |> List.first()
+    |> to_string()
+    |> String.trim()
+  end
+
+  defp truncate_preview(s) when is_binary(s) do
+    if String.length(s) > 80, do: String.slice(s, 0, 77) <> "...", else: s
+  end
+
   @doc "Reconstruct chat messages along root → HEAD (product path)."
   def messages_to_head(path) when is_binary(path) do
     messages_to_head(read_all(path))

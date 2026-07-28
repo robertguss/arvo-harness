@@ -160,13 +160,8 @@ defmodule Arvo.Session.Warm do
     goal = packet["goal"]
     known = packet["goal_known"]
 
-    known =
-      cond do
-        known == true -> true
-        known == false -> false
-        is_binary(goal) and String.trim(goal) != "" and goal != "continue work" -> true
-        true -> false
-      end
+    # Only explicit goal_known true; never invent known from goal string alone (R9)
+    known = known == true
 
     empty()
     |> Map.put("paths", List.wrap(packet["paths"]))

@@ -6,7 +6,7 @@ defmodule Arvo.Session.Handoff do
   Idle-only. Fail-closed: parent remains open if child create/seed fails.
   """
 
-  @packet_keys ~w(goal done not_done paths last_error next_steps parent_session_id)
+  @packet_keys ~w(goal goal_known done not_done paths last_error next_steps parent_session_id)
 
   @doc "Build handoff packet map from current session history (deterministic v0)."
   def build_packet(opts \\ []) do
@@ -122,14 +122,13 @@ defmodule Arvo.Session.Handoff do
 
   defp build_packet_from(sess, opts) do
     messages = Arvo.Session.Store.messages_to_head(sess.history || [])
-    users = Enum.filter(messages, &((&1[:role] || &1["role"]) == "user"))
     assts = Enum.filter(messages, &((&1[:role] || &1["role"]) == "assistant"))
 
     warm = Map.get(sess, :warm) || Map.get(sess, "warm") || Arvo.Session.Warm.empty()
     warm = Arvo.Session.Warm.normalize(warm)
     warm_fields = Arvo.Session.Warm.to_packet_fields(warm)
 
-    # Goal: opts pin > live warm (product-valid) > last user line > honesty unknown
+    # Goal: opts pin > live warm only. Never invent from last user ack (R9 honesty).
     {goal, goal_known} =
       cond do
         is_binary(Keyword.get(opts, :goal)) and String.trim(Keyword.get(opts, :goal)) != "" ->
@@ -139,19 +138,7 @@ defmodule Arvo.Session.Handoff do
           {warm_fields["goal"], true}
 
         true ->
-          case List.last(users) do
-            nil ->
-              {nil, false}
-
-            m ->
-              content = String.slice(to_string(m[:content] || m["content"] || ""), 0, 200)
-
-              if content == "" or content =~ "[handoff packet]" or content =~ "[warm work-delta]" do
-                {nil, false}
-              else
-                {content, true}
-              end
-          end
+          {nil, false}
       end
 
     paths = Keyword.get(opts, :paths) || warm_fields["paths"] || []

@@ -74,8 +74,10 @@ defmodule Arvo.Attention do
         budgets: budgets
       })
 
+    # Only demote large/fidelity full-hot re-reads; keep small/error/pin full-hot
     decision =
-      if reuse? and decision.action == :full_hot do
+      if reuse? and decision.action == :full_hot and
+           decision.reason in [:size, :fidelity_retention, :exception_budget, :same_path_reuse] do
         %{decision | action: :stub, fidelity_exception: false, reason: :same_path_reuse}
       else
         decision
@@ -123,7 +125,7 @@ defmodule Arvo.Attention do
     cap = Keyword.get(opts, :cap_bytes, Policy.default_expand_cap_bytes())
     max_bytes = Keyword.get(opts, :max_bytes, cap)
 
-    case Cold.fetch(session_path, cold_id) do
+    case Cold.fetch_slice(session_path, cold_id, max_bytes) do
       {:error, :not_found} ->
         _ = Audit.append(session_path, :denied_expand, %{
           "id" => cold_id,
@@ -133,10 +135,13 @@ defmodule Arvo.Attention do
 
         {:error, :not_found}
 
-      {:ok, body} ->
+      {:error, reason} ->
+        {:error, reason}
+
+      {:ok, slice, body_bytes} ->
         case Policy.expand_allowed?(%{
-               body_bytes: byte_size(body),
-               requested_bytes: min(byte_size(body), max_bytes),
+               body_bytes: body_bytes,
+               requested_bytes: min(body_bytes, max_bytes),
                cap_bytes: cap
              }) do
           {:deny, reason} ->
@@ -144,29 +149,28 @@ defmodule Arvo.Attention do
               "id" => cold_id,
               "actor" => to_string(actor),
               "reason" => to_string(reason),
-              "size" => byte_size(body),
+              "size" => body_bytes,
               "cap" => cap
             })
 
             {:error, reason}
 
           {:ok, _} ->
-            slice =
-              if byte_size(body) <= max_bytes do
-                body
+            out =
+              if body_bytes <= max_bytes do
+                slice
               else
-                binary_part(body, 0, max_bytes) <>
-                  "\n[expanded #{max_bytes}/#{byte_size(body)} bytes; cold:#{cold_id}]"
+                slice <> "\n[expanded #{byte_size(slice)}/#{body_bytes} bytes; cold:#{cold_id}]"
               end
 
             _ = Audit.append(session_path, :expand, %{
               "id" => cold_id,
               "actor" => to_string(actor),
-              "size" => byte_size(slice),
-              "body_bytes" => byte_size(body)
+              "size" => byte_size(out),
+              "body_bytes" => body_bytes
             })
 
-            {:ok, slice}
+            {:ok, out}
         end
     end
   end
@@ -209,14 +213,14 @@ defmodule Arvo.Attention do
     path_index = Map.get(ctx, :path_index) || %{}
     path_index = if is_binary(path), do: Map.put(path_index, path, existing), else: path_index
 
+    # Distinct event: reuse is not a durable body write
     events = [
-      {:store_cold,
+      {:reuse_cold,
        %{
          "id" => cold_id,
          "tool" => tool,
          "size" => decision.size,
-         "path" => path,
-         "reused" => true
+         "path" => path
        }}
     ]
 
@@ -225,13 +229,15 @@ defmodule Arvo.Attention do
 
   defp store_or_reuse(session_path, text, tool, path, decision, _existing, false, ctx) do
     path_index = Map.get(ctx, :path_index) || %{}
+    digest = body_digest(text)
 
     case Cold.store(session_path, text, %{
            tool: tool,
            kind: "tool_result",
            source_path: path,
            tool_call_id: Map.get(ctx, :tool_call_id),
-           preview: decision.preview
+           preview: decision.preview,
+           digest: digest
          }) do
       {:ok, entry} ->
         cold_id = entry["id"]
@@ -246,7 +252,9 @@ defmodule Arvo.Attention do
         {cold_id, decision, path_index, events}
 
       {:error, reason} ->
-        # Fail open to full-hot so Session stays up; single store_cold audit
+        require Logger
+        Logger.warning("Arvo.Attention cold store failed: #{inspect(reason)}")
+
         events = [
           {:store_cold,
            %{
@@ -321,17 +329,46 @@ defmodule Arvo.Attention do
         Enum.each(events, fn {type, fields} -> fun.(type, fields) end)
 
       _ ->
-        _ = Audit.append_many(session_path, events)
+        case Audit.append_many(session_path, events) do
+          {:ok, _} ->
+            :ok
+
+          {:error, reason} ->
+            require Logger
+            Logger.warning("Arvo.Attention audit write failed: #{inspect(reason)}")
+            :error
+        end
     end
   end
 
   defp path_changed?(path, text, existing, retention) do
     cond do
-      not is_binary(path) -> true
-      Policy.path_edited?(path, retention) -> true
-      not is_map(existing) -> true
-      is_integer(existing["size"]) and existing["size"] != byte_size(text) -> true
-      true -> false
+      not is_binary(path) ->
+        true
+
+      Policy.path_edited?(path, retention) ->
+        true
+
+      not is_map(existing) ->
+        true
+
+      is_integer(existing["size"]) and existing["size"] != byte_size(text) ->
+        true
+
+      is_binary(existing["digest"]) and existing["digest"] != body_digest(text) ->
+        true
+
+      # Missing digest on older entries: treat equal size as unchanged only if size matches
+      not is_binary(existing["digest"]) and is_integer(existing["size"]) and
+          existing["size"] == byte_size(text) ->
+        false
+
+      true ->
+        false
     end
+  end
+
+  defp body_digest(text) when is_binary(text) do
+    :crypto.hash(:sha256, text) |> Base.encode16(case: :lower)
   end
 end

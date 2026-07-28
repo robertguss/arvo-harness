@@ -289,8 +289,9 @@ defmodule Arvo.Session do
           head = Arvo.Session.Store.resolve_head(entries)
           tokens = tokens_from_history(entries)
 
-          # Rehydrate warm from handoff packet seed when present (R9)
+          # Rehydrate warm: handoff packet first, else rebuild from HEAD tools (R9)
           warm = warm_from_history(entries)
+          path_index = rebuild_path_index(path)
 
           state = %{
             state
@@ -304,6 +305,7 @@ defmodule Arvo.Session do
               tokens: tokens
           }
           |> put_attention_defaults(warm)
+          |> Map.put(:attention_path_index, path_index)
 
           # Do not call TUI here — resume is often invoked from TUI.slash (deadlock).
           messages = Arvo.Session.Store.messages_to_head(entries)
@@ -359,11 +361,18 @@ defmodule Arvo.Session do
             written =
               Arvo.Session.Store.append_head_move!(state.path, new_head, parent_id: state.last_id)
 
-            state = %{
-              state
-              | last_id: new_head,
-                history: state.history ++ [written]
-            }
+            history = state.history ++ [written]
+            # Rebuild warm/attention from new HEAD chain (do not keep abandoned tip state)
+            warm = warm_from_history(history)
+
+            state =
+              %{
+                state
+                | last_id: new_head,
+                  history: history
+              }
+              |> put_attention_defaults(warm)
+              |> Map.put(:attention_path_index, rebuild_path_index(state.path))
 
             {:reply, {:ok, %{head_id: new_head}}, state}
 
@@ -390,16 +399,23 @@ defmodule Arvo.Session do
           history: state.history ++ [written]
       }
 
-      # Product-valid goal writer: last user task line (R5/R9)
+      # Product-valid goal writer: first substantial user task line (R5/R9)
+      # Skip acks, handoff packets, warm/expand injects so short replies don't invent goals.
       state =
         if (written["role"] || written[:role]) == "user" and
              (written["type"] || "message") == "message" do
           content = to_string(written["content"] || "")
-          # Skip handoff packet seeds as goal writers when already structured
-          if content =~ "[handoff packet]" do
-            state
+
+          if product_valid_goal_line?(content) do
+            warm = state.warm || Arvo.Session.Warm.empty()
+            # Only set if no known goal yet (first task wins); pin/set_warm_goal overrides
+            if warm["goal_known"] do
+              state
+            else
+              %{state | warm: Arvo.Session.Warm.set_goal(warm, content)}
+            end
           else
-            %{state | warm: Arvo.Session.Warm.set_goal(state.warm, content)}
+            state
           end
         else
           state
@@ -430,7 +446,8 @@ defmodule Arvo.Session do
        }, state}
     else
       retention = state.attention_retention || %{}
-      turn = (Map.get(retention, :current_turn) || 0) + 1
+      # Fidelity TTL uses product-turn clock (bumped in start_turn), not per-tool
+      turn = Map.get(retention, :current_turn) || state.attention_product_turn || 0
 
       result =
         Arvo.Attention.project_tool_result(tool, args, text, is_error, %{
@@ -454,11 +471,16 @@ defmodule Arvo.Session do
         })
 
       if warm != prev_warm do
-        _ =
-          Arvo.Session.Audit.append(state.path, :warm_update, %{
-            "paths" => warm["paths"],
-            "goal_known" => warm["goal_known"]
-          })
+        case Arvo.Session.Audit.append(state.path, :warm_update, %{
+               "paths" => warm["paths"],
+               "goal_known" => warm["goal_known"]
+             }) do
+          {:ok, _} ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("Arvo.Session warm_update audit failed: #{inspect(reason)}")
+        end
       end
 
       state = %{
@@ -556,6 +578,12 @@ defmodule Arvo.Session do
             Arvo.Session.project_tool_result(tool, args, text, is_error, meta)
           end)
         end
+
+      # Bump fidelity product-turn clock once per start_turn (not per tool)
+      product_turn = (state.attention_product_turn || 0) + 1
+      retention = state.attention_retention || %{}
+      retention = Map.put(retention, :current_turn, product_turn)
+      state = %{state | attention_product_turn: product_turn, attention_retention: retention}
 
       prior_len = Map.get(context, :prior_len) || length(List.wrap(Map.get(context, :messages)))
       gen = state.turn_generation + 1
@@ -957,9 +985,38 @@ defmodule Arvo.Session do
       warm: warm || Arvo.Session.Warm.empty(),
       attention_retention: %{},
       attention_budgets: Arvo.Attention.default_budgets(),
-      attention_path_index: %{}
+      attention_path_index: %{},
+      attention_product_turn: 0
     })
   end
+
+  defp rebuild_path_index(session_path) when is_binary(session_path) do
+    session_path
+    |> Arvo.Session.Cold.list()
+    |> Enum.reduce(%{}, fn entry, acc ->
+      case entry["source_path"] do
+        p when is_binary(p) and p != "" -> Map.put(acc, p, entry)
+        _ -> acc
+      end
+    end)
+  end
+
+  defp product_valid_goal_line?(content) when is_binary(content) do
+    c = String.trim(content)
+
+    cond do
+      c == "" -> false
+      c =~ "[handoff packet]" -> false
+      c =~ "[warm work-delta]" -> false
+      c =~ "[expanded cold:" -> false
+      # Short acks / confirmations are not task goals
+      String.length(c) < 12 -> false
+      c =~ ~r/^(ok|yes|no|y|n|thanks|thank you|lgtm|looks good|continue|go)\.?$/i -> false
+      true -> true
+    end
+  end
+
+  defp product_valid_goal_line?(_), do: false
 
   defp warm_from_history(entries) when is_list(entries) do
     packet_msg =
@@ -974,7 +1031,7 @@ defmodule Arvo.Session do
         Arvo.Session.Warm.from_packet(packet_msg["warm"])
 
       is_map(packet_msg) ->
-        # Reconstruct from packet blob fields if structured warm missing
+        # Prefer structured warm only; blob reparse is best-effort for legacy seeds
         content = packet_msg["content"] || ""
         goal = capture_packet_field(content, "goal")
         paths = capture_packet_paths(content)
@@ -984,12 +1041,7 @@ defmodule Arvo.Session do
         goal_known =
           cond do
             goal_known_raw in ["true", "True"] -> true
-            goal_known_raw in ["false", "False"] -> false
-            # Honesty markers and empty must not invent a known goal (R9)
-            is_nil(goal) or goal == "" -> false
-            goal =~ ~r/^\(unknown/i -> false
-            goal == "continue work" or goal == "nil" -> false
-            true -> true
+            true -> false
           end
 
         Arvo.Session.Warm.from_packet(%{
@@ -1000,8 +1052,37 @@ defmodule Arvo.Session do
         })
 
       true ->
-        Arvo.Session.Warm.empty()
+        # Non-handoff resume: rebuild paths/errors from HEAD tool messages
+        rebuild_warm_from_messages(Arvo.Session.Store.messages_to_head(entries))
     end
+  end
+
+  defp rebuild_warm_from_messages(messages) when is_list(messages) do
+    warm =
+      Enum.reduce(messages, Arvo.Session.Warm.empty(), fn m, w ->
+        role = m[:role] || m["role"]
+        content = to_string(m[:content] || m["content"] || "")
+
+        cond do
+          role == "user" and product_valid_goal_line?(content) and not w["goal_known"] ->
+            Arvo.Session.Warm.set_goal(w, content)
+
+          role == "tool" ->
+            Arvo.Session.Warm.update_from_tool(w, %{
+              tool: m[:name] || m["name"] || "tool",
+              args: %{},
+              is_error: m[:is_error] || m["is_error"] || false,
+              text: if(m[:is_error] || m["is_error"], do: String.slice(content, 0, 300), else: nil),
+              path: nil
+            })
+
+          true ->
+            w
+        end
+      end)
+
+    # Paths from cold index are better for tool path recovery
+    warm
   end
 
   defp capture_packet_field(content, key) when is_binary(content) do
@@ -1017,7 +1098,6 @@ defmodule Arvo.Session do
         []
 
       s ->
-        # inspect list form: ["/a", "/b"] or empty
         case Regex.scan(~r/"([^"]+)"/, s) do
           [] -> []
           matches -> Enum.map(matches, fn [_, p] -> p end)

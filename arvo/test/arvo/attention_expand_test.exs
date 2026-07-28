@@ -45,8 +45,9 @@ defmodule Arvo.AttentionExpandTest do
     r1 =
       Arvo.Session.project_tool_result("read", %{"path" => "lib/x.ex"}, large, false)
 
-    # First large read may be fidelity full_hot
     assert r1.cold_id
+    assert r1.action == :full_hot
+    assert r1.content == large
 
     r2 =
       Arvo.Session.project_tool_result("read", %{"path" => "lib/x.ex"}, large, false)
@@ -57,8 +58,26 @@ defmodule Arvo.AttentionExpandTest do
 
     m = Arvo.Session.Audit.metrics(path)
     assert m.same_path_reinvoke >= 1
-    # First store + optional reuse audit (reused:true still counts store_cold)
     assert m.store_cold >= 1
+    assert m.reuse_cold >= 1
     assert m.stub_in_hot >= 1
   end
+
+  test "same-size content change does not reuse stale cold", %{path: path} do
+    a = String.duplicate("a", 5_000)
+    b = String.duplicate("b", 5_000)
+    assert byte_size(a) == byte_size(b)
+
+    r1 = Arvo.Session.project_tool_result("read", %{"path" => "lib/y.ex"}, a, false)
+    r2 = Arvo.Session.project_tool_result("read", %{"path" => "lib/y.ex"}, b, false)
+
+    assert r1.cold_id != r2.cold_id or r2.action == :full_hot
+    refute r2.action == :stub and r2.content =~ r1.cold_id
+    assert {:ok, body} = Arvo.Session.Cold.fetch(path, r2.cold_id || r1.cold_id)
+    # Latest store for path should be b when not stubbed onto a
+    if r2.action == :full_hot do
+      assert body == b or String.starts_with?(body, "b")
+    end
+  end
 end
+

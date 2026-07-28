@@ -240,14 +240,23 @@ defmodule Arvo.Agent do
     end
   rescue
     e ->
-      # Fail open so a projection bug does not kill the turn
-      %{
-        content: text,
-        full_text: text,
-        action: :full_hot,
-        cold_id: nil,
-        project_error: Exception.message(e)
-      }
+      project_fail_open(text, Exception.message(e))
+  catch
+    :exit, reason ->
+      project_fail_open(text, inspect(reason))
+  end
+
+  defp project_fail_open(text, reason) do
+    require Logger
+    Logger.warning("Arvo.Agent projection fail-open: #{reason}")
+
+    %{
+      content: text,
+      full_text: text,
+      action: :full_hot,
+      cold_id: nil,
+      project_error: reason
+    }
   end
 
   defp normalize_args(args) when is_binary(args) do

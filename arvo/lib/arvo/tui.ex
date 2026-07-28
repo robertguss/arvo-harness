@@ -34,7 +34,8 @@ defmodule Arvo.TUI do
   end
 
   def put_tokens(turn, cumulative, window \\ 500_000) do
-    GenServer.call(__MODULE__, {:put_tokens, turn, cumulative, window})
+    # Cast so Session never GenServer.calls TUI while holding Session (AB-BA with slash).
+    GenServer.cast(__MODULE__, {:put_tokens, turn, cumulative, window})
   end
 
   def append_user(text) when is_binary(text) do
@@ -122,6 +123,7 @@ defmodule Arvo.TUI do
   end
 
   def handle_call({:put_tokens, turn, cum, window}, _from, state) do
+    # Keep call path for tests that still sync; cast is the product path.
     {:reply, :ok, %{state | tokens: %{turn: turn, cumulative: cum, window: window}}}
   end
 
@@ -185,6 +187,10 @@ defmodule Arvo.TUI do
   end
 
   @impl true
+  def handle_cast({:put_tokens, turn, cum, window}, state) do
+    {:noreply, %{state | tokens: %{turn: turn, cumulative: cum, window: window}}}
+  end
+
   def handle_cast({:event, event}, state) do
     {:noreply, reduce_event(state, event)}
   end
@@ -223,7 +229,10 @@ defmodule Arvo.TUI do
 
     display =
       if action == :stub and is_binary(model_text) and model_text != text do
-        text <> "\n— dual-view#{label} —"
+        text <>
+          "\n— dual-view: model saw —\n" <>
+          model_text <>
+          "\n— end dual-view#{label} —"
       else
         text <> label
       end
@@ -496,7 +505,15 @@ defmodule Arvo.TUI do
     else
       case Arvo.Session.recall(id, actor: :user) do
         {:ok, slice} ->
-          {{:ok, :handled, "expanded #{id} (#{byte_size(slice)} bytes):\n" <> slice}, state}
+          # Inject into session history so next TurnContext / model turn sees the expand
+          _ =
+            Arvo.Session.record_message(%{
+              role: "system",
+              content: "[expanded cold:#{id}]\n" <> slice
+            })
+
+          {{:ok, :handled, "expanded #{id} into session (#{byte_size(slice)} bytes):\n" <> slice},
+           state}
 
         {:error, :not_found} ->
           {{:ok, :handled, "recall failed: cold id not found (#{id})"}, state}

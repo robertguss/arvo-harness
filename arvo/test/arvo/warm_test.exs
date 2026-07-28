@@ -58,7 +58,7 @@ defmodule Arvo.WarmTest do
   end
 
   test "session records user line as goal; tools update warm; TurnContext injects", %{tmp: _tmp} do
-    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "implement cold store"})
+    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "implement cold store feature"})
     warm = Arvo.Session.warm()
     assert warm["goal_known"] == true
     assert warm["goal"] =~ "cold store"
@@ -82,7 +82,7 @@ defmodule Arvo.WarmTest do
   end
 
   test "handoff packet uses live warm paths and goal honesty" do
-    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "ship progressive attention"})
+    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "ship progressive attention now"})
 
     _ =
       Arvo.Session.project_tool_result(
@@ -99,7 +99,6 @@ defmodule Arvo.WarmTest do
   end
 
   test "goal unknown packet does not invent goal on rehydrate" do
-    # Clear goal
     {:ok, _} = Arvo.Session.set_warm_goal(nil)
     packet = Arvo.Session.Handoff.build_packet()
     assert packet["goal_known"] == false
@@ -113,4 +112,18 @@ defmodule Arvo.WarmTest do
     assert warm["goal_known"] == false
     assert is_nil(warm["goal"]) or warm["goal"] == ""
   end
+
+  test "short user ack does not overwrite goal; handoff does not invent from last user" do
+    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "implement the cold store path"})
+    assert Arvo.Session.warm()["goal"] =~ "cold store"
+
+    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "ok"})
+    assert Arvo.Session.warm()["goal"] =~ "cold store"
+
+    {:ok, _} = Arvo.Session.set_warm_goal(nil)
+    packet = Arvo.Session.Handoff.build_packet()
+    assert packet["goal_known"] == false
+    assert is_nil(packet["goal"])
+  end
 end
+

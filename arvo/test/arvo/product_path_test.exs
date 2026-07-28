@@ -23,6 +23,52 @@ defmodule Arvo.ProductPathTest do
     end
   end
 
+  describe "inspect and recall slash (AE4/AE6)" do
+    setup do
+      tmp = Path.join(System.tmp_dir!(), "arvo-insp-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      old = System.get_env("HOME")
+      System.put_env("HOME", tmp)
+      Application.put_env(:arvo, :cwd, tmp)
+      Application.put_env(:arvo, :progressive_attention, true)
+
+      on_exit(fn ->
+        if old, do: System.put_env("HOME", old)
+        File.rm_rf!(tmp)
+      end)
+
+      {:ok, path} = Arvo.Session.open_new(tmp)
+      large = String.duplicate("inspect-me\n", 2_000)
+      r = Arvo.Session.project_tool_result("bash", %{"command" => "cat big"}, large, false)
+      %{tmp: tmp, path: path, cold_id: r.cold_id, large: large}
+    end
+
+    test "inspect lists cold and show body; recall injects into session", %{
+      cold_id: id,
+      large: large
+    } do
+      assert is_binary(id)
+      assert {:ok, :handled, summary} = Arvo.TUI.slash("inspect")
+      assert summary =~ "Cold entries"
+      assert summary =~ id or summary =~ "bash"
+
+      assert {:ok, :handled, body_view} = Arvo.TUI.slash("inspect", id)
+      assert body_view =~ "inspect-me"
+
+      assert {:ok, :handled, rec} = Arvo.TUI.slash("recall", id)
+      assert rec =~ "expanded"
+      assert rec =~ "session"
+
+      msgs = Arvo.Session.Store.messages_to_head(Arvo.Session.get().history || [])
+      assert Enum.any?(msgs, fn m ->
+               c = m[:content] || m["content"] || ""
+               c =~ "[expanded cold:#{id}]" and c =~ "inspect-me"
+             end)
+
+      _ = large
+    end
+  end
+
   describe "TUI /login runs device flow" do
     test "login invokes DeviceFlow (mocked HTTP fails cleanly, not instruction-only)" do
       # Without network mock, DeviceFlow hits real auth — expect either ok or real error string

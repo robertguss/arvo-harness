@@ -150,18 +150,20 @@ defmodule Arvo.Attention.Policy do
     last_reads = Map.get(retention, :last_reads) || Map.get(retention, "last_reads") || %{}
     edited = Map.get(retention, :edited_paths) || Map.get(retention, "edited_paths") || MapSet.new()
 
-    edited =
-      if tool in ["edit", "write"] and is_binary(path) do
-        MapSet.put(to_mapset(edited), path)
-      else
-        to_mapset(edited)
-      end
+    edited = to_mapset(edited)
 
-    last_reads =
-      if tool == "read" and is_binary(path) and decision.action == :full_hot and not decision[:is_error] do
-        Map.put(last_reads, path, %{turn: current_turn})
-      else
-        last_reads
+    # Successful full-hot read starts a new fidelity window and clears edit sticky bit
+    {edited, last_reads} =
+      cond do
+        tool in ["edit", "write"] and is_binary(path) ->
+          {MapSet.put(edited, path), last_reads}
+
+        tool == "read" and is_binary(path) and decision.action == :full_hot and
+            not decision[:is_error] ->
+          {MapSet.delete(edited, path), Map.put(last_reads, path, %{turn: current_turn})}
+
+        true ->
+          {edited, last_reads}
       end
 
     %{

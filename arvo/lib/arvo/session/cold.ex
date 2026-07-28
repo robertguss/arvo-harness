@@ -24,10 +24,15 @@ defmodule Arvo.Session.Cold do
     body_path = Path.join(dir, id <> ".body")
     File.write!(body_path, body)
 
+    digest =
+      meta_get(meta, :digest) ||
+        (:crypto.hash(:sha256, body) |> Base.encode16(case: :lower))
+
     entry =
       %{
         "id" => id,
         "size" => byte_size(body),
+        "digest" => digest,
         "body_path" => body_path,
         "kind" => meta_get(meta, :kind) || "tool_result",
         "tool" => meta_get(meta, :tool),
@@ -54,6 +59,34 @@ defmodule Arvo.Session.Cold do
       {:ok, body} -> {:ok, body}
       {:error, :enoent} -> {:error, :not_found}
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc "Read up to max_bytes of a cold body without loading the whole file when large."
+  def fetch_slice(session_path, id, max_bytes)
+      when is_binary(session_path) and is_binary(id) and is_integer(max_bytes) and max_bytes > 0 do
+    body_path = Path.join(cold_dir(session_path), id <> ".body")
+
+    case File.stat(body_path) do
+      {:ok, %File.Stat{size: size}} when size <= max_bytes ->
+        fetch(session_path, id)
+        |> case do
+          {:ok, body} -> {:ok, body, size}
+          err -> err
+        end
+
+      {:ok, %File.Stat{size: size}} ->
+        case File.open(body_path, [:read, :binary], fn io -> IO.binread(io, max_bytes) end) do
+          {:ok, data} when is_binary(data) -> {:ok, data, size}
+          {:ok, :eof} -> {:ok, "", size}
+          {:error, reason} -> {:error, reason}
+        end
+
+      {:error, :enoent} ->
+        {:error, :not_found}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

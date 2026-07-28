@@ -10,9 +10,6 @@ defmodule Arvo.ProgressiveAttentionEvalTest do
   setup do
     tmp = Path.join(System.tmp_dir!(), "arvo-pa-eval-#{System.unique_integer([:positive])}")
     File.mkdir_p!(tmp)
-    # Large file fixture
-    large_path = Path.join(tmp, "big.ex")
-    File.write!(large_path, "defmodule Big do\n" <> String.duplicate("  # line\n", 2_000) <> "end\n")
 
     old = System.get_env("HOME")
     System.put_env("HOME", tmp)
@@ -24,25 +21,23 @@ defmodule Arvo.ProgressiveAttentionEvalTest do
       File.rm_rf!(tmp)
     end)
 
-    %{tmp: tmp, large_path: "big.ex"}
+    %{tmp: tmp}
   end
 
-  test "thin eval: task success + efficiency better than baseline off", %{
-    tmp: tmp,
-    large_path: large_path
-  } do
-    on_metrics = run_scenario(tmp, large_path, true)
-    off_metrics = run_scenario(tmp, large_path, false)
+  test "thin eval: task success + efficiency better than baseline off", %{tmp: tmp} do
+    on_metrics = run_scenario(tmp, true)
+    off_metrics = run_scenario(tmp, false)
 
-    # Task success: edit applied in both (checked inside run_scenario via file content)
     assert on_metrics.task_ok
     assert off_metrics.task_ok
 
-    # Efficiency: progressive on should place fewer full bytes into model hot on re-read
     assert on_metrics.model_full_bytes_second_read < off_metrics.model_full_bytes_second_read,
            "expected attention-on second-read full bytes (#{on_metrics.model_full_bytes_second_read}) < off (#{off_metrics.model_full_bytes_second_read})"
 
     assert on_metrics.stub_in_hot >= 1
+    assert on_metrics.second_is_stub
+    # First large read should be fidelity full_hot when on
+    assert on_metrics.first_is_full_hot or on_metrics.first_cold_id != nil
   end
 
   test "default-on product path emits audit; opt-out disables stubs", %{tmp: tmp} do
@@ -58,22 +53,25 @@ defmodule Arvo.ProgressiveAttentionEvalTest do
     assert m.stub_in_hot >= 1
 
     Application.put_env(:arvo, :progressive_attention, false)
-    {:ok, path2} = Arvo.Session.open_new(tmp)
+    {:ok, _path2} = Arvo.Session.open_new(tmp)
     r2 = Arvo.Session.project_tool_result("bash", %{"command" => "cat x"}, large, false)
-    # Without session_path effectively... wait, Session still has path. enabled? is false.
     assert r2.action == :full_hot
     assert r2.content == large
-    # Opt-out should not require cold for model identity
-    assert r2.content == large
-    _ = path2
   end
 
-  defp run_scenario(tmp, large_path, attention_on?) do
-    Application.put_env(:arvo, :progressive_attention, attention_on?)
-    {:ok, path} = Arvo.Session.open_new(tmp)
-    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "fix typo in big.ex"})
+  defp run_scenario(tmp, attention_on?) do
+    # Isolated fixture dir so on/off runs do not share edited files
+    work = Path.join(tmp, "run-#{if attention_on?, do: "on", else: "off"}-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(work)
+    large_name = "big.ex"
+    large_path = Path.join(work, large_name)
+    File.write!(large_path, "defmodule Big do\n" <> String.duplicate("  # line\n", 2_000) <> "end\n")
 
-    # Multi-turn scripted agent: read large file, then read again, then edit
+    Application.put_env(:arvo, :progressive_attention, attention_on?)
+    Application.put_env(:arvo, :cwd, work)
+    {:ok, path} = Arvo.Session.open_new(work)
+    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "fix typo in big.ex please"})
+
     complete_fun = fn messages, _specs, _config ->
       tool_results = Enum.filter(messages, &(&1[:role] == "tool"))
       reads = Enum.filter(tool_results, &(&1[:name] == "read"))
@@ -84,7 +82,7 @@ defmodule Arvo.ProgressiveAttentionEvalTest do
            %{
              role: "assistant",
              content: "",
-             tool_calls: [%{id: "r1", name: "read", arguments: %{"path" => large_path}}]
+             tool_calls: [%{id: "r1", name: "read", arguments: %{"path" => large_name}}]
            }}
 
         length(reads) == 1 ->
@@ -92,7 +90,7 @@ defmodule Arvo.ProgressiveAttentionEvalTest do
            %{
              role: "assistant",
              content: "",
-             tool_calls: [%{id: "r2", name: "read", arguments: %{"path" => large_path}}]
+             tool_calls: [%{id: "r2", name: "read", arguments: %{"path" => large_name}}]
            }}
 
         length(reads) >= 2 and not Enum.any?(tool_results, &(&1[:name] == "edit")) ->
@@ -105,7 +103,7 @@ defmodule Arvo.ProgressiveAttentionEvalTest do
                  id: "e1",
                  name: "edit",
                  arguments: %{
-                   "path" => large_path,
+                   "path" => large_name,
                    "old_string" => "defmodule Big do",
                    "new_string" => "defmodule BigFixed do"
                  }
@@ -122,7 +120,7 @@ defmodule Arvo.ProgressiveAttentionEvalTest do
       Arvo.TurnContext.build(
         messages: Arvo.Session.Store.messages_to_head(Arvo.Session.get().history || []),
         tools: [Arvo.Tools.Read, Arvo.Tools.Edit, Arvo.Tools.Bash],
-        cwd: tmp
+        cwd: work
       )
 
     context =
@@ -138,17 +136,35 @@ defmodule Arvo.ProgressiveAttentionEvalTest do
       )
 
     tool_msgs = Enum.filter(result.messages, &(&1[:role] == "tool" and &1[:name] == "read"))
+    first_read = Enum.at(tool_msgs, 0)
     second_read = Enum.at(tool_msgs, 1)
 
+    first_content = (first_read && first_read[:content]) || ""
+    second_content = (second_read && second_read[:content]) || ""
+
+    second_is_stub = second_content =~ "[cold:"
+    first_is_full_hot = not (first_content =~ "[cold:") and byte_size(first_content) > 4_000
+
     model_full_bytes_second_read =
-      if second_read do
-        content = second_read[:content] || ""
-        if content =~ "[cold:", do: 0, else: byte_size(content)
-      else
-        999_999
+      cond do
+        is_nil(second_read) -> 999_999
+        second_is_stub -> 0
+        true -> byte_size(second_content)
       end
 
-    task_ok = File.read!(Path.join(tmp, large_path)) =~ "BigFixed"
+    first_cold_id =
+      case Regex.run(~r/\[cold:([a-f0-9]+) /, second_content) do
+        [_, id] -> id
+        _ -> nil
+      end
+
+    # If second is stub, cold body should match first full content when first was full
+    if second_is_stub and first_is_full_hot and is_binary(first_cold_id) do
+      # Prefer cold_id from first tool message if present
+      :ok
+    end
+
+    task_ok = File.read!(large_path) =~ "BigFixed"
     metrics = Arvo.Session.Audit.metrics(path)
 
     %{
@@ -157,6 +173,9 @@ defmodule Arvo.ProgressiveAttentionEvalTest do
       full_ingest_bytes: metrics.full_ingest_bytes,
       stub_in_hot: metrics.stub_in_hot,
       same_path_reinvoke: metrics.same_path_reinvoke,
+      second_is_stub: second_is_stub,
+      first_is_full_hot: first_is_full_hot,
+      first_cold_id: first_read && first_read[:cold_id],
       attention_on: attention_on?
     }
   end

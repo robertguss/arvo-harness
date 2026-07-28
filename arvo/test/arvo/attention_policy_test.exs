@@ -106,6 +106,45 @@ defmodule Arvo.AttentionPolicyTest do
     assert expired.action == :stub
   end
 
+  test "edit of P invalidates fidelity; successful full-hot read clears edited sticky" do
+    path = "/proj/lib/foo.ex"
+    large = String.duplicate("x", 8_000)
+
+    after_edit =
+      Policy.update_retention(
+        %{last_reads: %{}, edited_paths: MapSet.new(), current_turn: 1, fidelity_ttl_turns: 3},
+        "edit",
+        path,
+        %{action: :full_hot, is_error: false},
+        1
+      )
+
+    assert path in after_edit.edited_paths
+
+    stubbed =
+      Policy.decide(%{
+        tool: "read",
+        args: %{"path" => path},
+        text: large,
+        is_error: false,
+        retention: after_edit,
+        budgets: %{exception_bytes: 0, exception_count: 0}
+      })
+
+    assert stubbed.action == :stub
+
+    cleared =
+      Policy.update_retention(
+        after_edit,
+        "read",
+        path,
+        %{action: :full_hot, is_error: false},
+        2
+      )
+
+    refute path in cleared.edited_paths
+  end
+
   test "exception budget exceeded → prefer stub over unbounded full_hot" do
     decision =
       Policy.decide(%{

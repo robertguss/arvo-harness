@@ -69,8 +69,20 @@ defmodule Arvo.Session.Audit do
       size = if is_integer(size), do: size, else: 0
 
       case type do
-        "store_cold" -> Map.update!(acc, :store_cold, &(&1 + 1))
-        "stub_in_hot" -> Map.update!(acc, :stub_in_hot, &(&1 + 1))
+        "store_cold" ->
+          # Count durable writes only (exclude reused:true if present on legacy events)
+          if e["reused"] == true do
+            Map.update(acc, :reuse_cold, 1, &(&1 + 1))
+          else
+            Map.update!(acc, :store_cold, &(&1 + 1))
+          end
+
+        "reuse_cold" ->
+          Map.update(acc, :reuse_cold, 1, &(&1 + 1))
+
+        "stub_in_hot" ->
+          Map.update!(acc, :stub_in_hot, &(&1 + 1))
+
         "full_hot" ->
           acc
           |> Map.update!(:full_hot, &(&1 + 1))
@@ -81,11 +93,20 @@ defmodule Arvo.Session.Audit do
           |> Map.update!(:fidelity_exception, &(&1 + 1))
           |> Map.update!(:fidelity_exception_bytes, &(&1 + size))
 
-        "warm_update" -> Map.update!(acc, :warm_update, &(&1 + 1))
-        "expand" -> Map.update!(acc, :expand, &(&1 + 1))
-        "same_path_reinvoke" -> Map.update!(acc, :same_path_reinvoke, &(&1 + 1))
-        "denied_expand" -> Map.update!(acc, :denied_expand, &(&1 + 1))
-        _ -> acc
+        "warm_update" ->
+          Map.update!(acc, :warm_update, &(&1 + 1))
+
+        "expand" ->
+          Map.update!(acc, :expand, &(&1 + 1))
+
+        "same_path_reinvoke" ->
+          Map.update!(acc, :same_path_reinvoke, &(&1 + 1))
+
+        "denied_expand" ->
+          Map.update!(acc, :denied_expand, &(&1 + 1))
+
+        _ ->
+          acc
       end
     end)
   end
@@ -93,6 +114,7 @@ defmodule Arvo.Session.Audit do
   def empty_metrics do
     %{
       store_cold: 0,
+      reuse_cold: 0,
       stub_in_hot: 0,
       full_hot: 0,
       full_ingest_bytes: 0,

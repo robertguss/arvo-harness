@@ -70,23 +70,41 @@ defmodule Arvo.Agent do
 
   defp turn_loop(messages, tools, ctx, config, complete_fun, event_fun, turn, max_turns, steering, usage) do
     event_fun.({:turn_start, %{turn: turn}})
+    # Thought chrome even when the model never streams reasoning tokens.
+    event_fun.({:thinking_start, %{turn: turn}})
     tools_spec = Enum.map(tools, & &1.spec())
 
     # Wire streaming deltas into the event bus during complete (not post-hoc full body)
     streamed_count = :atomics.new(1, signed: false)
-    on_delta = fn chunk when is_binary(chunk) ->
-      if chunk != "" do
+    thought_open = :atomics.new(1, signed: false)
+    :atomics.put(thought_open, 1, 1)
+
+    on_delta = fn
+      {:thinking, chunk} when is_binary(chunk) and chunk != "" ->
+        event_fun.({:thinking_delta, %{text: chunk}})
+        :ok
+
+      {:text, chunk} when is_binary(chunk) and chunk != "" ->
+        close_thought_if_open(event_fun, thought_open)
         :atomics.add(streamed_count, 1, 1)
         event_fun.({:message_delta, %{text: chunk}})
-      end
+        :ok
 
-      :ok
+      chunk when is_binary(chunk) and chunk != "" ->
+        close_thought_if_open(event_fun, thought_open)
+        :atomics.add(streamed_count, 1, 1)
+        event_fun.({:message_delta, %{text: chunk}})
+        :ok
+
+      _ ->
+        :ok
     end
 
     config = Map.put(config, :on_delta, on_delta)
 
     case complete_fun.(messages, tools_spec, config) do
       {:error, reason} ->
+        close_thought_if_open(event_fun, thought_open)
         event_fun.({:agent_error, %{error: reason}})
         %{messages: messages, stop_reason: {:error, reason}, steering: steering, usage: usage}
 
@@ -96,6 +114,9 @@ defmodule Arvo.Agent do
         turn_usage = Map.get(assistant, :usage) || Map.get(assistant, "usage") || %{}
         usage = merge_usage(usage, turn_usage)
         streamed? = Map.get(assistant, :streamed?) == true or :atomics.get(streamed_count, 1) > 0
+
+        # Close thought before tools / post-hoc content if still open
+        close_thought_if_open(event_fun, thought_open)
 
         # Only emit a post-hoc full-body delta when the complete_fun did not stream
         if content != "" and not streamed? do
@@ -141,6 +162,14 @@ defmodule Arvo.Agent do
           )
         end
     end
+  end
+
+  defp close_thought_if_open(event_fun, thought_open) do
+    if :atomics.exchange(thought_open, 1, 0) == 1 do
+      event_fun.({:thinking_end, %{}})
+    end
+
+    :ok
   end
 
   defp empty_usage do

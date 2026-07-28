@@ -108,7 +108,11 @@ defmodule Arvo.TUI do
        last_error: nil,
        input: "",
        transcript: [],
-       tokens: %{turn: 0, cumulative: 0, window: 500_000}
+       tokens: %{turn: 0, cumulative: 0, window: 500_000},
+       # Focus polish: expand/focus/slash palette
+       focus_idx: nil,
+       expand_all: nil,
+       palette: nil
      }}
   end
 
@@ -163,22 +167,8 @@ defmodule Arvo.TUI do
 
   def handle_call({:key, key}, _from, state) do
     key = normalize_key(key)
-
-    cond do
-      key == :esc and state.status == :running ->
-        _ = Arvo.Session.cancel_turn()
-
-        # Drop uncommitted streaming buffer; do not retract a transcript row already
-        # promoted by :agent_end (that path sets status :idle first).
-        {:reply, :cancelled,
-         %{state | status: :idle, spinner: false, tool_name: nil, streaming: false, buffer: ""}}
-
-      key == :esc ->
-        {:reply, :ignored, state}
-
-      true ->
-        {:reply, :ok, state}
-    end
+    {reply, state} = handle_key(state, key)
+    {:reply, reply, state}
   end
 
   def handle_call({:slash, cmd, args}, _from, state) do
@@ -195,11 +185,86 @@ defmodule Arvo.TUI do
     {:noreply, reduce_event(state, event)}
   end
 
+  @doc false
+  def handle_key(state, key) do
+    cond do
+      key == :esc and state[:palette] != nil ->
+        {:ok, %{state | palette: nil}}
+
+      key == :esc and state.status == :running ->
+        _ = Arvo.Session.cancel_turn()
+
+        {:cancelled,
+         %{
+           state
+           | status: :idle,
+             spinner: false,
+             tool_name: nil,
+             streaming: false,
+             buffer: "",
+             palette: nil
+         }}
+
+      key == :esc ->
+        {:ignored, state}
+
+      key == :ctrl_e ->
+        {:ok, toggle_expand_all(state)}
+
+      key in [:up, :down] and state[:palette] != nil ->
+        {:ok, move_palette(state, key)}
+
+      key in [:up, :down] and state.status != :running ->
+        {:ok, move_focus(state, key)}
+
+      key in [:enter, :space] and state.status != :running and state[:input] in [nil, ""] and
+          is_integer(state[:focus_idx]) ->
+        {:ok, toggle_focus_row(state)}
+
+      true ->
+        {:ok, state}
+    end
+  end
+
   defp reduce_event(state, {:agent_start, _}) do
-    %{state | status: :running, buffer: "", spinner: true, last_error: nil}
+    %{state | status: :running, buffer: "", spinner: true, last_error: nil, focus_idx: nil}
   end
 
   defp reduce_event(state, {:turn_start, _}), do: %{state | spinner: true, tool_name: nil}
+
+  defp reduce_event(state, {:thinking_start, _}) do
+    now = System.monotonic_time(:millisecond)
+    expanded = default_expanded(state, true)
+
+    entry = %{
+      kind: :thought,
+      text: "",
+      started_at: now,
+      ended_at: nil,
+      expanded: expanded,
+      live: true
+    }
+
+    %{state | spinner: true, transcript: state.transcript ++ [entry]}
+  end
+
+  defp reduce_event(state, {:thinking_delta, %{text: t}}) do
+    t = String.replace(to_string(t), "\e", "")
+    transcript = update_last_thought(state.transcript, fn th -> %{th | text: th.text <> t} end)
+    %{state | spinner: true, transcript: transcript}
+  end
+
+  defp reduce_event(state, {:thinking_end, _}) do
+    now = System.monotonic_time(:millisecond)
+    expand_done = default_expanded(state, false)
+
+    transcript =
+      update_last_thought(state.transcript, fn th ->
+        %{th | live: false, ended_at: now, expanded: expand_done}
+      end)
+
+    %{state | transcript: transcript}
+  end
 
   defp reduce_event(state, {:message_delta, %{text: t}}) do
     # Defer full sanitize to agent_end/paint (per-token regex is hot-path bloat)
@@ -207,13 +272,29 @@ defmodule Arvo.TUI do
     %{state | streaming: true, buffer: state.buffer <> t, spinner: false}
   end
 
-  defp reduce_event(state, {:tool_call_start, %{name: n}}) do
-    entry = %{kind: :tool, name: n, text: "running…", folded: true}
-    %{state | spinner: true, tool_name: n, transcript: state.transcript ++ [entry]}
+  defp reduce_event(state, {:tool_call_start, ev}) do
+    name = Map.get(ev, :name) || "tool"
+    id = Map.get(ev, :id)
+    args = Map.get(ev, :arguments) || %{}
+    summary = Arvo.TUI.Activity.summarize(name, args)
+    expanded = default_expanded(state, false)
+
+    entry = %{
+      kind: :activity,
+      id: id,
+      name: name,
+      summary: summary,
+      status: :running,
+      detail: nil,
+      expanded: expanded
+    }
+
+    %{state | spinner: true, tool_name: name, transcript: state.transcript ++ [entry]}
   end
 
   defp reduce_event(state, {:tool_call_end, ev}) do
     name = Map.get(ev, :name) || state.tool_name || "tool"
+    id = Map.get(ev, :id)
     err? = Map.get(ev, :is_error, false)
     text = Map.get(ev, :text) || if(err?, do: "error", else: "ok")
     action = Map.get(ev, :attention_action) || :full_hot
@@ -227,7 +308,7 @@ defmodule Arvo.TUI do
         other -> " [model:#{other}]"
       end
 
-    display =
+    detail =
       if action == :stub and is_binary(model_text) and model_text != text do
         text <>
           "\n— dual-view: model saw —\n" <>
@@ -237,16 +318,19 @@ defmodule Arvo.TUI do
         text <> label
       end
 
+    status = if err?, do: :error, else: :ok
+    expanded = default_expanded(state, false)
+
     transcript =
-      update_last_tool(state.transcript, name, %{
-        kind: :tool,
-        name: name,
-        text: display,
-        folded: true,
-        is_error: err?,
-        attention_action: action,
-        cold_id: cold_id
-      })
+      update_last_activity(state.transcript, name, id, fn entry ->
+        entry
+        |> Map.put(:status, status)
+        |> Map.put(:detail, detail)
+        |> Map.put(:expanded, expanded)
+        |> Map.put(:is_error, err?)
+        |> Map.put(:attention_action, action)
+        |> Map.put(:cold_id, cold_id)
+      end)
 
     %{state | tool_name: nil, transcript: transcript}
   end
@@ -261,6 +345,21 @@ defmodule Arvo.TUI do
       else
         state.transcript
       end
+
+    # Ensure any live thought is closed
+    transcript =
+      update_last_thought(transcript, fn th ->
+        if th.live do
+          %{
+            th
+            | live: false,
+              ended_at: th.ended_at || System.monotonic_time(:millisecond),
+              expanded: default_expanded(state, false)
+          }
+        else
+          th
+        end
+      end)
 
     %{
       state
@@ -285,20 +384,159 @@ defmodule Arvo.TUI do
 
   defp reduce_event(state, _), do: state
 
-  defp update_last_tool(transcript, name, entry) do
+  defp default_expanded(%{expand_all: true}, _live_default), do: true
+  defp default_expanded(%{expand_all: false}, _live_default), do: false
+  defp default_expanded(_, live_default), do: live_default
+
+  defp update_last_thought(transcript, fun) do
     idx =
       transcript
       |> Enum.with_index()
       |> Enum.reverse()
       |> Enum.find_value(fn
+        {%{kind: :thought}, i} -> i
+        _ -> nil
+      end)
+
+    if is_integer(idx) do
+      List.update_at(transcript, idx, fun)
+    else
+      transcript
+    end
+  end
+
+  defp update_last_activity(transcript, name, id, fun) do
+    idx =
+      transcript
+      |> Enum.with_index()
+      |> Enum.reverse()
+      |> Enum.find_value(fn
+        {%{kind: :activity, id: ^id}, i} when not is_nil(id) -> i
+        {%{kind: :activity, name: ^name, status: :running}, i} -> i
         {%{kind: :tool, name: ^name}, i} -> i
         _ -> nil
       end)
 
     if is_integer(idx) do
-      List.replace_at(transcript, idx, entry)
+      List.update_at(transcript, idx, fun)
     else
+      entry = fun.(%{kind: :activity, name: name, summary: name, status: :ok, detail: nil, expanded: false})
       transcript ++ [entry]
+    end
+  end
+
+  defp toggle_expand_all(state) do
+    next =
+      case state[:expand_all] do
+        true -> false
+        false -> true
+        nil -> true
+      end
+
+    transcript =
+      Enum.map(state.transcript, fn
+        %{kind: k} = e when k in [:thought, :activity, :tool] ->
+          Map.put(e, :expanded, next)
+
+        other ->
+          other
+      end)
+
+    %{state | expand_all: next, transcript: transcript}
+  end
+
+  defp focusable_indices(transcript) do
+    transcript
+    |> Enum.with_index()
+    |> Enum.filter(fn
+      {%{kind: k}, _} when k in [:thought, :activity, :tool] -> true
+      _ -> false
+    end)
+    |> Enum.map(&elem(&1, 1))
+  end
+
+  defp move_focus(state, dir) do
+    idxs = focusable_indices(state.transcript)
+
+    if idxs == [] do
+      state
+    else
+      cur = state[:focus_idx]
+      pos = Enum.find_index(idxs, &(&1 == cur))
+
+      next_pos =
+        case {dir, pos} do
+          {:up, nil} -> length(idxs) - 1
+          {:down, nil} -> 0
+          {:up, 0} -> 0
+          {:up, p} -> p - 1
+          {:down, p} when p >= length(idxs) - 1 -> length(idxs) - 1
+          {:down, p} -> p + 1
+        end
+
+      %{state | focus_idx: Enum.at(idxs, next_pos)}
+    end
+  end
+
+  defp toggle_focus_row(state) do
+    idx = state[:focus_idx]
+
+    if is_integer(idx) and idx < length(state.transcript) do
+      transcript =
+        List.update_at(state.transcript, idx, fn
+          %{kind: k} = e when k in [:thought, :activity, :tool] ->
+            Map.put(e, :expanded, !Map.get(e, :expanded, false))
+
+          other ->
+            other
+        end)
+
+      %{state | transcript: transcript, expand_all: nil}
+    else
+      state
+    end
+  end
+
+  defp move_palette(state, dir) do
+    pal = state.palette || %{query: "", selected: 0}
+    items = Arvo.TUI.SlashMenu.filter(pal[:query] || "")
+    sel = pal[:selected] || 0
+
+    sel2 =
+      case dir do
+        :up -> max(sel - 1, 0)
+        :down -> min(sel + 1, max(length(items) - 1, 0))
+      end
+
+    %{state | palette: %{pal | selected: sel2}}
+  end
+
+  @doc "Open or update slash palette from current input draft."
+  def put_palette(state, input) when is_binary(input) do
+    if String.starts_with?(input, "/") do
+      query = String.trim_leading(input, "/")
+      # drop args after space for filter of command name
+      q = query |> String.split(" ", parts: 2) |> hd()
+      items = Arvo.TUI.SlashMenu.filter(q)
+      sel = Arvo.TUI.SlashMenu.clamp_selected(items, (state[:palette] || %{})[:selected] || 0)
+      %{state | input: input, palette: %{query: q, selected: sel}}
+    else
+      %{state | input: input, palette: nil}
+    end
+  end
+
+  @doc "Selected palette command name or nil."
+  def palette_selection(state) do
+    case state[:palette] do
+      %{query: q, selected: sel} ->
+        items = Arvo.TUI.SlashMenu.filter(q)
+        case Enum.at(items, sel) do
+          {name, _} -> name
+          _ -> nil
+        end
+
+      _ ->
+        nil
     end
   end
 
@@ -634,6 +872,13 @@ defmodule Arvo.TUI do
   defp normalize_key(:esc), do: :esc
   defp normalize_key("\e"), do: :esc
   defp normalize_key(:escape), do: :esc
+  defp normalize_key(:ctrl_e), do: :ctrl_e
+  defp normalize_key("\x05"), do: :ctrl_e
+  defp normalize_key(:up), do: :up
+  defp normalize_key(:down), do: :down
+  defp normalize_key(:enter), do: :enter
+  defp normalize_key(:space), do: :space
+  defp normalize_key(" "), do: :space
   defp normalize_key(other), do: other
 
   # Strip ESC and C0 controls (keep tab/newline) so model text cannot drive the TTY

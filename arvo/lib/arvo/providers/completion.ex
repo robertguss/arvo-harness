@@ -219,6 +219,7 @@ defmodule Arvo.Providers.Completion do
       line_buf: "",
       # Prepended then reversed (O(1) per token delta)
       content_parts: [],
+      thinking_parts: [],
       tools: %{},
       usage: %{},
       decode_fails: 0,
@@ -229,13 +230,21 @@ defmodule Arvo.Providers.Completion do
   end
 
   defp finalize_sse_acc(acc) do
-    %{
+    thinking = acc.thinking_parts |> Enum.reverse() |> IO.iodata_to_binary()
+
+    base = %{
       role: "assistant",
       content: acc.content_parts |> Enum.reverse() |> IO.iodata_to_binary(),
       tool_calls: finalize_tool_calls(acc.tools),
       usage: acc.usage,
       streamed?: true
     }
+
+    if thinking == "" do
+      base
+    else
+      Map.put(base, :thinking, thinking)
+    end
   end
 
   defp feed_sse_chunk(acc, chunk, on_delta) do
@@ -277,11 +286,22 @@ defmodule Arvo.Providers.Completion do
     usage2 = Map.merge(acc.usage, event["usage"] || %{})
     choice = get_in(event, ["choices", Access.at(0)]) || %{}
     delta = choice["delta"] || %{}
+    message = choice["message"] || %{}
+
+    thinking_parts =
+      case extract_thinking(delta) || extract_thinking(message) do
+        t when is_binary(t) and t != "" ->
+          emit_delta(on_delta, :thinking, t)
+          [t | acc.thinking_parts]
+
+        _ ->
+          acc.thinking_parts
+      end
 
     {parts, tools} =
       case delta["content"] do
         t when is_binary(t) and t != "" ->
-          if is_function(on_delta, 1), do: on_delta.(t)
+          emit_delta(on_delta, :text, t)
           {[t | acc.content_parts], acc.tools}
 
         _ ->
@@ -295,17 +315,56 @@ defmodule Arvo.Providers.Completion do
       end
 
     {parts, tools} =
-      case get_in(choice, ["message", "content"]) do
+      case message["content"] do
         t when is_binary(t) and t != "" and parts == [] ->
-          if is_function(on_delta, 1), do: on_delta.(t)
+          emit_delta(on_delta, :text, t)
           {[t | parts], tools}
 
         _ ->
           {parts, tools}
       end
 
-    %{acc | content_parts: parts, tools: tools, usage: usage2, events: acc.events + 1}
+    %{
+      acc
+      | content_parts: parts,
+        thinking_parts: thinking_parts,
+        tools: tools,
+        usage: usage2,
+        events: acc.events + 1
+    }
   end
+
+  # xAI / OpenAI-compatible reasoning fields (defensive multi-key).
+  defp extract_thinking(map) when is_map(map) do
+    cond do
+      is_binary(map["reasoning_content"]) and map["reasoning_content"] != "" ->
+        map["reasoning_content"]
+
+      is_binary(map["reasoning"]) and map["reasoning"] != "" ->
+        map["reasoning"]
+
+      is_binary(map["thinking"]) and map["thinking"] != "" ->
+        map["thinking"]
+
+      is_map(map["reasoning"]) and is_binary(map["reasoning"]["content"]) ->
+        map["reasoning"]["content"]
+
+      true ->
+        nil
+    end
+  end
+
+  defp extract_thinking(_), do: nil
+
+  # Tagged deltas: `{:text, t}` | `{:thinking, t}`. Callers may also accept bare binaries.
+  defp emit_delta(on_delta, kind, text) when is_function(on_delta, 1) and is_binary(text) do
+    on_delta.({kind, text})
+  rescue
+    FunctionClauseError ->
+      if kind == :text, do: on_delta.(text), else: :ok
+  end
+
+  defp emit_delta(_, _, _), do: :ok
 
   defp binary_slice_tail(bin, max) when is_binary(bin) and is_integer(max) do
     if byte_size(bin) <= max, do: bin, else: binary_part(bin, byte_size(bin) - max, max)
@@ -439,7 +498,7 @@ defmodule Arvo.Providers.Completion do
     content = message["content"] || ""
 
     if content != "" and is_function(on_delta, 1) do
-      on_delta.(content)
+      emit_delta(on_delta, :text, content)
     end
 
     tool_calls =

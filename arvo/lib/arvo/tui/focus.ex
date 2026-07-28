@@ -71,7 +71,7 @@ defmodule Arvo.TUI.Focus do
       |> Termite.Terminal.write(Termite.Screen.escape_sequence(:cursor_hide))
 
     try do
-      raw_loop(term, %{input: "", multiline: false, scroll: 0}, nil)
+      raw_loop(term, %{input: "", multiline: false, scroll: 0, palette: nil}, nil)
     after
       try do
         term
@@ -100,6 +100,7 @@ defmodule Arvo.TUI.Focus do
       st
       |> Map.put(:input, local.input)
       |> Map.put(:scroll, local.scroll)
+      |> Map.put(:palette, local[:palette])
 
     {w, h} = size(term)
     frame = Render.frame(st, width: w, height: h, scroll: local.scroll)
@@ -151,12 +152,41 @@ defmodule Arvo.TUI.Focus do
 
   defp handle_keys(data, local, st) do
     cond do
+      # Esc: close palette first, else cancel turn
       data == "\e" or data == "\e\e" ->
-        if st.status == :running do
-          _ = Arvo.TUI.key(:esc)
+        cond do
+          local[:palette] != nil ->
+            {:cont, %{local | palette: nil}}
+
+          st.status == :running ->
+            _ = Arvo.TUI.key(:esc)
+            {:cont, local}
+
+          true ->
+            {:cont, local}
         end
 
+      # Ctrl+E — global expand/collapse
+      data == "\x05" ->
+        _ = Arvo.TUI.key(:ctrl_e)
         {:cont, local}
+
+      # Up / Down — palette or transcript focus
+      data in ["\e[A", "\eOA"] ->
+        if local[:palette] do
+          {:cont, move_palette_sel(local, :up)}
+        else
+          _ = Arvo.TUI.key(:up)
+          {:cont, local}
+        end
+
+      data in ["\e[B", "\eOB"] ->
+        if local[:palette] do
+          {:cont, move_palette_sel(local, :down)}
+        else
+          _ = Arvo.TUI.key(:down)
+          {:cont, local}
+        end
 
       # PageUp / Ctrl+Up — scroll transcript toward older lines
       data in ["\e[5~", "\e[1;5A"] ->
@@ -167,30 +197,91 @@ defmodule Arvo.TUI.Focus do
         {:cont, %{local | scroll: max(local.scroll - scroll_step(), 0)}}
 
       data in ["\r", "\n"] ->
-        submit_input(local)
+        submit_input(local, st)
+
+      # Space toggles focus row when input empty and idle
+      data == " " and String.trim(local.input) == "" and st.status != :running and local[:palette] == nil ->
+        _ = Arvo.TUI.key(:space)
+        {:cont, local}
 
       data == "\x7f" or data == "\b" ->
-        {:cont, %{local | input: String.slice(local.input, 0..-2//1)}}
+        input = String.slice(local.input, 0..-2//1)
+        {:cont, set_input(local, input)}
 
       data == "\x03" ->
         # Ctrl+C
         {:quit, local}
 
       String.printable?(data) and not String.contains?(data, "\e") ->
-        {:cont, %{local | input: local.input <> data}}
+        input = local.input <> data
+        {:cont, set_input(local, input)}
 
       true ->
-        # Other escape sequences (arrows etc.) — ignore for D1
         {:cont, local}
     end
   end
 
   defp scroll_step, do: 10
 
-  defp submit_input(local) do
+  defp set_input(local, input) do
+    palette =
+      if String.starts_with?(input, "/") do
+        q = input |> String.trim_leading("/") |> String.split(" ", parts: 2) |> hd()
+        sel = (local[:palette] || %{})[:selected] || 0
+        items = Arvo.TUI.SlashMenu.filter(q)
+        %{query: q, selected: Arvo.TUI.SlashMenu.clamp_selected(items, sel)}
+      else
+        nil
+      end
+
+    %{local | input: input, palette: palette}
+  end
+
+  defp move_palette_sel(local, dir) do
+    pal = local[:palette] || %{query: "", selected: 0}
+    items = Arvo.TUI.SlashMenu.filter(pal[:query] || "")
+    sel = pal[:selected] || 0
+
+    sel2 =
+      case dir do
+        :up -> max(sel - 1, 0)
+        :down -> min(sel + 1, max(length(items) - 1, 0))
+      end
+
+    %{local | palette: %{pal | selected: sel2}}
+  end
+
+  defp submit_input(local, st) do
+    # Palette Enter: complete to selected command (keep trailing args if any)
+    local =
+      if local[:palette] do
+        case selected_palette_cmd(local) do
+          nil ->
+            %{local | palette: nil}
+
+          name ->
+            draft = String.trim(local.input)
+
+            args =
+              case String.split(String.trim_leading(draft, "/"), " ", parts: 2) do
+                [_, a] -> " " <> a
+                _ -> ""
+              end
+
+            %{local | input: "/" <> name <> args, palette: nil}
+        end
+      else
+        local
+      end
+
     text = String.trim(local.input)
 
     cond do
+      text == "" and st.status != :running ->
+        # Empty Enter toggles focused row when idle
+        _ = Arvo.TUI.key(:enter)
+        {:cont, local}
+
       text == "" ->
         {:cont, local}
 
@@ -209,27 +300,41 @@ defmodule Arvo.TUI.Focus do
 
               {:ok, _, msg} when is_binary(msg) ->
                 _ = Arvo.TUI.append_system(msg)
-                {:cont, %{local | input: ""}}
+                {:cont, %{local | input: "", palette: nil}}
 
               _ ->
-                {:cont, %{local | input: ""}}
+                {:cont, %{local | input: "", palette: nil}}
             end
 
           _ ->
-            {:cont, %{local | input: ""}}
+            {:cont, %{local | input: "", palette: nil}}
         end
 
       true ->
-        # Claim running synchronously so double-Enter cannot race before agent_start
         case Arvo.TUI.try_begin_turn() do
           :ok ->
             _ = spawn_chat(text)
-            {:cont, %{local | input: ""}}
+            {:cont, %{local | input: "", palette: nil}}
 
           {:error, :busy} ->
             _ = Arvo.Session.steer(text)
-            {:cont, %{local | input: ""}}
+            {:cont, %{local | input: "", palette: nil}}
         end
+    end
+  end
+
+  defp selected_palette_cmd(local) do
+    case local[:palette] do
+      %{query: q, selected: sel} ->
+        items = Arvo.TUI.SlashMenu.filter(q)
+
+        case Enum.at(items, sel) do
+          {name, _} -> name
+          _ -> nil
+        end
+
+      _ ->
+        nil
     end
   end
 

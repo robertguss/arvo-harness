@@ -41,13 +41,45 @@ defmodule Arvo.CompletionTest do
     """
 
     deltas = :ets.new(:deltas, [:public, :bag])
-    on_delta = fn t -> :ets.insert(deltas, {:d, t}) end
+
+    on_delta = fn
+      {:text, t} -> :ets.insert(deltas, {:d, t})
+      {:thinking, t} -> :ets.insert(deltas, {:th, t})
+      t when is_binary(t) -> :ets.insert(deltas, {:d, t})
+    end
 
     assert {:ok, result} = Arvo.Providers.Completion.parse_sse_stream(body, on_delta)
     assert result.content == "Hello world"
     assert result.streamed? == true
     assert result.tool_calls == []
     assert length(:ets.lookup(deltas, :d)) == 3
+  end
+
+  test "parse_sse_stream emits thinking deltas from reasoning_content" do
+    body = """
+    data: {"choices":[{"delta":{"reasoning_content":"plan "}}]}
+
+    data: {"choices":[{"delta":{"reasoning_content":"step"}}]}
+
+    data: {"choices":[{"delta":{"content":"ok"}}]}
+
+    data: [DONE]
+
+    """
+
+    acc = :ets.new(:th, [:public, :bag])
+
+    on_delta = fn
+      {:thinking, t} -> :ets.insert(acc, {:th, t})
+      {:text, t} -> :ets.insert(acc, {:tx, t})
+      _ -> :ok
+    end
+
+    assert {:ok, result} = Arvo.Providers.Completion.parse_sse_stream(body, on_delta)
+    assert result.content == "ok"
+    assert result.thinking == "plan step"
+    assert length(:ets.lookup(acc, :th)) == 2
+    assert length(:ets.lookup(acc, :tx)) == 1
   end
 
   test "parse_sse_stream assembles tool_calls fully before return" do
@@ -88,7 +120,11 @@ defmodule Arvo.CompletionTest do
                [%{role: "user", content: "hi"}],
                [],
                stream_body: body,
-               on_delta: fn t -> send(parent, {:delta, t}) end
+               on_delta: fn
+                 {:text, t} -> send(parent, {:delta, t})
+                 t when is_binary(t) -> send(parent, {:delta, t})
+                 _ -> :ok
+               end
              )
 
     assert result.content == "ab"
@@ -162,7 +198,7 @@ defmodule Arvo.CompletionTest do
 
     complete_fun = fn _, _, config ->
       on_delta = Map.get(config, :on_delta, fn _ -> :ok end)
-      on_delta.("partial")
+      on_delta.({:text, "partial"})
       Process.sleep(10_000)
       {:ok, %{role: "assistant", content: "finished", tool_calls: [], streamed?: true}}
     end

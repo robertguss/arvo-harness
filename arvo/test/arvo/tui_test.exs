@@ -12,26 +12,29 @@ defmodule Arvo.TUITest do
     assert st.buffer == "hi"
     assert st.streaming
 
-    :ok = Arvo.TUI.handle_event_sync({:tool_call_start, %{name: "bash"}})
+    :ok = Arvo.TUI.handle_event_sync({:tool_call_start, %{name: "bash", arguments: %{command: "echo hi"}}})
     st = Arvo.TUI.state()
     assert st.tool_name == "bash"
     assert st.spinner
-    assert Enum.any?(st.transcript, &(&1.kind == :tool && &1.name == "bash"))
+    assert Enum.any?(st.transcript, &(&1.kind == :activity && &1.name == "bash"))
 
     :ok = Arvo.TUI.handle_event_sync({:agent_end, %{}})
     st = Arvo.TUI.state()
     assert st.status == :idle
   end
 
-  test "tool_end folds tool line; agent_error is loud idle chrome" do
+  test "tool_end updates activity line; agent_error is loud idle chrome" do
     :ok = Arvo.TUI.handle_event_sync({:agent_start, %{}})
-    :ok = Arvo.TUI.handle_event_sync({:tool_call_start, %{name: "read"}})
+    :ok = Arvo.TUI.handle_event_sync({:tool_call_start, %{name: "read", arguments: %{path: "x.ex"}}})
     :ok = Arvo.TUI.handle_event_sync({:tool_call_end, %{name: "read", is_error: false, text: "ok"}})
     st = Arvo.TUI.state()
-    tool = Enum.find(st.transcript, &(&1.kind == :tool && &1.name == "read"))
-    assert tool.folded == true
-    assert tool.text =~ "ok"
-    assert tool.text =~ "[model:full]"
+    act = Enum.find(st.transcript, &(&1.kind == :activity && &1.name == "read"))
+    assert act.status == :ok
+    assert act.summary =~ "read"
+    assert act.summary =~ "x.ex"
+    assert act.detail =~ "ok"
+    assert act.detail =~ "[model:full]"
+    assert act.expanded == false
 
     :ok = Arvo.TUI.handle_event_sync({:agent_error, %{error: "boom"}})
     st = Arvo.TUI.state()
@@ -42,7 +45,7 @@ defmodule Arvo.TUITest do
 
   test "dual-view stub shows model pane with stub text" do
     :ok = Arvo.TUI.handle_event_sync({:agent_start, %{}})
-    :ok = Arvo.TUI.handle_event_sync({:tool_call_start, %{name: "bash"}})
+    :ok = Arvo.TUI.handle_event_sync({:tool_call_start, %{name: "bash", arguments: %{command: "ls"}}})
 
     :ok =
       Arvo.TUI.handle_event_sync({
@@ -58,17 +61,18 @@ defmodule Arvo.TUITest do
       })
 
     st = Arvo.TUI.state()
-    tool =
+    act =
       st.transcript
-      |> Enum.filter(&(&1.kind == :tool && &1.name == "bash"))
+      |> Enum.filter(&(&1.kind == :activity && &1.name == "bash"))
       |> List.last()
 
-    assert tool
-    assert tool.text =~ "full log"
-    assert tool.text =~ "[model:stub"
-    assert tool.text =~ "cold:abc123"
-    assert tool.text =~ "model saw"
-    assert tool.text =~ "[cold:abc123"
+    assert act
+    assert act.summary =~ "ls"
+    assert act.detail =~ "full log"
+    assert act.detail =~ "[model:stub"
+    assert act.detail =~ "cold:abc123"
+    assert act.detail =~ "model saw"
+    assert act.detail =~ "[cold:abc123"
   end
 
 
@@ -195,7 +199,7 @@ defmodule Arvo.TUITest do
     assert frame =~ "arvo"
   end
 
-  test "tool entries show multi-line preview not 40-char fold" do
+  test "activity entries are compact one-liners; expand shows detail" do
     tool_out = """
     total 7144
     drwxrwxr-x 12 rob rob    4096 Jul 28 .
@@ -212,7 +216,14 @@ defmodule Arvo.TUITest do
       tokens: %{cumulative: 0, window: 100},
       status: :idle,
       transcript: [
-        %{kind: :tool, name: "bash", text: tool_out <> " [model:full]", folded: true}
+        %{
+          kind: :activity,
+          name: "bash",
+          summary: "bash · ls -la",
+          status: :ok,
+          detail: tool_out <> " [model:full]",
+          expanded: false
+        }
       ],
       buffer: "",
       streaming: false,
@@ -221,11 +232,13 @@ defmodule Arvo.TUITest do
     }
 
     frame = Arvo.TUI.Render.frame(st, width: 60, height: 24)
-    assert frame =~ "tool bash"
-    assert frame =~ "mix.exs"
-    assert frame =~ "README.md"
-    # Must not be stuck at the old 40-char one-liner.
-    refute frame =~ ~r/tool bash: total 7144\s*$/m
+    assert frame =~ "bash · ls -la"
+    refute frame =~ "mix.exs"
+
+    st2 = put_in(st, [:transcript, Access.at(0), :expanded], true)
+    frame2 = Arvo.TUI.Render.frame(st2, width: 60, height: 24)
+    assert frame2 =~ "mix.exs"
+    assert frame2 =~ "README.md"
   end
 
   test "transcript scroll reveals older lines above the live tail" do
@@ -394,4 +407,60 @@ defmodule Arvo.TUITest do
     assert Arvo.TUI.Commands.parse("/model xai:g") == {:command, "model", "xai:g"}
     assert Arvo.TUI.Commands.parse("hello") == {:text, "hello"}
   end
+
+  test "thinking events create collapsible Thought row" do
+    :ok = Arvo.TUI.handle_event_sync({:agent_start, %{}})
+    :ok = Arvo.TUI.handle_event_sync({:thinking_start, %{}})
+    :ok = Arvo.TUI.handle_event_sync({:thinking_delta, %{text: "I should list files"}})
+    st = Arvo.TUI.state()
+    th = st.transcript |> Enum.filter(&(&1.kind == :thought)) |> List.last()
+    assert th.live
+    assert th.expanded
+    assert th.text =~ "list files"
+
+    :ok = Arvo.TUI.handle_event_sync({:thinking_end, %{}})
+    st = Arvo.TUI.state()
+    th = st.transcript |> Enum.filter(&(&1.kind == :thought)) |> List.last()
+    assert th.live == false
+    assert th.expanded == false
+    assert is_integer(th.ended_at)
+
+    frame = Arvo.TUI.Render.frame(st, width: 60, height: 16)
+    assert frame =~ "Thought for"
+  end
+
+  test "Ctrl+E expands all focusable rows" do
+    :ok = Arvo.TUI.handle_event_sync({:thinking_start, %{}})
+    :ok = Arvo.TUI.handle_event_sync({:thinking_delta, %{text: "reason"}})
+    :ok = Arvo.TUI.handle_event_sync({:thinking_end, %{}})
+    :ok = Arvo.TUI.handle_event_sync({:tool_call_start, %{name: "bash", arguments: %{command: "ls"}}})
+    :ok = Arvo.TUI.handle_event_sync({:tool_call_end, %{name: "bash", text: "a\nb\n", is_error: false}})
+
+    {:ok, st} = Arvo.TUI.handle_key(Arvo.TUI.state(), :ctrl_e)
+    assert st.expand_all == true
+    assert Enum.all?(st.transcript, fn
+             %{kind: k, expanded: e} when k in [:thought, :activity] -> e
+             _ -> true
+           end)
+  end
+
+  test "slash palette renders command descriptions" do
+    st = %{
+      model: "xai:g",
+      profile: "base",
+      tokens: %{cumulative: 0, window: 100},
+      status: :idle,
+      transcript: [],
+      buffer: "",
+      streaming: false,
+      input: "/he",
+      palette: %{query: "he", selected: 0},
+      last_error: nil
+    }
+
+    frame = Arvo.TUI.Render.frame(st, width: 70, height: 16)
+    assert frame =~ "/help"
+    assert frame =~ "Show commands" or frame =~ "commands"
+  end
 end
+

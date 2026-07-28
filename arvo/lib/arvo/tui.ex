@@ -256,11 +256,13 @@ defmodule Arvo.TUI do
 
   defp reduce_event(state, {:thinking_end, _}) do
     now = System.monotonic_time(:millisecond)
-    expand_done = default_expanded(state, false)
 
     transcript =
       update_last_thought(state.transcript, fn th ->
-        %{th | live: false, ended_at: now, expanded: expand_done}
+        # Keep reasoning text on-screen after thinking ends so scrollback stays
+        # useful; user can still collapse via Ctrl+E / per-row toggle.
+        keep_open? = is_binary(th.text) and th.text != ""
+        %{th | live: false, ended_at: now, expanded: default_expanded(state, keep_open?)}
       end)
 
     %{state | transcript: transcript}
@@ -346,15 +348,17 @@ defmodule Arvo.TUI do
         state.transcript
       end
 
-    # Ensure any live thought is closed
+    # Ensure any live thought is closed but keep body visible when present
     transcript =
       update_last_thought(transcript, fn th ->
         if th.live do
+          keep_open? = is_binary(th.text) and th.text != ""
+
           %{
             th
             | live: false,
               ended_at: th.ended_at || System.monotonic_time(:millisecond),
-              expanded: default_expanded(state, false)
+              expanded: default_expanded(state, keep_open?)
           }
         else
           th
@@ -563,6 +567,7 @@ defmodule Arvo.TUI do
       /model [spec]      show or set model (req_llm string, e.g. xai:grok-4.5)
       /profile [name]    list profiles, or switch workflow profile
       /login [provider]  device-flow login (default grok)
+      /new               start a fresh session (clear transcript)
       /resume [n|path]   list sessions, or resume by index/path
       /rewind [n]        move HEAD back n steps (default 1); next msg forks
       /handoff           new session with work-delta packet (no silent compact)
@@ -622,6 +627,41 @@ defmodule Arvo.TUI do
 
         {:error, reason} ->
           {{:ok, :handled, "profile error: #{inspect(reason)}"}, state}
+      end
+    end
+  end
+
+  defp do_slash(state, "new", _) do
+    # Idle-only: refuse while a product turn is running (same class as profile/resume).
+    if Arvo.Session.turn_in_progress?() do
+      {{:ok, :handled, "new session rejected: turn in progress (idle-only)"}, state}
+    else
+      cwd = Application.get_env(:arvo, :cwd) || Arvo.cwd()
+
+      opts =
+        []
+        |> then(fn o ->
+          if is_binary(state.model), do: Keyword.put(o, :model, state.model), else: o
+        end)
+        |> then(fn o ->
+          if is_binary(state[:profile]), do: Keyword.put(o, :profile, state[:profile]), else: o
+        end)
+
+      case Arvo.Session.open_new(cwd, opts) do
+        {:ok, path} ->
+          state = fresh_ui_state(state)
+
+          {{:ok, :handled, "new session → #{Path.basename(path)}"},
+           %{
+             state
+             | transcript: [%{kind: :system, text: "new session → #{Path.basename(path)}"}]
+           }}
+
+        {:error, :turn_in_progress} ->
+          {{:ok, :handled, "new session rejected: turn in progress (idle-only)"}, state}
+
+        {:error, reason} ->
+          {{:ok, :handled, "new session failed: #{inspect(reason)}"}, state}
       end
     end
   end
@@ -835,6 +875,23 @@ defmodule Arvo.TUI do
     /inspect <id> for full cold body; /recall <id> to expand under caps.
     """
     |> String.trim()
+  end
+
+  defp fresh_ui_state(state) do
+    %{
+      state
+      | status: :idle,
+        spinner: false,
+        tool_name: nil,
+        streaming: false,
+        buffer: "",
+        last_error: nil,
+        focus_idx: nil,
+        expand_all: nil,
+        palette: nil,
+        tokens: %{turn: 0, cumulative: 0, window: 500_000},
+        transcript: []
+    }
   end
 
   defp rehydrate_from_resume(state, resumed) do

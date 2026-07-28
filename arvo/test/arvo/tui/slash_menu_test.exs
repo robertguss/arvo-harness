@@ -7,6 +7,7 @@ defmodule Arvo.TUI.SlashMenuTest do
     names = Enum.map(SlashMenu.catalog(), &elem(&1, 0))
     assert "help" in names
     assert "model" in names
+    assert "new" in names
     assert "quit" in names
   end
 

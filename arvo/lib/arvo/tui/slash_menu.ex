@@ -8,6 +8,7 @@ defmodule Arvo.TUI.SlashMenu do
     {"model", "Show or set model (e.g. xai:grok-4.5)"},
     {"profile", "List or switch workflow profile"},
     {"login", "Device-flow login (default grok)"},
+    {"new", "Start a fresh session (clear transcript)"},
     {"resume", "List sessions or resume by index/path"},
     {"rewind", "Move HEAD back n steps (default 1)"},
     {"handoff", "New session with work-delta packet"},

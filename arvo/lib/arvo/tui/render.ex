@@ -173,12 +173,15 @@ defmodule Arvo.TUI.Render do
   defp wrap_entry(%{kind: :thought} = entry, width, opts) do
     focused? = Keyword.get(opts, :focused?, false)
     live? = Map.get(entry, :live, false)
-    expanded? = Map.get(entry, :expanded, live?)
     text = Map.get(entry, :text) || ""
+    # Default open when there is reasoning text (persist in scrollback).
+    expanded? = Map.get(entry, :expanded, text != "" or live?)
 
     header =
       cond do
-        live? -> "◆ Thinking…"
+        live? and text == "" -> "◆ Thinking…"
+        live? -> "◆ Thinking… (#{thought_duration(entry)})"
+        text != "" -> "◆ Thought for #{thought_duration(entry)}"
         true -> "◆ Thought for #{thought_duration(entry)}"
       end
 

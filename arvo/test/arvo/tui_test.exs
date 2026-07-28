@@ -90,6 +90,7 @@ defmodule Arvo.TUITest do
     assert help =~ "/model"
     assert help =~ "/profile"
     assert help =~ "/login"
+    assert help =~ "/new"
     assert help =~ "/resume"
     assert help =~ "/compact"
     assert help =~ "/quit"
@@ -422,11 +423,13 @@ defmodule Arvo.TUITest do
     st = Arvo.TUI.state()
     th = st.transcript |> Enum.filter(&(&1.kind == :thought)) |> List.last()
     assert th.live == false
-    assert th.expanded == false
+    # Reasoning stays expanded so it remains in scrollback after the turn
+    assert th.expanded == true
     assert is_integer(th.ended_at)
 
     frame = Arvo.TUI.Render.frame(st, width: 60, height: 16)
     assert frame =~ "Thought for"
+    assert frame =~ "list files"
   end
 
   test "Ctrl+E expands all focusable rows" do
@@ -461,6 +464,43 @@ defmodule Arvo.TUITest do
     frame = Arvo.TUI.Render.frame(st, width: 70, height: 16)
     assert frame =~ "/help"
     assert frame =~ "Show commands" or frame =~ "commands"
+  end
+
+  test "/new opens a fresh session and clears transcript" do
+    tmp = Path.join(System.tmp_dir!(), "arvo-new-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(tmp)
+    old = System.get_env("HOME")
+    System.put_env("HOME", tmp)
+    Application.put_env(:arvo, :cwd, tmp)
+
+    on_exit(fn ->
+      if old, do: System.put_env("HOME", old)
+      File.rm_rf!(tmp)
+    end)
+
+    {:ok, path1} = Arvo.Session.open_new(tmp)
+    :ok = Arvo.TUI.append_user("old message")
+    :ok = Arvo.TUI.append_system("noise")
+    st_before = Arvo.TUI.state()
+    assert length(st_before.transcript) >= 2
+
+    assert {:ok, :handled, msg} = Arvo.TUI.slash("new")
+    assert msg =~ "new session"
+    refute msg =~ Path.basename(path1)
+
+    st = Arvo.TUI.state()
+    assert st.status == :idle
+    assert st.buffer == ""
+    assert st.streaming == false
+    # Fresh pane: only the system marker for the new session
+    assert length(st.transcript) == 1
+    assert hd(st.transcript).kind == :system
+    assert hd(st.transcript).text =~ "new session"
+
+    sess = Arvo.Session.get()
+    assert is_binary(sess.path)
+    assert sess.path != path1
+    assert File.exists?(sess.path)
   end
 end
 

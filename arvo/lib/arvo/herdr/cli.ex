@@ -207,7 +207,8 @@ defmodule Arvo.Herdr.CLI do
   defp maybe_opt(args, _flag, nil), do: args
   defp maybe_opt(args, _flag, ""), do: args
 
-  defp maybe_opt(args, flag, value) when is_binary(value) or is_integer(value) or is_float(value) do
+  defp maybe_opt(args, flag, value)
+       when is_binary(value) or is_integer(value) or is_float(value) do
     args ++ [flag, to_string(value)]
   end
 

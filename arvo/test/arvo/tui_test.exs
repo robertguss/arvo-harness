@@ -12,7 +12,11 @@ defmodule Arvo.TUITest do
     assert st.buffer == "hi"
     assert st.streaming
 
-    :ok = Arvo.TUI.handle_event_sync({:tool_call_start, %{name: "bash", arguments: %{command: "echo hi"}}})
+    :ok =
+      Arvo.TUI.handle_event_sync(
+        {:tool_call_start, %{name: "bash", arguments: %{command: "echo hi"}}}
+      )
+
     st = Arvo.TUI.state()
     assert st.tool_name == "bash"
     assert st.spinner
@@ -25,8 +29,13 @@ defmodule Arvo.TUITest do
 
   test "tool_end updates activity line; agent_error is loud idle chrome" do
     :ok = Arvo.TUI.handle_event_sync({:agent_start, %{}})
-    :ok = Arvo.TUI.handle_event_sync({:tool_call_start, %{name: "read", arguments: %{path: "x.ex"}}})
-    :ok = Arvo.TUI.handle_event_sync({:tool_call_end, %{name: "read", is_error: false, text: "ok"}})
+
+    :ok =
+      Arvo.TUI.handle_event_sync({:tool_call_start, %{name: "read", arguments: %{path: "x.ex"}}})
+
+    :ok =
+      Arvo.TUI.handle_event_sync({:tool_call_end, %{name: "read", is_error: false, text: "ok"}})
+
     st = Arvo.TUI.state()
     act = Enum.find(st.transcript, &(&1.kind == :activity && &1.name == "read"))
     assert act.status == :ok
@@ -45,7 +54,9 @@ defmodule Arvo.TUITest do
 
   test "dual-view stub shows model pane with stub text" do
     :ok = Arvo.TUI.handle_event_sync({:agent_start, %{}})
-    :ok = Arvo.TUI.handle_event_sync({:tool_call_start, %{name: "bash", arguments: %{command: "ls"}}})
+
+    :ok =
+      Arvo.TUI.handle_event_sync({:tool_call_start, %{name: "bash", arguments: %{command: "ls"}}})
 
     :ok =
       Arvo.TUI.handle_event_sync({
@@ -61,6 +72,7 @@ defmodule Arvo.TUITest do
       })
 
     st = Arvo.TUI.state()
+
     act =
       st.transcript
       |> Enum.filter(&(&1.kind == :activity && &1.name == "bash"))
@@ -74,7 +86,6 @@ defmodule Arvo.TUITest do
     assert act.detail =~ "model saw"
     assert act.detail =~ "[cold:abc123"
   end
-
 
   test "message_delta accumulates without requiring full redraw" do
     :ok = Arvo.TUI.handle_event_sync({:agent_start, %{}})
@@ -254,7 +265,14 @@ defmodule Arvo.TUITest do
       tokens: %{cumulative: 0, window: 100},
       status: :running,
       transcript: [
-        %{kind: :activity, name: "read", summary: "read · lib/x.ex", status: :running, detail: nil, expanded: false},
+        %{
+          kind: :activity,
+          name: "read",
+          summary: "read · lib/x.ex",
+          status: :running,
+          detail: nil,
+          expanded: false
+        },
         %{kind: :assistant, text: "partial answer", aborted: true}
       ],
       buffer: "",
@@ -490,11 +508,18 @@ defmodule Arvo.TUITest do
     :ok = Arvo.TUI.handle_event_sync({:thinking_start, %{}})
     :ok = Arvo.TUI.handle_event_sync({:thinking_delta, %{text: "reason"}})
     :ok = Arvo.TUI.handle_event_sync({:thinking_end, %{}})
-    :ok = Arvo.TUI.handle_event_sync({:tool_call_start, %{name: "bash", arguments: %{command: "ls"}}})
-    :ok = Arvo.TUI.handle_event_sync({:tool_call_end, %{name: "bash", text: "a\nb\n", is_error: false}})
+
+    :ok =
+      Arvo.TUI.handle_event_sync({:tool_call_start, %{name: "bash", arguments: %{command: "ls"}}})
+
+    :ok =
+      Arvo.TUI.handle_event_sync(
+        {:tool_call_end, %{name: "bash", text: "a\nb\n", is_error: false}}
+      )
 
     {:ok, st} = Arvo.TUI.handle_key(Arvo.TUI.state(), :ctrl_e)
     assert st.expand_all == true
+
     assert Enum.all?(st.transcript, fn
              %{kind: k, expanded: e} when k in [:thought, :activity] -> e
              _ -> true
@@ -711,6 +736,7 @@ defmodule Arvo.TUITest do
 
     {:ok, _} = Arvo.Session.open_new(tmp)
     {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "run"})
+
     {:ok, _} =
       Arvo.Session.record_message(%{
         role: "assistant",
@@ -743,7 +769,7 @@ defmodule Arvo.TUITest do
         for _ <- 1..steps, do: Arvo.TUI.key(:up)
 
       steps < 0 ->
-        for _ <- 1..(-steps), do: Arvo.TUI.key(:down)
+        for _ <- 1..-steps, do: Arvo.TUI.key(:down)
 
       true ->
         :ok

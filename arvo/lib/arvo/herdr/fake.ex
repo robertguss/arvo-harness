@@ -138,6 +138,7 @@ defmodule Arvo.Herdr.Fake do
   def handle_call({:split, opts}, _from, state) do
     id = "fake:p#{state.next_id}"
     pane = %{id: id, command: nil, opts: opts, open: true}
+
     state = %{
       state
       | next_id: state.next_id + 1,
@@ -157,6 +158,7 @@ defmodule Arvo.Herdr.Fake do
 
       pane ->
         pane = %{pane | command: command}
+
         state = %{
           state
           | panes: Map.put(state.panes, pane_id, pane),

@@ -39,6 +39,7 @@ defmodule Arvo.ToolsTest do
         assert is_binary(spec.name)
         assert is_binary(spec.description)
         assert is_map(spec.parameters)
+
         assert spec.parameters["type"] == "object" or spec.parameters[:type] == "object" or
                  Map.has_key?(spec.parameters, "properties") or
                  Map.has_key?(spec.parameters, :properties)
@@ -113,8 +114,7 @@ defmodule Arvo.ToolsTest do
                Arvo.Tool.invoke(
                  Arvo.Tools.Bash,
                  %{
-                   command:
-                     "python3 -c \"print('x'*110000); print('TAILMARKER')\""
+                   command: "python3 -c \"print('x'*110000); print('TAILMARKER')\""
                  },
                  ctx
                )
@@ -211,6 +211,7 @@ defmodule Arvo.ToolsTest do
       assert "pane" in names
       refute Enum.any?(names, &String.contains?(&1, "sub_agent"))
       refute Enum.any?(names, &String.contains?(&1, "background"))
+
       refute Enum.any?(tools, fn mod ->
                name = Module.split(mod) |> List.last() |> String.downcase()
                name in ["subagent", "backgroundbash", "background_bash"]
@@ -233,12 +234,14 @@ defmodule Arvo.ToolsTest do
       assert Arvo.Session.owned_panes() == []
 
       calls = Arvo.Herdr.Fake.calls()
-      kinds = Enum.map(calls, fn
-        {k, _} -> k
-        {k, _, _} -> k
-        {k, _, _, _} -> k
-        other -> other
-      end)
+
+      kinds =
+        Enum.map(calls, fn
+          {k, _} -> k
+          {k, _, _} -> k
+          {k, _, _, _} -> k
+          other -> other
+        end)
 
       assert :split in kinds
       assert :run in kinds

@@ -224,7 +224,7 @@ defmodule Arvo.TUI.Focus do
 
       # Space toggles focus row when input empty and idle
       data == " " and String.trim(local.input) == "" and st.status != :running and
-          local[:palette] == nil and not tree_open? ->
+        local[:palette] == nil and not tree_open? ->
         _ = Arvo.TUI.key(:space)
         {:cont, local}
 

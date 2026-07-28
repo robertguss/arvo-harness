@@ -28,7 +28,10 @@ defmodule Arvo.Session do
 
   @doc "Start a new persisted session for cwd."
   def open_new(cwd \\ nil, opts \\ []) do
-    GenServer.call(__MODULE__, {:open_new, cwd || Application.get_env(:arvo, :cwd) || Arvo.cwd(), opts})
+    GenServer.call(
+      __MODULE__,
+      {:open_new, cwd || Application.get_env(:arvo, :cwd) || Arvo.cwd(), opts}
+    )
   end
 
   @doc "Resume the newest session for cwd from tip (or given path)."
@@ -254,18 +257,19 @@ defmodule Arvo.Session do
 
       {:ok, path, meta} = Arvo.Session.Store.create(cwd, opts)
 
-      state = %{
-        state
-        | id: meta["id"],
-          path: path,
-          last_id: meta["id"],
-          cwd: cwd,
-          history: [meta],
-          model: meta["model"],
-          profile: meta["profile"],
-          tokens: Arvo.Session.Tokens.new()
-      }
-      |> put_attention_defaults()
+      state =
+        %{
+          state
+          | id: meta["id"],
+            path: path,
+            last_id: meta["id"],
+            cwd: cwd,
+            history: [meta],
+            model: meta["model"],
+            profile: meta["profile"],
+            tokens: Arvo.Session.Tokens.new()
+        }
+        |> put_attention_defaults()
 
       {:reply, {:ok, path}, state}
     end
@@ -305,19 +309,20 @@ defmodule Arvo.Session do
           warm = warm_from_history(entries)
           path_index = rebuild_path_index(path)
 
-          state = %{
-            state
-            | id: meta && meta["id"],
-              path: path,
-              last_id: head,
-              cwd: (meta && meta["cwd"]) || state.cwd,
-              history: entries,
-              model: meta && meta["model"],
-              profile: meta && meta["profile"],
-              tokens: tokens
-          }
-          |> put_attention_defaults(warm)
-          |> Map.put(:attention_path_index, path_index)
+          state =
+            %{
+              state
+              | id: meta && meta["id"],
+                path: path,
+                last_id: head,
+                cwd: (meta && meta["cwd"]) || state.cwd,
+                history: entries,
+                model: meta && meta["model"],
+                profile: meta && meta["profile"],
+                tokens: tokens
+            }
+            |> put_attention_defaults(warm)
+            |> Map.put(:attention_path_index, path_index)
 
           # Do not call TUI here — resume is often invoked from TUI.slash (deadlock).
           messages = Arvo.Session.Store.messages_to_head(entries)
@@ -398,7 +403,10 @@ defmodule Arvo.Session do
       entry =
         attrs
         |> Map.put("type", Map.get(attrs, "type") || Map.get(attrs, :type) || "message")
-        |> Map.put("parent_id", Map.get(attrs, "parent_id") || Map.get(attrs, :parent_id) || state.last_id)
+        |> Map.put(
+          "parent_id",
+          Map.get(attrs, "parent_id") || Map.get(attrs, :parent_id) || state.last_id
+        )
 
       written = Arvo.Session.Store.append!(state.path, entry)
 
@@ -434,7 +442,8 @@ defmodule Arvo.Session do
     end
   end
 
-  def handle_call(:warm, _from, state), do: {:reply, state.warm || Arvo.Session.Warm.empty(), state}
+  def handle_call(:warm, _from, state),
+    do: {:reply, state.warm || Arvo.Session.Warm.empty(), state}
 
   def handle_call({:set_warm_goal, goal}, _from, state) do
     warm = Arvo.Session.Warm.set_goal(state.warm || Arvo.Session.Warm.empty(), goal)
@@ -604,7 +613,10 @@ defmodule Arvo.Session do
           event_fun.(event)
         rescue
           e ->
-            Logger.warning("Arvo.Session event_fun failed (#{inspect(elem_tag(event))}): #{Exception.message(e)}")
+            Logger.warning(
+              "Arvo.Session event_fun failed (#{inspect(elem_tag(event))}): #{Exception.message(e)}"
+            )
+
             :ok
         catch
           kind, reason ->
@@ -1033,7 +1045,7 @@ defmodule Arvo.Session do
         turn_task: nil,
         turn_result: nil,
         turn_prior_len: nil,
-        cancelled_generation: nil,
+        cancelled_generation: nil
     }
     |> put_attention_defaults(Arvo.Session.Warm.normalize(child_warm))
   end
@@ -1130,7 +1142,8 @@ defmodule Arvo.Session do
               tool: m[:name] || m["name"] || "tool",
               args: %{},
               is_error: m[:is_error] || m["is_error"] || false,
-              text: if(m[:is_error] || m["is_error"], do: String.slice(content, 0, 300), else: nil),
+              text:
+                if(m[:is_error] || m["is_error"], do: String.slice(content, 0, 300), else: nil),
               path: nil
             })
 

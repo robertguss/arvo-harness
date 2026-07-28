@@ -220,26 +220,81 @@ defmodule Arvo.TUI.Render do
   end
 
   @doc false
-  # Hard-wrap on grapheme boundaries; preserve explicit newlines (incl. blank lines).
+  # Soft-wrap on word boundaries; preserve explicit newlines (incl. blank lines).
+  # Unbreakable runs longer than width still hard-break. No ANSI here — user/tool/system paths.
   def wrap_text(text, width) when is_binary(text) and is_integer(width) and width >= 1 do
     text
     |> String.split("\n")
     |> Enum.flat_map(&chunk_line(&1, width))
   end
 
+  defp chunk_line("", _width), do: [""]
+
   defp chunk_line(line, width) do
-    if line == "" do
-      [""]
+    if String.length(line) <= width do
+      [line]
     else
-      do_chunk(line, width, [])
+      soft_chunk(line, width)
     end
   end
 
-  defp do_chunk("", _width, acc), do: Enum.reverse(acc)
+  defp soft_chunk(line, width) do
+    tokens =
+      Regex.scan(~r/\s+|\S+/, line)
+      |> Enum.map(fn [tok] ->
+        if String.match?(tok, ~r/^\s+$/),
+          do: {:ws, tok, String.length(tok)},
+          else: {:word, tok, String.length(tok)}
+      end)
 
-  defp do_chunk(line, width, acc) do
-    {left, right} = String.split_at(line, width)
-    do_chunk(right, width, [left | acc])
+    {row, _vw, out} =
+      Enum.reduce(tokens, {"", 0, []}, fn
+        {:ws, s, w}, {row, vw, out} ->
+          cond do
+            vw == 0 -> {row <> s, w, out}
+            vw + w <= width -> {row <> s, vw + w, out}
+            true -> {"", 0, push_row(row, out)}
+          end
+
+        {:word, s, w}, {row, vw, out} ->
+          cond do
+            vw + w <= width ->
+              {row <> s, vw + w, out}
+
+            vw == 0 ->
+              place_hard_plain(s, width, out)
+
+            true ->
+              place_hard_plain(s, width, push_row(row, out))
+          end
+      end)
+
+    Enum.reverse(push_row(row, out))
+  end
+
+  defp place_hard_plain(s, width, out) do
+    if String.length(s) <= width do
+      {s, String.length(s), out}
+    else
+      chunks = hard_chunks_plain(s, width)
+      {last, earlier} = List.pop_at(chunks, -1)
+      {last, String.length(last), Enum.reduce(earlier, out, fn c, acc -> [c | acc] end)}
+    end
+  end
+
+  defp push_row(row, out) do
+    case String.trim_trailing(row) do
+      "" -> out
+      r -> [r | out]
+    end
+  end
+
+  defp hard_chunks_plain(s, width), do: do_hard_chunks_plain(s, width, [])
+  defp do_hard_chunks_plain("", _w, acc), do: Enum.reverse(acc)
+
+  defp do_hard_chunks_plain(s, w, acc) do
+    {left, right} = String.split_at(s, w)
+    do_hard_chunks_plain(right, w, [left | acc])
   end
 
   defp status_label(%{status: :running, tool_name: n}) when is_binary(n), do: "tool:#{n}"

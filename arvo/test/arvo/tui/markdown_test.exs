@@ -58,6 +58,49 @@ defmodule Arvo.TUI.MarkdownTest do
     assert joined =~ "word"
   end
 
+  test "soft-wraps at spaces; does not split normal words" do
+    # Prose that must not become "coding-agent-har" / "ness" mid-token.
+    md =
+      "Arvo (`coding-agent-harness`) is a personal terminal coding-agent harness " <>
+        "written in Elixir/BEAM used daily."
+
+    width = 36
+    lines = Markdown.format_lines(md, width)
+    plains = Enum.map(lines, &Markdown.strip_ansi/1)
+
+    assert length(plains) > 1
+
+    for line <- plains do
+      assert String.length(line) <= width
+      # No partial splits of the long hyphenated token across a wrap edge.
+      refute line =~ ~r/coding-agent-har$/
+      refute line =~ ~r/^ness/
+    end
+
+    joined = Enum.join(plains, " ")
+    assert joined =~ "coding-agent-harness"
+    assert joined =~ "Elixir/BEAM"
+  end
+
+  test "hard-breaks unbreakable runs longer than width" do
+    token = String.duplicate("x", 50)
+    lines = Markdown.wrap_visible(token, 20)
+    assert length(lines) >= 3
+    assert Enum.all?(lines, &(Markdown.visible_width(&1) <= 20))
+    assert Enum.map_join(lines, "", &Markdown.strip_ansi/1) == token
+  end
+
+  test "soft-wrap preserves bold across line breaks" do
+    # Force wrap inside a bold span (no trailing space before closing **).
+    md = "**" <> Enum.map_join(1..12, " ", fn _ -> "boldword" end) <> "**"
+    lines = Markdown.format_lines(md, 28)
+    assert length(lines) > 1
+
+    # Every content line should reopen bold (SGR 1) after soft-break.
+    assert Enum.all?(lines, &String.contains?(&1, "\e[1m"))
+    refute Enum.any?(lines, &String.contains?(Markdown.strip_ansi(&1), "**"))
+  end
+
   test "incomplete / streaming markdown does not raise" do
     partial = "**Arvo is still open and a fence:\n```elixir\ndef foo"
     lines = Markdown.format_lines(partial, 40)

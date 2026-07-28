@@ -7,7 +7,8 @@ defmodule Arvo.TUI.Markdown do
   height stay correct despite embedded SGR sequences.
 
   Wrapping prefers word boundaries (spaces); only hard-breaks runs longer than
-  the pane width (URLs, long paths, unbroken tokens).
+  the pane width (URLs, long paths, unbroken tokens). Open styles are closed at
+  each soft-break and reopened on the next row so bold/code spans survive wrap.
   """
 
   @csi_re ~r/\e\[[0-9;]*m/
@@ -84,15 +85,16 @@ defmodule Arvo.TUI.Markdown do
     end
   end
 
-  # Tokens: {:sgr, seq} | {:ws, iodata, vw} | {:word, iodata, vw}
-  # Words are maximal non-whitespace runs (CSI inside a word stays with it).
+  # Tokens: {:sgr, seq} | {:ws, text, vw} | {:word, text, vw}
+  # SGR is its own token so open styles survive soft-breaks mid-phrase.
   defp tokenize(line), do: do_tokenize(line, nil, [])
 
   # mode: nil | {:ws, acc, vw} | {:word, acc, vw}
   defp do_tokenize("", nil, acc), do: Enum.reverse(acc)
+  defp do_tokenize("", {:ws, a, w}, acc), do: Enum.reverse([{:ws, IO.iodata_to_binary(a), w} | acc])
 
-  defp do_tokenize("", {:ws, a, w}, acc), do: Enum.reverse([{:ws, a, w} | acc])
-  defp do_tokenize("", {:word, a, w}, acc), do: Enum.reverse([{:word, a, w} | acc])
+  defp do_tokenize("", {:word, a, w}, acc),
+    do: Enum.reverse([{:word, IO.iodata_to_binary(a), w} | acc])
 
   defp do_tokenize(bin, mode, acc) do
     case next_atom(bin) do
@@ -100,14 +102,20 @@ defmodule Arvo.TUI.Markdown do
         do_tokenize("", mode, acc)
 
       {:sgr, seq, rest} ->
-        {mode2, acc2} = absorb_sgr(mode, seq, acc)
-        do_tokenize(rest, mode2, acc2)
+        # Flush any open word/ws before a style change so SGR sits between tokens.
+        acc2 = flush_mode(mode, acc)
+        do_tokenize(rest, nil, [{:sgr, seq} | acc2])
 
       {:char, ch, rest} ->
         {mode2, acc2} = absorb_char(mode, ch, acc)
         do_tokenize(rest, mode2, acc2)
     end
   end
+
+  defp flush_mode(nil, acc), do: acc
+
+  defp flush_mode({:ws, a, w}, acc), do: [{:ws, IO.iodata_to_binary(a), w} | acc]
+  defp flush_mode({:word, a, w}, acc), do: [{:word, IO.iodata_to_binary(a), w} | acc]
 
   defp next_atom(<<>>), do: :done
 
@@ -127,10 +135,6 @@ defmodule Arvo.TUI.Markdown do
     {:char, ch, rest}
   end
 
-  defp absorb_sgr(nil, seq, acc), do: {{:word, [seq], 0}, acc}
-  defp absorb_sgr({:ws, a, w}, seq, acc), do: {{:ws, [a, seq], w}, acc}
-  defp absorb_sgr({:word, a, w}, seq, acc), do: {{:word, [a, seq], w}, acc}
-
   defp absorb_char(nil, ch, acc) do
     if whitespace?(ch), do: {{:ws, [ch], 1}, acc}, else: {{:word, [ch], 1}, acc}
   end
@@ -139,13 +143,13 @@ defmodule Arvo.TUI.Markdown do
     if whitespace?(ch) do
       {{:ws, [a, ch], w + 1}, acc}
     else
-      {{:word, [ch], 1}, [{:ws, a, w} | acc]}
+      {{:word, [ch], 1}, [{:ws, IO.iodata_to_binary(a), w} | acc]}
     end
   end
 
   defp absorb_char({:word, a, w}, ch, acc) do
     if whitespace?(ch) do
-      {{:ws, [ch], 1}, [{:word, a, w} | acc]}
+      {{:ws, [ch], 1}, [{:word, IO.iodata_to_binary(a), w} | acc]}
     else
       {{:word, [a, ch], w + 1}, acc}
     end
@@ -172,14 +176,14 @@ defmodule Arvo.TUI.Markdown do
     {[row, seq], vw, open2, out}
   end
 
-  defp pack_token({:ws, iodata, w}, width, row, vw, open, out) do
+  defp pack_token({:ws, text, w}, width, row, vw, open, out) do
     cond do
       # Keep leading indent (list markers, code gutters).
       vw == 0 ->
-        {[row, iodata], w, open, out}
+        {[row, text], w, open, out}
 
       vw + w <= width ->
-        {[row, iodata], vw + w, open, out}
+        {[row, text], vw + w, open, out}
 
       true ->
         # Soft-break before this space; drop the overflowing spaces.
@@ -190,44 +194,39 @@ defmodule Arvo.TUI.Markdown do
     end
   end
 
-  defp pack_token({:word, iodata, w}, width, row, vw, open, out) do
+  defp pack_token({:word, text, w}, width, row, vw, open, out) do
     cond do
       vw + w <= width ->
-        {[row, iodata], vw + w, open, out}
+        {[row, text], vw + w, open, out}
 
       # Empty row: hard-break an unbreakable run.
       vw == 0 ->
-        hard_break_word(iodata, width, open, out)
+        hard_break_word(text, width, open, out)
 
       true ->
-        # Soft-break before this word, then place it.
+        # Soft-break before this word, then place it (maybe hard-break).
         out2 =
           case finish_row(row, open) do
             nil -> out
             line -> [line | out]
           end
 
-        pack_token({:word, iodata, w}, width, reopen_iodata(open), 0, open, out2)
+        pack_token({:word, text, w}, width, reopen_iodata(open), 0, open, out2)
     end
   end
 
-  defp hard_break_word(iodata, width, open, out) do
-    bin = IO.iodata_to_binary(iodata)
-    hard_walk(bin, width, reopen_iodata(open), 0, open, out)
+  defp hard_break_word(text, width, open, out) do
+    hard_walk(text, width, reopen_iodata(open), 0, open, out)
   end
 
   defp hard_walk("", _width, row, vw, open, out), do: {row, vw, open, out}
 
   defp hard_walk(rest, width, row, vw, open, out) do
-    case next_atom(rest) do
-      :done ->
+    case String.next_grapheme(rest) do
+      nil ->
         {row, vw, open, out}
 
-      {:sgr, seq, tail} ->
-        open2 = if seq == "\e[0m", do: [], else: open ++ [seq]
-        hard_walk(tail, width, [row, seq], vw, open2, out)
-
-      {:char, ch, tail} ->
+      {ch, tail} ->
         if vw + 1 > width and vw > 0 do
           line = finish_row!(row, open)
           hard_walk(rest, width, reopen_iodata(open), 0, open, [line | out])
@@ -272,7 +271,6 @@ defmodule Arvo.TUI.Markdown do
   end
 
   defp take_visible(_rest, 0, acc), do: acc |> Enum.reverse() |> IO.iodata_to_binary()
-
   defp take_visible("", _n, acc), do: acc |> Enum.reverse() |> IO.iodata_to_binary()
 
   defp take_visible(rest, n, acc) when n > 0 do
@@ -352,9 +350,9 @@ defmodule Arvo.TUI.Markdown do
       {s, String.length(s), out}
     else
       chunks = hard_chunks(s, width)
-      {last, rest} = List.pop_at(chunks, -1)
-      # rest is earlier chunks in order; reverse onto out (which is reversed)
-      {last, String.length(last), Enum.reduce(rest, out, fn c, acc -> [c | acc] end)}
+      {last, earlier} = List.pop_at(chunks, -1)
+      # earlier is in order; push onto reversed out
+      {last, String.length(last), Enum.reduce(earlier, out, fn c, acc -> [c | acc] end)}
     end
   end
 

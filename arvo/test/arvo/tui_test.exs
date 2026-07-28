@@ -187,9 +187,9 @@ defmodule Arvo.TUITest do
 
     frame = Arvo.TUI.Render.frame(st, width: 40, height: 24)
     # Prior bug: String.slice to width-5 dropped everything after the first line.
-    # Hard-wrap may split grapheme runs mid-word; assert content still present.
-    assert frame =~ "Gathe"
-    assert frame =~ "ring a bit more"
+    # Soft-wrap keeps whole words; content still present across multiple rows.
+    assert frame =~ "Gathering"
+    assert frame =~ "a bit more"
     assert frame =~ "README"
     assert frame =~ "you"
     assert frame =~ "arvo"

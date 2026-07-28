@@ -50,6 +50,11 @@ defmodule Arvo.TUI do
     GenServer.call(__MODULE__, :reset_idle)
   end
 
+  @doc "Refresh live-pane chrome from Session.owned_panes/0 (R11b)."
+  def refresh_live_panes do
+    GenServer.call(__MODULE__, :refresh_live_panes)
+  end
+
   @doc """
   Atomically claim product turn UI state if idle.
 
@@ -113,7 +118,9 @@ defmodule Arvo.TUI do
        focus_idx: nil,
        expand_all: nil,
        palette: nil,
-       tree: nil
+       tree: nil,
+       # Arvo-owned pane live-job chrome (R11b) — refreshed from Session
+       live_panes: []
      }}
   end
 
@@ -155,8 +162,14 @@ defmodule Arvo.TUI do
          buffer: "",
          last_error: nil,
          tree: nil,
-         palette: nil
+         palette: nil,
+         live_panes: load_live_panes()
      }}
+  end
+
+  def handle_call(:refresh_live_panes, _from, state) do
+    panes = load_live_panes()
+    {:reply, panes, %{state | live_panes: panes}}
   end
 
   def handle_call(:try_begin_turn, _from, state) do
@@ -188,6 +201,15 @@ defmodule Arvo.TUI do
     {:noreply, reduce_event(state, event)}
   end
 
+  def handle_cast({:set_live_panes, panes}, state) when is_list(panes) do
+    {:noreply, %{state | live_panes: panes}}
+  end
+
+  # Backward-compatible cast used by older Session builds / tests.
+  def handle_cast(:refresh_live_panes, state) do
+    {:noreply, %{state | live_panes: load_live_panes()}}
+  end
+
   @doc false
   def handle_key(state, key) do
     cond do
@@ -204,7 +226,8 @@ defmodule Arvo.TUI do
              streaming: false,
              buffer: "",
              palette: nil,
-             tree: nil
+             tree: nil,
+             live_panes: []
          }}
 
       # Tree mode takes priority over palette / focus expand (KTD4 routing).
@@ -213,6 +236,18 @@ defmodule Arvo.TUI do
 
       key == :esc and state[:palette] != nil ->
         {:ok, %{state | palette: nil}}
+
+      # Idle Esc with Arvo-owned panes: explicit teardown.
+      key == :esc and state.status != :running and load_live_panes() != [] ->
+        {:ok, results} = Arvo.Session.teardown_owned_panes(:idle_esc)
+        note = Arvo.Herdr.format_teardown_note(:idle_esc, results)
+
+        state =
+          state
+          |> Map.put(:live_panes, [])
+          |> append_system_note(note)
+
+        {:cancelled, state}
 
       key == :esc ->
         {:ignored, state}
@@ -349,7 +384,8 @@ defmodule Arvo.TUI do
         |> Map.put(:cold_id, cold_id)
       end)
 
-    %{state | tool_name: nil, transcript: transcript}
+    # Refresh pane chrome mid-turn after long_lived returns.
+    %{state | tool_name: nil, transcript: transcript, live_panes: load_live_panes()}
   end
 
   defp reduce_event(state, {:turn_end, _}), do: %{state | spinner: false, tool_name: nil}
@@ -386,7 +422,8 @@ defmodule Arvo.TUI do
         streaming: false,
         spinner: false,
         buffer: "",
-        transcript: transcript
+        transcript: transcript,
+        live_panes: load_live_panes()
     }
   end
 
@@ -394,6 +431,7 @@ defmodule Arvo.TUI do
     %{
       state
       | status: :idle,
+        live_panes: load_live_panes(),
         last_error: e,
         spinner: false,
         streaming: false,
@@ -585,16 +623,29 @@ defmodule Arvo.TUI do
           {:ok, %{state | tree: Map.put(tree, :error, msg)}}
         else
           case Arvo.Session.jump_to(id) do
-            {:ok, %{head_id: _hid, messages: msgs}} ->
+            {:ok, %{head_id: _hid, messages: msgs} = result} ->
+              teardown = Map.get(result, :pane_teardown) || []
+
               state =
                 state
                 |> rehydrate_transcript_from_messages(msgs)
                 |> Map.put(:tree, nil)
                 |> Map.put(:buffer, "")
                 |> Map.put(:streaming, false)
+                |> Map.put(:live_panes, [])
 
               nav = "Navigated to selected point."
-              {:ok, %{state | transcript: state.transcript ++ [%{kind: :system, text: nav}]}}
+              notes = [%{kind: :system, text: nav}]
+
+              notes =
+                if teardown != [] do
+                  notes ++
+                    [%{kind: :system, text: Arvo.Herdr.format_teardown_note(:jump, teardown)}]
+                else
+                  notes
+                end
+
+              {:ok, %{state | transcript: state.transcript ++ notes}}
 
             {:error, :turn_in_progress} ->
               msg = "jump rejected: turn in progress (idle-only)"
@@ -1128,6 +1179,20 @@ defmodule Arvo.TUI do
       _ ->
         state
     end
+  end
+
+  defp load_live_panes do
+    case Arvo.Session.owned_panes() do
+      list when is_list(list) -> list
+      _ -> []
+    end
+  rescue
+    _ -> []
+  end
+
+  defp append_system_note(state, note) when is_binary(note) do
+    entry = %{kind: :system, text: note}
+    %{state | transcript: state.transcript ++ [entry]}
   end
 
   defp normalize_key(:esc), do: :esc

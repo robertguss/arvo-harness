@@ -67,8 +67,16 @@ defmodule Arvo.TUI.Render do
     cum = tokens[:cumulative] || 0
     win = tokens[:window] || 500_000
     status = status_label(state)
+    # Use TUI-cached live_panes only — Session push updates on register/teardown.
+    panes = live_panes_label(state)
 
-    line = " #{model} · #{profile} · ctx #{cum}/#{win} · #{status}"
+    line =
+      if panes == "" do
+        " #{model} · #{profile} · ctx #{cum}/#{win} · #{status}"
+      else
+        " #{model} · #{profile} · ctx #{cum}/#{win} · #{status} · #{panes}"
+      end
+
     Theme.dim(String.slice(line, 0, max(width, 1)))
   end
 
@@ -649,6 +657,27 @@ defmodule Arvo.TUI.Render do
   defp status_label(%{status: :running}), do: "running"
   defp status_label(%{status: :idle}), do: "idle"
   defp status_label(_), do: "idle"
+
+  # Show Arvo-owned pane work even when Session is idle after long_lived return.
+  defp live_panes_label(state) do
+    panes = state[:live_panes] || []
+
+    case panes do
+      [] ->
+        ""
+
+      [one | _] ->
+        cmd = Map.get(one, :command) || Map.get(one, "command") || "pane"
+        cmd = cmd |> to_string() |> Arvo.TUI.Activity.collapse_ws() |> String.slice(0, 40)
+        n = length(panes)
+
+        if n == 1 do
+          "pane · #{cmd} · running"
+        else
+          "pane · #{cmd} +#{n - 1} · running"
+        end
+    end
+  end
 
   defp format_error(e) when is_binary(e), do: e
   defp format_error(e), do: inspect(e)

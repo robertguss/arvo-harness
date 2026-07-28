@@ -30,6 +30,7 @@ defmodule Arvo.TUI.Activity do
   def summarize(name, _), do: to_string(name)
 
   defp target_for("bash", args), do: first_string(args, ["command", :command]) |> collapse_ws()
+  defp target_for("pane", args), do: first_string(args, ["command", :command]) |> collapse_ws()
   defp target_for("read", args), do: first_string(args, ["path", :path, "file", :file])
   defp target_for("write", args), do: first_string(args, ["path", :path, "file", :file])
   defp target_for("edit", args), do: first_string(args, ["path", :path, "file", :file])
@@ -57,7 +58,8 @@ defmodule Arvo.TUI.Activity do
   defp normalize_args(args) when is_list(args), do: Map.new(args)
   defp normalize_args(_), do: %{}
 
-  defp collapse_ws(s) when is_binary(s) do
+  @doc "Collapse runs of whitespace for compact chrome labels."
+  def collapse_ws(s) when is_binary(s) do
     s
     |> String.replace(~r/\s+/, " ")
     |> String.trim()

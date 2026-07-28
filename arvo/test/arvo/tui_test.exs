@@ -502,5 +502,199 @@ defmodule Arvo.TUITest do
     assert sess.path != path1
     assert File.exists?(sess.path)
   end
-end
 
+  test "/tree in help and catalog" do
+    assert {:ok, :handled, help} = Arvo.TUI.slash("help")
+    assert help =~ "/tree"
+    assert help =~ "legacy" or help =~ "prefer /tree"
+
+    names = Enum.map(Arvo.TUI.SlashMenu.catalog(), &elem(&1, 0))
+    assert "tree" in names
+  end
+
+  test "Session Tree chrome renders node previews" do
+    nodes = [
+      %{
+        id: "a",
+        parent_id: nil,
+        kind: :user,
+        preview: "hello tree world",
+        jumpable?: true,
+        head?: false,
+        tip?: false,
+        aborted?: false
+      },
+      %{
+        id: "b",
+        parent_id: "a",
+        kind: :assistant,
+        preview: "reply here",
+        jumpable?: true,
+        head?: true,
+        tip?: true,
+        aborted?: false
+      },
+      %{
+        id: "c",
+        parent_id: "b",
+        kind: :tool,
+        preview: "bash: ls",
+        jumpable?: false,
+        head?: false,
+        tip?: false,
+        aborted?: false
+      }
+    ]
+
+    st = %{
+      model: "xai:g",
+      profile: "base",
+      tokens: %{cumulative: 0, window: 100},
+      status: :idle,
+      transcript: [],
+      buffer: "",
+      streaming: false,
+      input: "",
+      last_error: nil,
+      tree: %{nodes: nodes, selected: 0, scroll: 0, window: 12}
+    }
+
+    frame = Arvo.TUI.Render.frame(st, width: 70, height: 16)
+    assert frame =~ "Session Tree"
+    assert frame =~ "hello tree"
+    assert frame =~ "user" or frame =~ "assistant"
+    assert frame =~ "HEAD"
+    assert frame =~ "jump" or frame =~ "Esc close tree"
+  end
+
+  test "/tree opens picker; Esc closes without jump; Enter jumps" do
+    tmp = Path.join(System.tmp_dir!(), "arvo-tree-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(tmp)
+    old = System.get_env("HOME")
+    System.put_env("HOME", tmp)
+    Application.put_env(:arvo, :cwd, tmp)
+
+    on_exit(fn ->
+      _ = Arvo.TUI.key(:esc)
+      if old, do: System.put_env("HOME", old)
+      File.rm_rf!(tmp)
+    end)
+
+    {:ok, _path} = Arvo.Session.open_new(tmp)
+    {:ok, _u1} = Arvo.Session.record_message(%{role: "user", content: "first"})
+    {:ok, a1} = Arvo.Session.record_message(%{role: "assistant", content: "answer-one"})
+    {:ok, _u2} = Arvo.Session.record_message(%{role: "user", content: "second-wrong"})
+    {:ok, _a2} = Arvo.Session.record_message(%{role: "assistant", content: "answer-two"})
+
+    assert {:ok, :tree, msg} = Arvo.TUI.slash("tree")
+    assert msg =~ "Session Tree"
+    st = Arvo.TUI.state()
+    assert is_map(st.tree)
+    assert length(st.tree.nodes) >= 4
+
+    # Esc closes without head_move
+    before_head = Arvo.Session.head_id()
+    assert :ok = Arvo.TUI.key(:esc)
+    assert Arvo.TUI.state().tree == nil
+    assert Arvo.Session.head_id() == before_head
+
+    # Re-open and jump to first assistant
+    assert {:ok, :tree, _} = Arvo.TUI.slash("tree")
+    st = Arvo.TUI.state()
+    # Select a1 by index
+    idx = Enum.find_index(st.tree.nodes, &(&1.id == a1["id"]))
+    assert is_integer(idx)
+
+    # Move selection to a1
+    for _ <- 1..idx, do: Arvo.TUI.key(:down)
+    # Actually selected starts at HEAD (last); move up to a1
+    # Reset: set selection by reopening is HEAD. Walk from HEAD up.
+    assert {:ok, :tree, _} = Arvo.TUI.slash("tree")
+    st = Arvo.TUI.state()
+    head_sel = st.tree.selected
+    a1_idx = Enum.find_index(st.tree.nodes, &(&1.id == a1["id"]))
+    steps = head_sel - a1_idx
+
+    if steps > 0 do
+      for _ <- 1..steps, do: Arvo.TUI.key(:up)
+    else
+      for _ <- 1..abs(steps), do: Arvo.TUI.key(:down)
+    end
+
+    st = Arvo.TUI.state()
+    assert Enum.at(st.tree.nodes, st.tree.selected).id == a1["id"]
+
+    assert :ok = Arvo.TUI.key(:enter)
+    st = Arvo.TUI.state()
+    assert st.tree == nil
+    assert Arvo.Session.head_id() == a1["id"]
+    assert Enum.any?(st.transcript, &(&1.kind == :system && &1.text =~ "Navigated"))
+    # Transcript rehydrated to HEAD chain only
+    texts = Enum.map(st.transcript, fn e -> Map.get(e, :text) || Map.get(e, :summary) || "" end)
+    assert Enum.any?(texts, &(&1 =~ "first"))
+    assert Enum.any?(texts, &(&1 =~ "answer-one"))
+    refute Enum.any?(texts, &(&1 =~ "second-wrong"))
+  end
+
+  test "tool node in tree is not jumpable" do
+    tmp = Path.join(System.tmp_dir!(), "arvo-tree-tool-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(tmp)
+    old = System.get_env("HOME")
+    System.put_env("HOME", tmp)
+    Application.put_env(:arvo, :cwd, tmp)
+
+    on_exit(fn ->
+      _ = Arvo.TUI.key(:esc)
+      if old, do: System.put_env("HOME", old)
+      File.rm_rf!(tmp)
+    end)
+
+    {:ok, _} = Arvo.Session.open_new(tmp)
+    {:ok, _} = Arvo.Session.record_message(%{role: "user", content: "run"})
+    {:ok, _} =
+      Arvo.Session.record_message(%{
+        role: "assistant",
+        content: "",
+        tool_calls: [%{id: "t1", name: "bash", arguments: %{command: "echo x"}}]
+      })
+
+    {:ok, tool} =
+      Arvo.Session.record_message(%{
+        role: "tool",
+        name: "bash",
+        tool_call_id: "t1",
+        content: "x"
+      })
+
+    assert {:ok, :tree, _} = Arvo.TUI.slash("tree")
+    st = Arvo.TUI.state()
+    tool_idx = Enum.find_index(st.tree.nodes, &(&1.id == tool["id"]))
+    assert is_integer(tool_idx)
+    refute Enum.at(st.tree.nodes, tool_idx).jumpable?
+
+    # Select tool and Enter — no head change
+    head_before = Arvo.Session.head_id()
+    # Move selection from HEAD to tool
+    sel = st.tree.selected
+    steps = sel - tool_idx
+
+    cond do
+      steps > 0 ->
+        for _ <- 1..steps, do: Arvo.TUI.key(:up)
+
+      steps < 0 ->
+        for _ <- 1..(-steps), do: Arvo.TUI.key(:down)
+
+      true ->
+        :ok
+    end
+
+    assert :ok = Arvo.TUI.key(:enter)
+    assert Arvo.Session.head_id() == head_before
+    st = Arvo.TUI.state()
+    # Tree stays open or shows not jumpable message
+    assert st.tree != nil or Enum.any?(st.transcript, &(&1.text =~ "not a jump target"))
+    # Always leave tree closed for sibling tests sharing the TUI GenServer
+    _ = Arvo.TUI.key(:esc)
+  end
+end

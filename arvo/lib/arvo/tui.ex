@@ -109,10 +109,11 @@ defmodule Arvo.TUI do
        input: "",
        transcript: [],
        tokens: %{turn: 0, cumulative: 0, window: 500_000},
-       # Focus polish: expand/focus/slash palette
+       # Focus polish: expand/focus/slash palette / session tree
        focus_idx: nil,
        expand_all: nil,
-       palette: nil
+       palette: nil,
+       tree: nil
      }}
   end
 
@@ -188,9 +189,7 @@ defmodule Arvo.TUI do
   @doc false
   def handle_key(state, key) do
     cond do
-      key == :esc and state[:palette] != nil ->
-        {:ok, %{state | palette: nil}}
-
+      # Cancel turn beats tree/palette close so Esc mid-turn always works.
       key == :esc and state.status == :running ->
         _ = Arvo.Session.cancel_turn()
 
@@ -202,14 +201,25 @@ defmodule Arvo.TUI do
              tool_name: nil,
              streaming: false,
              buffer: "",
-             palette: nil
+             palette: nil,
+             tree: nil
          }}
+
+      # Tree mode takes priority over palette / focus expand (KTD4 routing).
+      key == :esc and state[:tree] != nil ->
+        {:ok, %{state | tree: nil}}
+
+      key == :esc and state[:palette] != nil ->
+        {:ok, %{state | palette: nil}}
 
       key == :esc ->
         {:ignored, state}
 
-      key == :ctrl_e ->
+      key == :ctrl_e and state[:tree] == nil ->
         {:ok, toggle_expand_all(state)}
+
+      key in [:up, :down] and state[:tree] != nil ->
+        {:ok, move_tree_sel(state, key)}
 
       key in [:up, :down] and state[:palette] != nil ->
         {:ok, move_palette(state, key)}
@@ -217,8 +227,11 @@ defmodule Arvo.TUI do
       key in [:up, :down] and state.status != :running ->
         {:ok, move_focus(state, key)}
 
+      key == :enter and state[:tree] != nil ->
+        commit_tree_jump(state)
+
       key in [:enter, :space] and state.status != :running and state[:input] in [nil, ""] and
-          is_integer(state[:focus_idx]) ->
+          is_integer(state[:focus_idx]) and state[:tree] == nil ->
         {:ok, toggle_focus_row(state)}
 
       true ->
@@ -515,6 +528,125 @@ defmodule Arvo.TUI do
     %{state | palette: %{pal | selected: sel2}}
   end
 
+  defp move_tree_sel(state, dir) do
+    tree = state.tree || %{nodes: [], selected: 0, scroll: 0}
+    nodes = tree[:nodes] || []
+    sel = tree[:selected] || 0
+    n = length(nodes)
+
+    sel2 =
+      case dir do
+        :up -> max(sel - 1, 0)
+        :down -> min(sel + 1, max(n - 1, 0))
+      end
+
+    # Keep selection in a painted window (cap large trees)
+    scroll = tree[:scroll] || 0
+    window = tree[:window] || 12
+    scroll2 =
+      cond do
+        sel2 < scroll -> sel2
+        sel2 >= scroll + window -> sel2 - window + 1
+        true -> scroll
+      end
+
+    %{state | tree: %{tree | selected: sel2, scroll: max(scroll2, 0)}}
+  end
+
+  defp commit_tree_jump(state) do
+    tree = state.tree || %{}
+    nodes = tree[:nodes] || []
+    sel = tree[:selected] || 0
+
+    case Enum.at(nodes, sel) do
+      %{jumpable?: false} ->
+        msg = "not a jump target (tools orient only)"
+        {:ok, %{state | transcript: state.transcript ++ [%{kind: :system, text: msg}]}}
+
+      %{id: id, jumpable?: true} when is_binary(id) ->
+        if Arvo.Session.turn_in_progress?() do
+          msg = "jump rejected: turn in progress (idle-only)"
+          {:ok, %{state | transcript: state.transcript ++ [%{kind: :system, text: msg}]}}
+        else
+          case Arvo.Session.jump_to(id) do
+            {:ok, %{head_id: _hid, messages: msgs}} ->
+              state =
+                state
+                |> rehydrate_transcript_from_messages(msgs)
+                |> Map.put(:tree, nil)
+                |> Map.put(:buffer, "")
+                |> Map.put(:streaming, false)
+
+              nav = "Navigated to selected point."
+              {:ok, %{state | transcript: state.transcript ++ [%{kind: :system, text: nav}]}}
+
+            {:error, :turn_in_progress} ->
+              msg = "jump rejected: turn in progress (idle-only)"
+              {:ok, %{state | transcript: state.transcript ++ [%{kind: :system, text: msg}]}}
+
+            {:error, reason} ->
+              msg = "jump failed: #{inspect(reason)}"
+              {:ok, %{state | transcript: state.transcript ++ [%{kind: :system, text: msg}]}}
+          end
+        end
+
+      _ ->
+        {:ok, %{state | tree: nil}}
+    end
+  end
+
+  @doc false
+  def rehydrate_transcript_from_messages(state, messages) when is_list(messages) do
+    entries =
+      Enum.flat_map(messages, fn msg ->
+        role = msg[:role] || msg["role"] || "user"
+        content = msg[:content] || msg["content"] || ""
+
+        cond do
+          role == "user" ->
+            [%{kind: :user, text: content}]
+
+          role == "assistant" ->
+            # Incomplete empty assistants omitted by messages_to_head already
+            if content == "" and (msg[:tool_calls] || msg["tool_calls"]) in [nil, []] do
+              []
+            else
+              entry = %{kind: :assistant, text: content}
+
+              entry =
+                if msg[:incomplete] || msg["incomplete"] do
+                  Map.put(entry, :aborted, true)
+                else
+                  entry
+                end
+
+              [entry]
+            end
+
+          role == "tool" ->
+            name = msg[:name] || msg["name"] || "tool"
+            summary = Arvo.TUI.Activity.summarize(name, %{})
+            err? = msg[:is_error] || msg["is_error"] || false
+
+            [
+              %{
+                kind: :activity,
+                name: name,
+                summary: summary,
+                status: if(err?, do: :error, else: :ok),
+                detail: content,
+                expanded: false
+              }
+            ]
+
+          true ->
+            []
+        end
+      end)
+
+    %{state | transcript: entries, focus_idx: nil}
+  end
+
   @doc "Open or update slash palette from current input draft."
   def put_palette(state, input) when is_binary(input) do
     if String.starts_with?(input, "/") do
@@ -569,17 +701,47 @@ defmodule Arvo.TUI do
       /login [provider]  device-flow login (default grok)
       /new               start a fresh session (clear transcript)
       /resume [n|path]   list sessions, or resume by index/path
-      /rewind [n]        move HEAD back n steps (default 1); next msg forks
+      /tree              session tree navigator — browse DAG and jump HEAD
+      /rewind [n]        legacy: move HEAD back n steps (prefer /tree)
       /handoff           new session with work-delta packet (no silent compact)
       /inspect [id]      warm + cold list; /inspect <cold-id> full body
       /memory [id]       alias for /inspect
       /recall <id>       expand cold entry into view under size caps
       /compact [focus]   power: summarize older turns (optional focus text)
       /quit              exit#{plugin_cmds}
-    Keys (Focus): Enter send · Esc cancel turn · / for slash
+    Keys (Focus): Enter send · Esc cancel turn · / for slash · /tree navigate
     """
 
     {{:ok, :handled, text}, state}
+  end
+
+  defp do_slash(state, "tree", _) do
+    case Arvo.Session.get() do
+      %{path: path, history: history} when is_binary(path) and is_list(history) ->
+        nodes = Arvo.Session.Store.tree_nodes(history)
+
+        if nodes == [] do
+          {{:ok, :handled, "session tree empty (no messages yet)"}, %{state | tree: nil}}
+        else
+          # Prefer current HEAD selection when present
+          head_idx =
+            Enum.find_index(nodes, & &1.head?) ||
+              max(length(nodes) - 1, 0)
+
+          tree = %{
+            nodes: nodes,
+            selected: head_idx,
+            scroll: max(head_idx - 5, 0),
+            window: 12
+          }
+
+          {{:ok, :tree, "Session Tree (#{length(nodes)} nodes)"},
+           %{state | tree: tree, palette: nil}}
+        end
+
+      _ ->
+        {{:ok, :handled, "no open session — start chatting or /resume first"}, state}
+    end
   end
 
   defp do_slash(state, "model", "") do
@@ -716,8 +878,25 @@ defmodule Arvo.TUI do
       end
 
     case Arvo.Session.rewind(steps) do
+      {:ok, %{head_id: hid, messages: msgs}} ->
+        state =
+          state
+          |> rehydrate_transcript_from_messages(msgs)
+          |> Map.put(:tree, nil)
+          |> Map.put(:buffer, "")
+          |> Map.put(:streaming, false)
+
+        msg =
+          "rewound #{steps} step(s); HEAD=#{String.slice(hid, 0, 8)}… (legacy — prefer /tree)"
+
+        state = %{state | transcript: state.transcript ++ [%{kind: :system, text: msg}]}
+        {{:ok, :handled, msg}, state}
+
       {:ok, %{head_id: hid}} ->
-        {{:ok, :handled, "rewound #{steps} step(s); HEAD=#{String.slice(hid, 0, 8)}…"}, state}
+        msg =
+          "rewound #{steps} step(s); HEAD=#{String.slice(hid, 0, 8)}… (legacy — prefer /tree)"
+
+        {{:ok, :handled, msg}, state}
 
       {:error, reason} ->
         {{:ok, :handled, "rewind failed: #{inspect(reason)}"}, state}
@@ -889,6 +1068,7 @@ defmodule Arvo.TUI do
         focus_idx: nil,
         expand_all: nil,
         palette: nil,
+        tree: nil,
         tokens: %{turn: 0, cumulative: 0, window: 500_000},
         transcript: []
     }

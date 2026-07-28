@@ -17,7 +17,7 @@ defmodule Arvo.ProductPathTest do
       assert {:ok, :handled, text} = Arvo.TUI.slash("help")
       assert text =~ "/model"
       # Full v0.1 slash surface (SPEC §7) — not a partial stub list
-      for cmd <- ~w(/help /model /profile /login /resume /compact /rewind /handoff /inspect /recall /quit) do
+      for cmd <- ~w(/help /model /profile /login /resume /tree /compact /rewind /handoff /inspect /recall /quit) do
         assert text =~ cmd
       end
     end

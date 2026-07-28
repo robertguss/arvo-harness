@@ -22,16 +22,27 @@ defmodule Arvo.TUI.Render do
     ghost = ghost_line(state, width)
     footer = footer_line(state, width)
     input = input_line(state, width)
-    palette_rows = palette_lines(state, width)
 
-    # Chrome: ghost, blank, body..., [palette...], blank, input, footer
-    reserved = 5 + length(palette_rows)
-    body_h = max(height - reserved, 1)
-    body = transcript_lines(state, body_h, width, scroll)
+    if state[:tree] do
+      # Full-body Session Tree overlay (Pi-style)
+      reserved = 4
+      body_h = max(height - reserved, 1)
+      body = tree_lines(state, body_h, width)
+      rows = [ghost, "" | body] ++ ["", input, footer]
+      rows = Enum.take(rows ++ List.duplicate("", height), height)
+      Enum.join(rows, "\n")
+    else
+      palette_rows = palette_lines(state, width)
 
-    rows = [ghost, "" | body] ++ palette_rows ++ ["", input, footer]
-    rows = Enum.take(rows ++ List.duplicate("", height), height)
-    Enum.join(rows, "\n")
+      # Chrome: ghost, blank, body..., [palette...], blank, input, footer
+      reserved = 5 + length(palette_rows)
+      body_h = max(height - reserved, 1)
+      body = transcript_lines(state, body_h, width, scroll)
+
+      rows = [ghost, "" | body] ++ palette_rows ++ ["", input, footer]
+      rows = Enum.take(rows ++ List.duplicate("", height), height)
+      Enum.join(rows, "\n")
+    end
   end
 
   def ghost_line(state, width \\ 80) do
@@ -48,10 +59,15 @@ defmodule Arvo.TUI.Render do
 
   def footer_line(state, width \\ 80) do
     base =
-      if state[:palette] do
-        "↑↓ select · Enter run · Esc close palette"
-      else
-        "Enter send · Esc cancel · ↑↓ focus · Ctrl+E all · / cmds · PgUp/Dn"
+      cond do
+        state[:tree] ->
+          "↑↓ move · Enter jump · Esc close tree"
+
+        state[:palette] ->
+          "↑↓ select · Enter run · Esc close palette"
+
+        true ->
+          "Enter send · Esc cancel · ↑↓ focus · Ctrl+E all · /tree · PgUp/Dn"
       end
 
     line =
@@ -135,6 +151,93 @@ defmodule Arvo.TUI.Render do
     end
   end
 
+  @doc "Session Tree overlay rows (header + node list + counter)."
+  def tree_lines(state, max_lines, width \\ 80) do
+    case state[:tree] do
+      %{nodes: nodes} = tree when is_list(nodes) ->
+        sel = tree[:selected] || 0
+        scroll = tree[:scroll] || 0
+        n = length(nodes)
+        # Header + list + counter leave 2 chrome lines inside body
+        list_h = max(max_lines - 2, 1)
+        window = min(tree[:window] || list_h, list_h)
+        scroll = min(scroll, max(n - window, 0))
+        shown = Enum.slice(nodes, scroll, window)
+
+        header = Theme.bold("Session Tree") <> Theme.dim("  · jump message nodes · tools orient only")
+
+        rows =
+          Enum.with_index(shown, scroll)
+          |> Enum.map(fn {node, abs_i} ->
+            tree_node_line(node, abs_i == sel, width)
+          end)
+
+        counter =
+          if n == 0 do
+            Theme.dim("  (empty)")
+          else
+            Theme.dim("  #{sel + 1}/#{n}" <> if(n > window, do: "  (scroll ↑↓)", else: ""))
+          end
+
+        ([header] ++ rows ++ [counter])
+        |> Enum.take(max_lines)
+        |> pad_body(max_lines)
+
+      _ ->
+        pad_body([Theme.dim("  (no tree)")], max_lines)
+    end
+  end
+
+  defp tree_node_line(node, selected?, width) do
+    kind = node[:kind] || :other
+    preview = node[:preview] || ""
+    jumpable? = Map.get(node, :jumpable?, false)
+    head? = Map.get(node, :head?, false)
+    tip? = Map.get(node, :tip?, false)
+    aborted? = Map.get(node, :aborted?, false)
+
+    role =
+      case kind do
+        :user -> "user"
+        :assistant -> "assistant"
+        :tool -> "tool"
+        _ -> "other"
+      end
+
+    role =
+      if aborted? and kind == :assistant do
+        role <> " (aborted)"
+      else
+        role
+      end
+
+    markers =
+      []
+      |> then(fn m -> if head?, do: ["HEAD" | m], else: m end)
+      |> then(fn m -> if tip? and not head?, do: ["tip" | m], else: m end)
+      |> then(fn m -> if not jumpable? and kind == :tool, do: ["—"] ++ m, else: m end)
+      |> Enum.reverse()
+      |> case do
+        [] -> ""
+        ms -> " [" <> Enum.join(ms, ",") <> "]"
+      end
+
+    mark = if selected?, do: Theme.accent("› "), else: "  "
+    role_s = if selected?, do: Theme.bold(role), else: Theme.muted(role)
+    prev = Theme.dim("  " <> preview)
+    line = mark <> role_s <> markers <> prev
+
+    if not jumpable? and kind == :tool do
+      Theme.dim(Markdown.strip_ansi(line) |> String.slice(0, max(width, 1)))
+    else
+      if String.length(Markdown.strip_ansi(line)) > width do
+        String.slice(line, 0, width + 24)
+      else
+        line
+      end
+    end
+  end
+
   defp window(lines, max_lines, scroll) when scroll <= 0 do
     lines
     |> Enum.take(-max_lines)
@@ -164,6 +267,16 @@ defmodule Arvo.TUI.Render do
 
   defp wrap_entry(%{kind: :assistant, text: t, streaming: true}, width, _opts) do
     wrap_role_md(Theme.accent("arvo") <> " ", String.duplicate(" ", @role_pad), to_string(t), width, true)
+  end
+
+  defp wrap_entry(%{kind: :assistant, text: t, aborted: true}, width, _opts) do
+    wrap_role_md(
+      Theme.accent("arvo") <> Theme.dim("(aborted) "),
+      String.duplicate(" ", @role_pad),
+      to_string(t),
+      width,
+      false
+    )
   end
 
   defp wrap_entry(%{kind: :assistant, text: t}, width, _opts) do

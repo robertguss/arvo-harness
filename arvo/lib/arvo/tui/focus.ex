@@ -151,10 +151,16 @@ defmodule Arvo.TUI.Focus do
   defp size(_), do: {80, 24}
 
   defp handle_keys(data, local, st) do
+    tree_open? = st[:tree] != nil
+
     cond do
-      # Esc: close palette first, else cancel turn
+      # Esc: tree → palette → cancel turn
       data == "\e" or data == "\e\e" ->
         cond do
+          tree_open? ->
+            _ = Arvo.TUI.key(:esc)
+            {:cont, local}
+
           local[:palette] != nil ->
             {:cont, %{local | palette: nil}}
 
@@ -166,53 +172,75 @@ defmodule Arvo.TUI.Focus do
             {:cont, local}
         end
 
-      # Ctrl+E — global expand/collapse
-      data == "\x05" ->
+      # Ctrl+E — global expand/collapse (not while tree open)
+      data == "\x05" and not tree_open? ->
         _ = Arvo.TUI.key(:ctrl_e)
         {:cont, local}
 
-      # Up / Down — palette or transcript focus
+      # Up / Down — tree > palette > transcript focus
       data in ["\e[A", "\eOA"] ->
-        if local[:palette] do
-          {:cont, move_palette_sel(local, :up)}
-        else
-          _ = Arvo.TUI.key(:up)
-          {:cont, local}
+        cond do
+          tree_open? ->
+            _ = Arvo.TUI.key(:up)
+            {:cont, local}
+
+          local[:palette] ->
+            {:cont, move_palette_sel(local, :up)}
+
+          true ->
+            _ = Arvo.TUI.key(:up)
+            {:cont, local}
         end
 
       data in ["\e[B", "\eOB"] ->
-        if local[:palette] do
-          {:cont, move_palette_sel(local, :down)}
-        else
-          _ = Arvo.TUI.key(:down)
-          {:cont, local}
+        cond do
+          tree_open? ->
+            _ = Arvo.TUI.key(:down)
+            {:cont, local}
+
+          local[:palette] ->
+            {:cont, move_palette_sel(local, :down)}
+
+          true ->
+            _ = Arvo.TUI.key(:down)
+            {:cont, local}
         end
 
       # PageUp / Ctrl+Up — scroll transcript toward older lines
-      data in ["\e[5~", "\e[1;5A"] ->
+      data in ["\e[5~", "\e[1;5A"] and not tree_open? ->
         {:cont, %{local | scroll: local.scroll + scroll_step()}}
 
       # PageDown / Ctrl+Down — toward live tail
-      data in ["\e[6~", "\e[1;5B"] ->
+      data in ["\e[6~", "\e[1;5B"] and not tree_open? ->
         {:cont, %{local | scroll: max(local.scroll - scroll_step(), 0)}}
 
       data in ["\r", "\n"] ->
-        submit_input(local, st)
+        if tree_open? do
+          _ = Arvo.TUI.key(:enter)
+          {:cont, %{local | input: "", palette: nil}}
+        else
+          submit_input(local, st)
+        end
 
       # Space toggles focus row when input empty and idle
-      data == " " and String.trim(local.input) == "" and st.status != :running and local[:palette] == nil ->
+      data == " " and String.trim(local.input) == "" and st.status != :running and
+          local[:palette] == nil and not tree_open? ->
         _ = Arvo.TUI.key(:space)
         {:cont, local}
 
       data == "\x7f" or data == "\b" ->
-        input = String.slice(local.input, 0..-2//1)
-        {:cont, set_input(local, input)}
+        if tree_open? do
+          {:cont, local}
+        else
+          input = String.slice(local.input, 0..-2//1)
+          {:cont, set_input(local, input)}
+        end
 
       data == "\x03" ->
         # Ctrl+C
         {:quit, local}
 
-      String.printable?(data) and not String.contains?(data, "\e") ->
+      String.printable?(data) and not String.contains?(data, "\e") and not tree_open? ->
         input = local.input <> data
         {:cont, set_input(local, input)}
 
@@ -297,6 +325,10 @@ defmodule Arvo.TUI.Focus do
             case Arvo.TUI.slash(cmd, args) do
               {:ok, :quit, _} ->
                 {:quit, local}
+
+              {:ok, :tree, _msg} ->
+                # Tree mode lives on TUI state; no system spam on open
+                {:cont, %{local | input: "", palette: nil}}
 
               {:ok, _, msg} when is_binary(msg) ->
                 _ = Arvo.TUI.append_system(msg)

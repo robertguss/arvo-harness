@@ -9,6 +9,7 @@ defmodule Arvo.TUI.SlashMenuTest do
     assert "model" in names
     assert "new" in names
     assert "quit" in names
+    assert "tree" in names
   end
 
   test "filter matches name substring" do

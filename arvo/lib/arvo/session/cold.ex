@@ -19,7 +19,7 @@ defmodule Arvo.Session.Cold do
       when is_binary(session_path) and is_binary(body) and is_map(meta) do
     id = meta_get(meta, :id) || Arvo.Session.Store.new_id()
     dir = cold_dir(session_path)
-    File.mkdir_p!(dir)
+    ensure_dir!(dir)
 
     body_path = Path.join(dir, id <> ".body")
     File.write!(body_path, body)
@@ -36,7 +36,7 @@ defmodule Arvo.Session.Cold do
         "preview" => meta_get(meta, :preview),
         "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
       }
-      |> drop_nils()
+      |> Map.reject(fn {_k, v} -> is_nil(v) end)
 
     index_path = Path.join(dir, "index.jsonl")
     File.write!(index_path, Jason.encode!(entry) <> "\n", [:append])
@@ -59,23 +59,7 @@ defmodule Arvo.Session.Cold do
 
   @doc "List cold entry metadata for the session (newest last)."
   def list(session_path) when is_binary(session_path) do
-    index_path = Path.join(cold_dir(session_path), "index.jsonl")
-
-    case File.read(index_path) do
-      {:ok, body} ->
-        body
-        |> String.split("\n", trim: true)
-        |> Enum.map(fn line ->
-          case Jason.decode(line) do
-            {:ok, map} -> map
-            _ -> nil
-          end
-        end)
-        |> Enum.reject(&is_nil/1)
-
-      {:error, _} ->
-        []
-    end
+    Arvo.Session.Store.read_all(Path.join(cold_dir(session_path), "index.jsonl"))
   end
 
   @doc "Lookup entry metadata by id."
@@ -95,13 +79,9 @@ defmodule Arvo.Session.Cold do
     |> Enum.find(&(&1["source_path"] == source_path))
   end
 
+  defp ensure_dir!(dir), do: File.mkdir_p!(dir)
+
   defp meta_get(meta, key) when is_atom(key) do
     Map.get(meta, key) || Map.get(meta, Atom.to_string(key))
-  end
-
-  defp drop_nils(map) do
-    map
-    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
-    |> Map.new()
   end
 end

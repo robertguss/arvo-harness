@@ -153,6 +153,11 @@ defmodule Arvo.Session do
     GenServer.call(__MODULE__, :inspect_attention)
   end
 
+  @doc "Fetch full cold body by id for the open session (inspect, uncapped)."
+  def inspect_cold(cold_id) when is_binary(cold_id) do
+    GenServer.call(__MODULE__, {:inspect_cold, cold_id})
+  end
+
   @doc """
   Persist only **new** assistant/tool messages from an agent result.
 
@@ -206,13 +211,9 @@ defmodule Arvo.Session do
        turn_prior_len: nil,
        turn_generation: 0,
        cancelled_generation: nil,
-       tokens: Arvo.Session.Tokens.new(),
-       # Progressive attention live state
-       warm: Arvo.Session.Warm.empty(),
-       attention_retention: %{},
-       attention_budgets: Arvo.Attention.default_budgets(),
-       attention_turn: 0
-     }}
+       tokens: Arvo.Session.Tokens.new()
+     }
+     |> put_attention_defaults()}
   end
 
   @impl true
@@ -250,12 +251,9 @@ defmodule Arvo.Session do
           history: [meta],
           model: meta["model"],
           profile: meta["profile"],
-          tokens: Arvo.Session.Tokens.new(),
-          warm: Arvo.Session.Warm.empty(),
-          attention_retention: %{},
-          attention_budgets: Arvo.Attention.default_budgets(),
-          attention_turn: 0
+          tokens: Arvo.Session.Tokens.new()
       }
+      |> put_attention_defaults()
 
       {:reply, {:ok, path}, state}
     end
@@ -303,12 +301,9 @@ defmodule Arvo.Session do
               history: entries,
               model: meta && meta["model"],
               profile: meta && meta["profile"],
-              tokens: tokens,
-              warm: warm,
-              attention_retention: %{},
-              attention_budgets: Arvo.Attention.default_budgets(),
-              attention_turn: 0
+              tokens: tokens
           }
+          |> put_attention_defaults(warm)
 
           # Do not call TUI here — resume is often invoked from TUI.slash (deadlock).
           messages = Arvo.Session.Store.messages_to_head(entries)
@@ -423,29 +418,42 @@ defmodule Arvo.Session do
 
   def handle_call({:project_tool_result, tool, args, text, is_error, meta}, _from, state) do
     if is_nil(state.path) do
-      {:reply, %{content: text, full_text: text, action: :full_hot, cold_id: nil}, state}
+      {:reply,
+       %{
+         content: text,
+         full_text: text,
+         action: :full_hot,
+         cold_id: nil,
+         decision: %{action: :full_hot, reason: :no_session},
+         retention: state.attention_retention || %{},
+         budgets: state.attention_budgets || Arvo.Attention.default_budgets()
+       }, state}
     else
-      turn = (state.attention_turn || 0) + 1
+      retention = state.attention_retention || %{}
+      turn = (Map.get(retention, :current_turn) || 0) + 1
 
       result =
         Arvo.Attention.project_tool_result(tool, args, text, is_error, %{
           session_path: state.path,
-          retention: state.attention_retention || %{},
+          retention: retention,
           budgets: state.attention_budgets || Arvo.Attention.default_budgets(),
           current_turn: turn,
+          path_index: state.attention_path_index || %{},
           tool_call_id: Map.get(meta, :tool_call_id) || Map.get(meta, "tool_call_id")
         })
 
+      prev_warm = state.warm || Arvo.Session.Warm.empty()
+
       warm =
-        Arvo.Session.Warm.update_from_tool(state.warm || Arvo.Session.Warm.empty(), %{
+        Arvo.Session.Warm.update_from_tool(prev_warm, %{
           tool: tool,
           args: args,
           is_error: is_error,
-          text: text,
-          path: result.decision[:path] || result.decision["path"]
+          text: if(is_error, do: String.slice(to_string(text), 0, 300), else: nil),
+          path: result.decision[:path]
         })
 
-      if is_binary(state.path) do
+      if warm != prev_warm do
         _ =
           Arvo.Session.Audit.append(state.path, :warm_update, %{
             "paths" => warm["paths"],
@@ -458,10 +466,12 @@ defmodule Arvo.Session do
         | warm: warm,
           attention_retention: result.retention,
           attention_budgets: result.budgets,
-          attention_turn: turn
+          attention_path_index: result.path_index
       }
 
-      {:reply, result, state}
+      # Agent only needs the projected surface; retention/budgets stay in Session state
+      reply = Map.take(result, [:content, :full_text, :action, :cold_id, :decision])
+      {:reply, reply, state}
     end
   end
 
@@ -495,6 +505,14 @@ defmodule Arvo.Session do
        metrics: metrics,
        progressive_attention: Arvo.Attention.enabled?()
      }, state}
+  end
+
+  def handle_call({:inspect_cold, cold_id}, _from, state) do
+    if is_nil(state.path) do
+      {:reply, {:error, :no_session}, state}
+    else
+      {:reply, Arvo.Session.Cold.fetch(state.path, cold_id), state}
+    end
   end
 
   def handle_call({:record_usage, usage}, _from, state) do
@@ -930,11 +948,17 @@ defmodule Arvo.Session do
         turn_result: nil,
         turn_prior_len: nil,
         cancelled_generation: nil,
-        warm: Arvo.Session.Warm.normalize(child_warm),
-        attention_retention: %{},
-        attention_budgets: Arvo.Attention.default_budgets(),
-        attention_turn: 0
     }
+    |> put_attention_defaults(Arvo.Session.Warm.normalize(child_warm))
+  end
+
+  defp put_attention_defaults(state, warm \\ nil) do
+    Map.merge(state, %{
+      warm: warm || Arvo.Session.Warm.empty(),
+      attention_retention: %{},
+      attention_budgets: Arvo.Attention.default_budgets(),
+      attention_path_index: %{}
+    })
   end
 
   defp warm_from_history(entries) when is_list(entries) do

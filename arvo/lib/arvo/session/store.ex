@@ -373,7 +373,8 @@ defmodule Arvo.Session.Store do
     end)
   end
 
-  defp stringify_keys(map) do
+  @doc "Recursively stringify map keys (atom → string). Shared by cold/audit/warm."
+  def stringify_keys(map) when is_map(map) do
     Map.new(map, fn
       {k, v} when is_atom(k) -> {Atom.to_string(k), stringify_val(v)}
       {k, v} -> {k, stringify_val(v)}

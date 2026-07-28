@@ -28,6 +28,7 @@ defmodule Arvo.Session.Warm do
   Update warm from a completed tool result.
 
   `meta` may include: tool, args, is_error, text (truncated), path, exit_code.
+  Returns the same map reference when nothing changed.
   """
   def update_from_tool(warm, meta) when is_map(warm) and is_map(meta) do
     warm = normalize(warm)
@@ -35,41 +36,53 @@ defmodule Arvo.Session.Warm do
     args = get(meta, :args) || %{}
     is_error? = get(meta, :is_error) == true
     text = to_string(get(meta, :text) || "")
-    path = get(meta, :path) || path_from_args(tool, args)
+    path = get(meta, :path) || Arvo.Attention.Policy.source_path(tool, args)
 
-    paths =
-      if is_binary(path) and path != "" do
-        [path | warm["paths"]] |> Enum.uniq() |> Enum.take(40)
-      else
-        warm["paths"]
-      end
+    bash? = tool == "bash"
 
-    last_commands =
-      if tool == "bash" do
-        cmd = Map.get(args, "command") || Map.get(args, :command) || ""
-        exit_note = if is_error?, do: "err", else: "ok"
-        entry = %{"command" => String.slice(to_string(cmd), 0, 200), "status" => exit_note}
-        [entry | warm["last_commands"]] |> Enum.take(12)
-      else
-        warm["last_commands"]
-      end
-
-    {last_error, failures} =
-      if is_error? do
-        err = String.slice(text, 0, 300)
-        fail = %{"tool" => tool, "path" => path, "summary" => err}
-        {err, [fail | warm["failures"]] |> Enum.take(10)}
-      else
-        {warm["last_error"], warm["failures"]}
-      end
-
-    %{
+    # True no-op: no path, not bash, not error
+    if (not is_binary(path) or path == "") and not bash? and not is_error? do
       warm
-      | "paths" => paths,
-        "last_commands" => last_commands,
-        "last_error" => last_error,
-        "failures" => failures
-    }
+    else
+      paths =
+        if is_binary(path) and path != "" do
+          if path in warm["paths"], do: warm["paths"], else: [path | warm["paths"]] |> Enum.take(40)
+        else
+          warm["paths"]
+        end
+
+      last_commands =
+        if bash? do
+          cmd = Map.get(args, "command") || Map.get(args, :command) || ""
+          exit_note = if is_error?, do: "err", else: "ok"
+          entry = %{"command" => String.slice(to_string(cmd), 0, 200), "status" => exit_note}
+          [entry | warm["last_commands"]] |> Enum.take(12)
+        else
+          warm["last_commands"]
+        end
+
+      {last_error, failures} =
+        if is_error? do
+          err = String.slice(text, 0, 300)
+          fail = %{"tool" => tool, "path" => path, "summary" => err}
+          {err, [fail | warm["failures"]] |> Enum.take(10)}
+        else
+          {warm["last_error"], warm["failures"]}
+        end
+
+      if paths == warm["paths"] and last_commands == warm["last_commands"] and
+           last_error == warm["last_error"] and failures == warm["failures"] do
+        warm
+      else
+        %{
+          warm
+          | "paths" => paths,
+            "last_commands" => last_commands,
+            "last_error" => last_error,
+            "failures" => failures
+        }
+      end
+    end
   end
 
   @doc """
@@ -163,24 +176,9 @@ defmodule Arvo.Session.Warm do
     end)
   end
 
-  defp path_from_args(tool, args) when tool in ["read", "edit", "write"] do
-    Map.get(args, "path") || Map.get(args, :path)
-  end
-
-  defp path_from_args(_, _), do: nil
-
   defp get(map, key) when is_atom(key) do
     Map.get(map, key) || Map.get(map, Atom.to_string(key))
   end
 
-  defp stringify_keys(map) do
-    Map.new(map, fn
-      {k, v} when is_atom(k) -> {Atom.to_string(k), stringify_val(v)}
-      {k, v} -> {k, stringify_val(v)}
-    end)
-  end
-
-  defp stringify_val(v) when is_map(v), do: stringify_keys(v)
-  defp stringify_val(v) when is_list(v), do: Enum.map(v, &stringify_val/1)
-  defp stringify_val(v), do: v
+  defp stringify_keys(map), do: Arvo.Session.Store.stringify_keys(map)
 end

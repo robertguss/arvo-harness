@@ -19,15 +19,14 @@ defmodule Arvo.Attention do
   Project a tool result for the model message list.
 
   When disabled, returns full text identity. When enabled: store cold, decide
-  policy, return stub or full-hot content, and optionally invoke callbacks.
+  policy, return stub or full-hot content.
 
-  Options / context map:
+  Context keys:
   - `:session_path` — required for cold/audit when enabled
   - `:retention`, `:budgets`, `:current_turn`
   - `:pinned?`
-  - `:on_audit` — optional `(type, fields) -> any` (defaults to Audit.append)
-  - `:on_warm` — optional `(warm_meta) -> any`
-  - `:warm` — current warm map (for path reuse signals)
+  - `:on_audit` — optional `(events) -> any` where events is `[{type, fields}]`
+  - `:path_index` — optional `%{source_path => cold_entry}` to avoid index scans
   """
   def project_tool_result(tool, args, text, is_error?, ctx \\ %{})
       when is_binary(tool) or is_atom(tool) do
@@ -37,7 +36,6 @@ defmodule Arvo.Attention do
     ctx = ctx || %{}
 
     if not enabled?() or not is_binary(Map.get(ctx, :session_path)) do
-      dual_view_event(tool, args, text, is_error?, nil, :full_hot, text)
       %{
         content: text,
         full_text: text,
@@ -46,7 +44,7 @@ defmodule Arvo.Attention do
         decision: %{action: :full_hot, size: byte_size(text), reason: :opt_out},
         retention: Map.get(ctx, :retention) || %{},
         budgets: Map.get(ctx, :budgets) || default_budgets(),
-        dual_view: %{model: text, human: text}
+        path_index: Map.get(ctx, :path_index) || %{}
       }
     else
       do_project(tool, args, text, is_error?, ctx)
@@ -57,22 +55,13 @@ defmodule Arvo.Attention do
     session_path = Map.fetch!(ctx, :session_path)
     retention = Map.get(ctx, :retention) || %{}
     budgets = Map.get(ctx, :budgets) || default_budgets()
+    path_index = Map.get(ctx, :path_index) || %{}
     current_turn = Map.get(ctx, :current_turn) || Map.get(retention, :current_turn) || 0
-    path = path_from(tool, args)
+    path = Policy.source_path(tool, args)
 
-    # Same-path re-invoke detection (AE7)
-    existing = if is_binary(path), do: Cold.find_by_source_path(session_path, path), else: nil
+    existing = lookup_existing(path, path_index, session_path)
     path_changed? = path_changed?(path, text, existing, retention)
-
-    if is_map(existing) and tool == "read" and not is_error? do
-      audit(session_path, ctx, :same_path_reinvoke, %{
-        "path" => path,
-        "cold_id" => existing["id"],
-        "tool" => tool,
-        "size" => existing["size"],
-        "path_changed" => path_changed?
-      })
-    end
+    reuse? = reuse_cold?(tool, is_error?, existing, path_changed?)
 
     decision =
       Policy.decide(%{
@@ -85,94 +74,24 @@ defmodule Arvo.Attention do
         budgets: budgets
       })
 
-    # Prefer not double full-hot when cold already holds unchanged path
     decision =
-      if is_map(existing) and tool == "read" and decision.action == :full_hot and
-           Policy.same_path_preference(%{
-             tool: tool,
-             path: path,
-             cold_id: existing["id"],
-             path_changed?: path_changed?
-           }) == :prefer_cold_stub do
+      if reuse? and decision.action == :full_hot do
         %{decision | action: :stub, fidelity_exception: false, reason: :same_path_reuse}
       else
         decision
       end
 
-    cold_result =
-      Cold.store(session_path, text, %{
-        tool: tool,
-        kind: "tool_result",
-        source_path: path,
-        tool_call_id: Map.get(ctx, :tool_call_id),
-        preview: decision.preview
-      })
+    {cold_id, decision, path_index, store_events} =
+      store_or_reuse(session_path, text, tool, path, decision, existing, reuse?, ctx)
 
-    {cold_id, decision} =
-      case cold_result do
-        {:ok, cold_entry} ->
-          {cold_entry["id"], decision}
+    {content, action, action_events} =
+      project_content(text, tool, decision, cold_id)
 
-        {:error, reason} ->
-          # Fail open to full-hot so Session stays up; audit honesty
-          audit(session_path, ctx, :store_cold, %{
-            "error" => inspect(reason),
-            "tool" => tool,
-            "size" => decision.size,
-            "path" => path
-          })
+    events =
+      maybe_reinvoke_event(tool, is_error?, existing, path, path_changed?) ++
+        store_events ++ action_events
 
-          {nil, %{decision | action: :full_hot, reason: :cold_store_failed, fidelity_exception: false}}
-      end
-
-    audit(session_path, ctx, :store_cold, %{
-      "id" => cold_id,
-      "tool" => tool,
-      "size" => decision.size,
-      "path" => path
-    })
-
-    {content, action} =
-      case {decision.action, cold_id} do
-        {:stub, id} when is_binary(id) ->
-          audit(session_path, ctx, :stub_in_hot, %{
-            "id" => id,
-            "tool" => tool,
-            "size" => decision.size,
-            "path" => path,
-            "reason" => to_string(decision.reason)
-          })
-
-          {Policy.stub_content(Map.put(decision, :tool, tool), id), :stub}
-
-        {:stub, _} ->
-          # No cold id available — cannot stub honestly
-          {text, :full_hot}
-
-        {:full_hot, id} ->
-          audit(session_path, ctx, :full_hot, %{
-            "id" => id,
-            "tool" => tool,
-            "size" => decision.size,
-            "path" => path,
-            "reason" => to_string(decision.reason)
-          })
-
-          if decision.fidelity_exception do
-            audit(session_path, ctx, :fidelity_exception, %{
-              "id" => id,
-              "tool" => tool,
-              "size" => decision.size,
-              "path" => path,
-              "bytes" => decision.size
-            })
-          end
-
-          {text, :full_hot}
-
-        {other, _} ->
-          {text, other}
-      end
+    flush_audit(session_path, ctx, events)
 
     new_retention =
       Policy.update_retention(retention, tool, path, Map.put(decision, :is_error, is_error?), current_turn)
@@ -186,21 +105,6 @@ defmodule Arvo.Attention do
         budgets
       end
 
-    warm_meta = %{
-      tool: tool,
-      args: args,
-      is_error: is_error?,
-      text: String.slice(text, 0, 400),
-      path: path
-    }
-
-    case Map.get(ctx, :on_warm) do
-      fun when is_function(fun, 1) -> fun.(warm_meta)
-      _ -> :ok
-    end
-
-    dual = dual_view_event(tool, args, text, is_error?, cold_id, action, content)
-
     %{
       content: content,
       full_text: text,
@@ -209,7 +113,7 @@ defmodule Arvo.Attention do
       decision: decision,
       retention: new_retention,
       budgets: new_budgets,
-      dual_view: dual
+      path_index: path_index
     }
   end
 
@@ -221,7 +125,7 @@ defmodule Arvo.Attention do
 
     case Cold.fetch(session_path, cold_id) do
       {:error, :not_found} ->
-        Audit.append(session_path, :denied_expand, %{
+        _ = Audit.append(session_path, :denied_expand, %{
           "id" => cold_id,
           "actor" => to_string(actor),
           "reason" => "not_found"
@@ -236,7 +140,7 @@ defmodule Arvo.Attention do
                cap_bytes: cap
              }) do
           {:deny, reason} ->
-            Audit.append(session_path, :denied_expand, %{
+            _ = Audit.append(session_path, :denied_expand, %{
               "id" => cold_id,
               "actor" => to_string(actor),
               "reason" => to_string(reason),
@@ -255,7 +159,7 @@ defmodule Arvo.Attention do
                   "\n[expanded #{max_bytes}/#{byte_size(body)} bytes; cold:#{cold_id}]"
               end
 
-            Audit.append(session_path, :expand, %{
+            _ = Audit.append(session_path, :expand, %{
               "id" => cold_id,
               "actor" => to_string(actor),
               "size" => byte_size(slice),
@@ -276,54 +180,158 @@ defmodule Arvo.Attention do
     }
   end
 
-  defp audit(session_path, ctx, type, fields) do
-    case Map.get(ctx, :on_audit) do
-      fun when is_function(fun, 2) -> fun.(type, fields)
-      _ -> Audit.append(session_path, type, fields)
-    end
-  end
+  # --- internals ---
 
-  defp dual_view_event(tool, args, full_text, is_error?, cold_id, action, model_content) do
-    %{
-      tool: tool,
-      args: args,
-      is_error: is_error?,
-      cold_id: cold_id,
-      action: action,
-      model: model_content,
-      human: full_text
-    }
-  end
-
-  defp path_from(tool, args) when tool in ["read", "edit", "write"] do
-    Map.get(args, "path") || Map.get(args, :path)
-  end
-
-  defp path_from(_, _), do: nil
-
-  defp path_changed?(path, text, existing, retention) do
-    edited = Map.get(retention, :edited_paths) || Map.get(retention, "edited_paths") || MapSet.new()
-
+  defp lookup_existing(path, path_index, session_path) do
     cond do
       not is_binary(path) ->
-        true
+        nil
 
-      path in to_mapset(edited) ->
-        true
-
-      not is_map(existing) ->
-        true
+      is_map(path_index) and Map.has_key?(path_index, path) ->
+        path_index[path]
 
       true ->
-        # Body size mismatch implies change; equal size still re-fetch compare when possible
-        case existing["size"] do
-          n when is_integer(n) and n != byte_size(text) -> true
-          _ -> false
-        end
+        Cold.find_by_source_path(session_path, path)
     end
   end
 
-  defp to_mapset(%MapSet{} = s), do: s
-  defp to_mapset(list) when is_list(list), do: MapSet.new(list)
-  defp to_mapset(_), do: MapSet.new()
+  defp reuse_cold?(tool, is_error?, existing, path_changed?) do
+    tool == "read" and not is_error? and is_map(existing) and
+      Policy.same_path_preference(%{
+        cold_id: existing["id"],
+        path_changed?: path_changed?
+      }) == :prefer_cold_stub
+  end
+
+  defp store_or_reuse(_session_path, _text, tool, path, decision, existing, true, ctx)
+       when is_map(existing) do
+    cold_id = existing["id"]
+    path_index = Map.get(ctx, :path_index) || %{}
+    path_index = if is_binary(path), do: Map.put(path_index, path, existing), else: path_index
+
+    events = [
+      {:store_cold,
+       %{
+         "id" => cold_id,
+         "tool" => tool,
+         "size" => decision.size,
+         "path" => path,
+         "reused" => true
+       }}
+    ]
+
+    {cold_id, decision, path_index, events}
+  end
+
+  defp store_or_reuse(session_path, text, tool, path, decision, _existing, false, ctx) do
+    path_index = Map.get(ctx, :path_index) || %{}
+
+    case Cold.store(session_path, text, %{
+           tool: tool,
+           kind: "tool_result",
+           source_path: path,
+           tool_call_id: Map.get(ctx, :tool_call_id),
+           preview: decision.preview
+         }) do
+      {:ok, entry} ->
+        cold_id = entry["id"]
+
+        path_index =
+          if is_binary(path), do: Map.put(path_index, path, entry), else: path_index
+
+        events = [
+          {:store_cold, %{"id" => cold_id, "tool" => tool, "size" => decision.size, "path" => path}}
+        ]
+
+        {cold_id, decision, path_index, events}
+
+      {:error, reason} ->
+        # Fail open to full-hot so Session stays up; single store_cold audit
+        events = [
+          {:store_cold,
+           %{
+             "error" => inspect(reason),
+             "tool" => tool,
+             "size" => decision.size,
+             "path" => path
+           }}
+        ]
+
+        decision = %{decision | action: :full_hot, reason: :cold_store_failed, fidelity_exception: false}
+        {nil, decision, path_index, events}
+    end
+  end
+
+  defp project_content(text, tool, decision, cold_id) do
+    base = %{"tool" => tool, "size" => decision.size, "path" => decision.path, "id" => cold_id}
+
+    case {decision.action, cold_id} do
+      {:stub, id} when is_binary(id) ->
+        events = [
+          {:stub_in_hot, Map.put(base, "reason", to_string(decision.reason))}
+        ]
+
+        {Policy.stub_content(Map.put(decision, :tool, tool), id), :stub, events}
+
+      {:stub, _} ->
+        {text, :full_hot, []}
+
+      {:full_hot, _id} ->
+        events = [
+          {:full_hot, Map.put(base, "reason", to_string(decision.reason))}
+        ]
+
+        events =
+          if decision.fidelity_exception do
+            events ++ [{:fidelity_exception, base}]
+          else
+            events
+          end
+
+        {text, :full_hot, events}
+
+      {other, _} ->
+        {text, other, []}
+    end
+  end
+
+  defp maybe_reinvoke_event(tool, is_error?, existing, path, path_changed?) do
+    if is_map(existing) and tool == "read" and not is_error? do
+      [
+        {:same_path_reinvoke,
+         %{
+           "path" => path,
+           "cold_id" => existing["id"],
+           "tool" => tool,
+           "size" => existing["size"],
+           "path_changed" => path_changed?
+         }}
+      ]
+    else
+      []
+    end
+  end
+
+  defp flush_audit(session_path, ctx, events) when is_list(events) do
+    case Map.get(ctx, :on_audit) do
+      fun when is_function(fun, 1) ->
+        fun.(events)
+
+      fun when is_function(fun, 2) ->
+        Enum.each(events, fn {type, fields} -> fun.(type, fields) end)
+
+      _ ->
+        _ = Audit.append_many(session_path, events)
+    end
+  end
+
+  defp path_changed?(path, text, existing, retention) do
+    cond do
+      not is_binary(path) -> true
+      Policy.path_edited?(path, retention) -> true
+      not is_map(existing) -> true
+      is_integer(existing["size"]) and existing["size"] != byte_size(text) -> true
+      true -> false
+    end
+  end
 end

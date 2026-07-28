@@ -78,7 +78,7 @@ defmodule Arvo.AttentionPolicyTest do
         text: @large,
         is_error: false,
         retention: %{
-          last_reads: %{path => %{turn: 1, full_hot?: true}},
+          last_reads: %{path => %{turn: 1}},
           current_turn: 1,
           fidelity_ttl_turns: 3
         },
@@ -96,7 +96,7 @@ defmodule Arvo.AttentionPolicyTest do
         text: @large,
         is_error: false,
         retention: %{
-          last_reads: %{path => %{turn: 1, full_hot?: true}},
+          last_reads: %{path => %{turn: 1}},
           current_turn: 10,
           fidelity_ttl_turns: 3
         },

@@ -40,47 +40,48 @@ defmodule Arvo.Attention.Policy do
     preview_bytes = opt(opts, budgets, :preview_bytes, @default_preview_bytes)
     max_ex_bytes = opt(opts, budgets, :max_exception_bytes, @default_max_exception_bytes)
     max_ex_count = opt(opts, budgets, :max_exception_count, @default_max_exception_count)
-    used_bytes = Map.get(budgets, :exception_bytes) || Map.get(budgets, "exception_bytes") || 0
-    used_count = Map.get(budgets, :exception_count) || Map.get(budgets, "exception_count") || 0
+    used_bytes = get(budgets, :exception_bytes) || 0
+    used_count = get(budgets, :exception_count) || 0
 
     size = byte_size(text)
-    path = tool_path(tool, args)
+    path = source_path(tool, args)
     preview = preview(text, preview_bytes)
+    retain? = fidelity_retain?(tool, path, retention)
+    budget_ok? = under_budget?(size, used_bytes, used_count, max_ex_bytes, max_ex_count)
 
     cond do
       pinned? ->
-        decision(:full_hot, text, size, preview, false, :pinned, path)
+        decision(:full_hot, size, preview, false, :pinned, path)
 
       is_error? and size <= stub_bytes ->
-        decision(:full_hot, text, size, preview, false, :error, path)
+        decision(:full_hot, size, preview, false, :error, path)
 
-      is_error? and under_budget?(size, used_bytes, used_count, max_ex_bytes, max_ex_count) ->
+      is_error? and budget_ok? ->
         # Large errors full-hot only under exception budget (late-window protection)
-        decision(:full_hot, text, size, preview, true, :error, path)
+        decision(:full_hot, size, preview, true, :error, path)
 
       is_error? ->
-        decision(:stub, text, size, preview, false, :exception_budget, path)
+        decision(:stub, size, preview, false, :exception_budget, path)
 
       size <= stub_bytes ->
-        decision(:full_hot, text, size, preview, false, :small, path)
+        decision(:full_hot, size, preview, false, :small, path)
 
-      fidelity_retain?(tool, path, retention) and under_budget?(size, used_bytes, used_count, max_ex_bytes, max_ex_count) ->
-        decision(:full_hot, text, size, preview, true, :fidelity_retention, path)
+      retain? and budget_ok? ->
+        decision(:full_hot, size, preview, true, :fidelity_retention, path)
 
-      fidelity_retain?(tool, path, retention) ->
-        # Budget exhausted: prefer stub over unbounded full-hot
-        decision(:stub, text, size, preview, false, :exception_budget, path)
+      retain? ->
+        decision(:stub, size, preview, false, :exception_budget, path)
 
       true ->
-        decision(:stub, text, size, preview, false, :size, path)
+        decision(:stub, size, preview, false, :size, path)
     end
   end
 
   @doc "Whether expand of `requested_bytes` (or full body) is within cap."
   def expand_allowed?(input) when is_map(input) do
-    body = Map.get(input, :body_bytes) || Map.get(input, "body_bytes") || 0
-    cap = Map.get(input, :cap_bytes) || Map.get(input, "cap_bytes") || @default_expand_cap_bytes
-    requested = Map.get(input, :requested_bytes) || Map.get(input, "requested_bytes") || body
+    body = get(input, :body_bytes) || 0
+    cap = get(input, :cap_bytes) || @default_expand_cap_bytes
+    requested = get(input, :requested_bytes) || body
 
     if requested <= cap do
       {:ok, :within_cap}
@@ -96,6 +97,22 @@ defmodule Arvo.Attention.Policy do
   def default_max_exception_bytes, do: @default_max_exception_bytes
   def default_max_exception_count, do: @default_max_exception_count
 
+  @doc "Extract path from tool args for read/edit/write; nil otherwise."
+  def source_path(tool, args) when tool in ["read", "edit", "write"] do
+    p = Map.get(args || %{}, "path") || Map.get(args || %{}, :path)
+    if is_binary(p), do: p, else: nil
+  end
+
+  def source_path(_, _), do: nil
+
+  @doc "True when retention marks path as edited."
+  def path_edited?(path, retention) when is_binary(path) and is_map(retention) do
+    edited = Map.get(retention, :edited_paths) || Map.get(retention, "edited_paths") || []
+    path in to_mapset(edited)
+  end
+
+  def path_edited?(_, _), do: false
+
   @doc """
   Prefer cold/stub path when an unchanged path already has a cold id (AE7).
   """
@@ -103,12 +120,10 @@ defmodule Arvo.Attention.Policy do
     cold_id = get(input, :cold_id)
     changed? = get(input, :path_changed?) == true
 
-    cond do
-      is_binary(cold_id) and cold_id != "" and not changed? ->
-        :prefer_cold_stub
-
-      true ->
-        :allow_tool
+    if is_binary(cold_id) and cold_id != "" and not changed? do
+      :prefer_cold_stub
+    else
+      :allow_tool
     end
   end
 
@@ -118,7 +133,6 @@ defmodule Arvo.Attention.Policy do
     size = decision[:size] || decision["size"] || 0
     preview = decision[:preview] || decision["preview"] || ""
     path = decision[:path] || decision["path"]
-
     path_line = if path, do: " path=#{path}", else: ""
 
     """
@@ -145,7 +159,7 @@ defmodule Arvo.Attention.Policy do
 
     last_reads =
       if tool == "read" and is_binary(path) and decision.action == :full_hot and not decision[:is_error] do
-        Map.put(last_reads, path, %{turn: current_turn, full_hot?: true})
+        Map.put(last_reads, path, %{turn: current_turn})
       else
         last_reads
       end
@@ -163,7 +177,7 @@ defmodule Arvo.Attention.Policy do
 
   # --- internals ---
 
-  defp decision(action, _text, size, preview, fidelity_exception, reason, path) do
+  defp decision(action, size, preview, fidelity_exception, reason, path) do
     %{
       action: action,
       size: size,
@@ -181,43 +195,23 @@ defmodule Arvo.Attention.Policy do
       within_ttl?(path, retention)
   end
 
-  defp path_edited?(path, retention) do
-    edited = Map.get(retention, :edited_paths) || Map.get(retention, "edited_paths") || []
-    path in to_mapset(edited)
-  end
-
   defp within_ttl?(path, retention) do
     # First successful read of P (no prior record) qualifies for fidelity full-hot.
-    # Subsequent reads within TTL of last full-hot also qualify.
     last_reads = Map.get(retention, :last_reads) || Map.get(retention, "last_reads") || %{}
     ttl = Map.get(retention, :fidelity_ttl_turns) || Map.get(retention, "fidelity_ttl_turns") || @default_fidelity_ttl_turns
     current = Map.get(retention, :current_turn) || Map.get(retention, "current_turn") || 0
 
     case Map.get(last_reads, path) do
-      nil ->
-        true
-
-      %{turn: t} when is_integer(t) ->
-        current - t <= ttl
-
-      %{"turn" => t} when is_integer(t) ->
-        current - t <= ttl
-
-      _ ->
-        true
+      nil -> true
+      %{turn: t} when is_integer(t) -> current - t <= ttl
+      %{"turn" => t} when is_integer(t) -> current - t <= ttl
+      _ -> true
     end
   end
 
   defp under_budget?(size, used_bytes, used_count, max_bytes, max_count) do
     used_bytes + size <= max_bytes and used_count + 1 <= max_count
   end
-
-  defp tool_path(tool, args) when tool in ["read", "edit", "write"] do
-    p = Map.get(args, "path") || Map.get(args, :path)
-    if is_binary(p), do: p, else: nil
-  end
-
-  defp tool_path(_, _), do: nil
 
   defp preview(text, max) when is_binary(text) and is_integer(max) do
     if byte_size(text) <= max do
@@ -232,8 +226,7 @@ defmodule Arvo.Attention.Policy do
   end
 
   defp opt(opts, budgets, key, default) do
-    Map.get(opts, key) || Map.get(opts, Atom.to_string(key)) ||
-      Map.get(budgets, key) || Map.get(budgets, Atom.to_string(key)) || default
+    get(opts, key) || get(budgets, key) || default
   end
 
   defp to_mapset(%MapSet{} = s), do: s

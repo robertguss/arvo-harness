@@ -209,7 +209,6 @@ defmodule Arvo.TUI do
   defp reduce_event(state, {:tool_call_end, ev}) do
     name = Map.get(ev, :name) || state.tool_name || "tool"
     err? = Map.get(ev, :is_error, false)
-    # Dual view: human keeps full body; model may have received a stub
     text = Map.get(ev, :text) || if(err?, do: "error", else: "ok")
     action = Map.get(ev, :attention_action) || :full_hot
     cold_id = Map.get(ev, :cold_id)
@@ -471,23 +470,18 @@ defmodule Arvo.TUI do
       if arg == "" do
         format_inspect_summary(snap)
       else
-        path = Arvo.Session.get().path
+        case Arvo.Session.inspect_cold(arg) do
+          {:ok, body} ->
+            "cold #{arg} (#{byte_size(body)} bytes):\n" <> String.slice(body, 0, 8_000)
 
-        cond do
-          not is_binary(path) ->
+          {:error, :no_session} ->
             "no open session"
 
-          true ->
-            case Arvo.Session.Cold.fetch(path, arg) do
-              {:ok, body} ->
-                "cold #{arg} (#{byte_size(body)} bytes):\n" <> String.slice(body, 0, 8_000)
+          {:error, :not_found} ->
+            "cold id not found: #{arg}"
 
-              {:error, :not_found} ->
-                "cold id not found: #{arg}"
-
-              {:error, reason} ->
-                "inspect failed: #{inspect(reason)}"
-            end
+          {:error, reason} ->
+            "inspect failed: #{inspect(reason)}"
         end
       end
 

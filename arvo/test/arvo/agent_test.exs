@@ -10,10 +10,13 @@ defmodule Arvo.AgentTest do
   end
 
   test "event stream order for multi-tool sequential turn", %{tmp: tmp} do
-    events = :ets.new(:events, [:public, :duplicate_bag])
+    # Ordered list (not unique_integer) — monotonic insert order is the contract under test
+    events = :ets.new(:events, [:public, :ordered_set])
+    counter = :atomics.new(1, signed: false)
 
     event_fun = fn ev ->
-      :ets.insert(events, {System.unique_integer([:positive]), ev})
+      n = :atomics.add_get(counter, 1, 1)
+      :ets.insert(events, {n, ev})
     end
 
     # Scripted model: turn0 tool calls read+edit+bash; turn1 final answer

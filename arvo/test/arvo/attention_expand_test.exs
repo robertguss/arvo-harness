@@ -57,6 +57,8 @@ defmodule Arvo.AttentionExpandTest do
 
     m = Arvo.Session.Audit.metrics(path)
     assert m.same_path_reinvoke >= 1
-    assert m.store_cold >= 2
+    # First store + optional reuse audit (reused:true still counts store_cold)
+    assert m.store_cold >= 1
+    assert m.stub_in_hot >= 1
   end
 end

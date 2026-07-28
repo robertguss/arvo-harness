@@ -168,62 +168,60 @@ defmodule Arvo.Agent do
         {mod.spec().name, mod}
       end)
 
-    Enum.map_reduce(tool_calls, [], fn call, acc ->
-      id = Map.get(call, :id) || Map.get(call, "id") || "call_#{System.unique_integer([:positive])}"
-      name = Map.get(call, :name) || Map.get(call, "name")
-      args = normalize_args(Map.get(call, :arguments) || Map.get(call, "arguments") || %{})
+    tool_msgs =
+      Enum.map(tool_calls, fn call ->
+        id = Map.get(call, :id) || Map.get(call, "id") || "call_#{System.unique_integer([:positive])}"
+        name = Map.get(call, :name) || Map.get(call, "name")
+        args = normalize_args(Map.get(call, :arguments) || Map.get(call, "arguments") || %{})
 
-      event_fun.({:tool_call_start, %{id: id, name: name, arguments: args}})
+        event_fun.({:tool_call_start, %{id: id, name: name, arguments: args}})
 
-      {is_error, text} =
-        case Map.get(tool_by_name, name) do
-          nil ->
-            {true,
-             "Unknown tool: #{name}. Available: #{Enum.map_join(Map.keys(tool_by_name), ", ", & &1)}"}
+        {is_error, text} =
+          case Map.get(tool_by_name, name) do
+            nil ->
+              {true,
+               "Unknown tool: #{name}. Available: #{Enum.map_join(Map.keys(tool_by_name), ", ", & &1)}"}
 
-          mod ->
-            case Arvo.Tool.invoke(mod, args, tool_ctx(ctx)) do
-              {:ok, out} -> {false, out}
-              {:error, out} -> {true, out}
-            end
-        end
+            mod ->
+              case Arvo.Tool.invoke(mod, args, tool_ctx(ctx)) do
+                {:ok, out} -> {false, out}
+                {:error, out} -> {true, out}
+              end
+          end
 
-      projected = project_tool_result(ctx, name, args, text, is_error, id)
-      model_content = Map.get(projected, :content) || text
-      human_text = Map.get(projected, :full_text) || text
+        projected = project_tool_result(ctx, name, args, text, is_error, id)
+        model_content = Map.get(projected, :content) || text
+        human_text = Map.get(projected, :full_text) || text
 
-      event_fun.({
-        :tool_call_end,
-        %{
-          id: id,
+        event_fun.({
+          :tool_call_end,
+          %{
+            id: id,
+            name: name,
+            is_error: is_error,
+            text: human_text,
+            model_text: model_content,
+            cold_id: Map.get(projected, :cold_id),
+            attention_action: Map.get(projected, :action) || :full_hot
+          }
+        })
+
+        msg = %{
+          role: "tool",
+          tool_call_id: id,
           name: name,
-          is_error: is_error,
-          # Dual view: human transcript may keep full body; model path uses projected content
-          text: human_text,
-          model_text: model_content,
-          cold_id: Map.get(projected, :cold_id),
-          attention_action: Map.get(projected, :action) || :full_hot
+          content: model_content,
+          is_error: is_error
         }
-      })
 
-      msg = %{
-        role: "tool",
-        tool_call_id: id,
-        name: name,
-        content: model_content,
-        is_error: is_error
-      }
-
-      msg =
         if cold_id = Map.get(projected, :cold_id) do
           Map.put(msg, :cold_id, cold_id)
         else
           msg
         end
+      end)
 
-      {msg, acc ++ [msg]}
-    end)
-    |> then(fn {tool_msgs, results} -> {tool_msgs, results} end)
+    {tool_msgs, tool_msgs}
   end
 
   # Progressive attention: project tool bodies for model hot context (KTD1).
@@ -237,19 +235,12 @@ defmodule Arvo.Agent do
           _ -> %{content: text, full_text: text, action: :full_hot}
         end
 
-      fun when is_function(fun, 4) ->
-        case fun.(name, args, text, is_error) do
-          %{} = projected -> projected
-          content when is_binary(content) -> %{content: content, full_text: text, action: :full_hot}
-          _ -> %{content: text, full_text: text, action: :full_hot}
-        end
-
       _ ->
         %{content: text, full_text: text, action: :full_hot, cold_id: nil}
     end
   rescue
     e ->
-      # Fail open to full text so a projection bug does not kill the turn
+      # Fail open so a projection bug does not kill the turn
       %{
         content: text,
         full_text: text,

@@ -117,8 +117,41 @@ defmodule Arvo.SessionPanesTest do
     entries = Arvo.Session.Store.read_all(path)
 
     assert Enum.any?(entries, fn e ->
-             is_binary(e["content"]) and e["content"] =~ "tore down"
+             e["type"] == "pane_teardown" and is_binary(e["content"]) and
+               e["content"] =~ "tore down"
            end)
+  end
+
+  test "resume tears down owned panes from prior live session", %{tmp: tmp} do
+    {:ok, _path} = Arvo.Session.open_new(tmp)
+    {:ok, id} = Arvo.Herdr.split([])
+
+    assert :ok =
+             Arvo.Session.register_pane(%{
+               pane_id: id,
+               mode: :long_lived,
+               command: "stale server",
+               start_reaper: false
+             })
+
+    assert length(Arvo.Session.owned_panes()) == 1
+
+    # Second session in same cwd; resume newest should abandon prior panes.
+    {:ok, path2} = Arvo.Session.open_new(tmp)
+    # open_new already teardowns; re-register and resume path2
+    {:ok, id2} = Arvo.Herdr.split([])
+
+    assert :ok =
+             Arvo.Session.register_pane(%{
+               pane_id: id2,
+               mode: :long_lived,
+               command: "before resume",
+               start_reaper: false
+             })
+
+    assert {:ok, _} = Arvo.Session.resume(path2)
+    assert Arvo.Session.owned_panes() == []
+    assert Enum.any?(Arvo.Herdr.Fake.calls(), &match?({:close, ^id2}, &1))
   end
 
   test "process-exit reaper closes and unregisters long_lived pane" do

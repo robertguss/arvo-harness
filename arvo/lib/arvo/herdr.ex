@@ -17,21 +17,31 @@ defmodule Arvo.Herdr do
     Application.get_env(:arvo, :herdr_adapter, Arvo.Herdr.CLI)
   end
 
-  @doc "True when Herdr is available for live panes (env + binary)."
+  @doc """
+  True when Herdr is available for live panes (env + binary).
+
+  Positive CLI results are cached for the BEAM lifetime. Negative results are
+  not cached so attaching Herdr mid-process can still flip to available.
+  """
   def available? do
     case :persistent_term.get(@available_cache_key, :miss) do
+      true ->
+        true
+
       :miss ->
-        # Adapter may be swapped in tests; only cache the production CLI path.
         if adapter() == Arvo.Herdr.CLI do
           val = adapter().available?()
-          :persistent_term.put(@available_cache_key, val)
+          # Only cache success — avoids sticky false after late HERDR_ENV attach.
+          if val, do: :persistent_term.put(@available_cache_key, true)
           val
         else
           adapter().available?()
         end
 
-      val ->
-        val
+      _ ->
+        # Stale non-true cache from older builds — recompute.
+        :persistent_term.erase(@available_cache_key)
+        available?()
     end
   end
 
@@ -47,9 +57,13 @@ defmodule Arvo.Herdr do
   def normalize_mode(_), do: :finite
 
   @doc """
-  True when process-info shows only shell processes (or empty) — command finished.
-  Shared by finite wait and the long_lived reaper.
+  True when process-info shows only shell processes — command finished.
+
+  Empty process lists are **not** treated as exited (mid-spawn can briefly
+  report empty). Shared by finite wait and the long_lived reaper.
   """
+  def process_exited?(%{foreground_processes: []}), do: false
+
   def process_exited?(%{foreground_processes: procs}) when is_list(procs) do
     Enum.all?(procs, fn p ->
       name = to_string(p["name"] || p[:name] || "")

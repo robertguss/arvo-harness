@@ -248,6 +248,29 @@ defmodule Arvo.ToolsTest do
       assert :close in kinds
     end
 
+    test "register failure after split closes pane and errors", %{ctx: ctx} do
+      :ok = Arvo.Herdr.Fake.configure(available: true)
+      # Stop Session so register_pane exits — must not leave an unregistered pane open.
+      :ok = Supervisor.terminate_child(Arvo.Supervisor, Arvo.Session)
+
+      on_exit(fn ->
+        _ = Supervisor.restart_child(Arvo.Supervisor, Arvo.Session)
+      end)
+
+      result =
+        Arvo.Tool.invoke(
+          Arvo.Tools.Pane,
+          %{command: "echo orphan", mode: "finite", timeout: 5, wait_match: "x"},
+          ctx
+        )
+
+      assert match?({:error, msg} when is_binary(msg), result)
+      assert elem(result, 1) =~ "register"
+      # Split happened; close attempted after register failure
+      assert Enum.any?(Arvo.Herdr.Fake.calls(), &match?({:split, _, _}, &1))
+      assert Enum.any?(Arvo.Herdr.Fake.calls(), &match?({:close, _}, &1))
+    end
+
     test "finite still closes on wait timeout", %{ctx: ctx} do
       :ok =
         Arvo.Herdr.Fake.configure(

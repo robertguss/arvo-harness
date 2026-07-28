@@ -344,6 +344,9 @@ defmodule Arvo.Session do
           {:reply, {:error, :no_session}, state}
 
         true ->
+          # Abandon Arvo-owned panes from the prior live session before rebind.
+          {_teardown, state} = do_teardown_owned_panes(state, :resume)
+
           entries = Arvo.Session.Store.read_all(path)
           tip = Arvo.Session.Store.tip(entries)
           meta = List.first(entries)
@@ -364,7 +367,8 @@ defmodule Arvo.Session do
                 history: entries,
                 model: meta && meta["model"],
                 profile: meta && meta["profile"],
-                tokens: tokens
+                tokens: tokens,
+                owned_panes: %{}
             }
             |> put_attention_defaults(warm)
             |> Map.put(:attention_path_index, path_index)
@@ -457,7 +461,7 @@ defmodule Arvo.Session do
       }
 
       state = put_in(state, [:owned_panes, pane_id], meta)
-      notify_pane_chrome()
+      notify_pane_chrome(state)
       {:reply, :ok, state}
     end
   end
@@ -469,20 +473,14 @@ defmodule Arvo.Session do
 
       {meta, panes} ->
         stop_reaper(meta[:reaper])
-        notify_pane_chrome()
-        {:reply, :ok, %{state | owned_panes: panes}}
+        state = %{state | owned_panes: panes}
+        notify_pane_chrome(state)
+        {:reply, :ok, state}
     end
   end
 
   def handle_call(:owned_panes, _from, state) do
-    list =
-      state.owned_panes
-      |> Map.values()
-      |> Enum.map(fn m ->
-        Map.take(m, [:pane_id, :mode, :command, :turn_id, :registered_at])
-      end)
-
-    {:reply, list, state}
+    {:reply, owned_panes_list(state), state}
   end
 
   def handle_call({:teardown_owned_panes, reason}, _from, state) do
@@ -1209,35 +1207,37 @@ defmodule Arvo.Session do
         end)
 
       note = Arvo.Herdr.format_teardown_note(reason, results)
-      state = append_pane_teardown_note(state, note)
+      state = append_pane_teardown_note(state, note, reason)
       Logger.info(note)
-      notify_pane_chrome()
+      state = %{state | owned_panes: %{}}
+      notify_pane_chrome(state)
 
-      {results, %{state | owned_panes: %{}}}
+      {results, state}
     end
   end
 
-  defp append_pane_teardown_note(state, note) when is_binary(note) do
+  defp owned_panes_list(state) do
+    state.owned_panes
+    |> Map.values()
+    |> Enum.map(fn m ->
+      Map.take(m, [:pane_id, :mode, :command, :turn_id, :registered_at])
+    end)
+  end
+
+  defp append_pane_teardown_note(state, note, reason) when is_binary(note) do
     if is_binary(state.path) do
-      # Durable operator-visible note; not model speech (incomplete cancel-style leaf).
+      # Durable audit row — not a model message (avoids incomplete assistant pollution).
       entry = %{
-        "type" => "message",
-        "role" => "assistant",
-        "content" => note,
+        "type" => "pane_teardown",
         "parent_id" => state.last_id,
-        "incomplete" => true,
-        "stop_reason" => "pane_teardown",
-        "pane_teardown" => true
+        "content" => note,
+        "reason" => to_string(reason)
       }
 
       try do
         written = Arvo.Session.Store.append!(state.path, entry)
-
-        %{
-          state
-          | last_id: written["id"],
-            history: state.history ++ [written]
-        }
+        # Do not advance HEAD — teardown is audit, not a conversation fork point.
+        %{state | history: state.history ++ [written]}
       rescue
         e ->
           Logger.warning("Arvo.Session pane teardown note failed: #{Exception.message(e)}")
@@ -1302,10 +1302,14 @@ defmodule Arvo.Session do
 
   defp stop_reaper(_), do: :ok
 
-  defp notify_pane_chrome do
+  # Push pane list into TUI — never GenServer.call TUI (AB-BA with slash/Esc).
+  defp notify_pane_chrome(state) do
     case Process.whereis(Arvo.TUI) do
-      pid when is_pid(pid) -> GenServer.cast(pid, :refresh_live_panes)
-      _ -> :ok
+      pid when is_pid(pid) ->
+        GenServer.cast(pid, {:set_live_panes, owned_panes_list(state)})
+
+      _ ->
+        :ok
     end
   end
 

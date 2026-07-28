@@ -201,6 +201,11 @@ defmodule Arvo.TUI do
     {:noreply, reduce_event(state, event)}
   end
 
+  def handle_cast({:set_live_panes, panes}, state) when is_list(panes) do
+    {:noreply, %{state | live_panes: panes}}
+  end
+
+  # Backward-compatible cast used by older Session builds / tests.
   def handle_cast(:refresh_live_panes, state) do
     {:noreply, %{state | live_panes: load_live_panes()}}
   end

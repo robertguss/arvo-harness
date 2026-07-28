@@ -65,30 +65,40 @@ defmodule Arvo.Tools.Pane do
 
     case Arvo.Herdr.split(direction: direction, no_focus: true, cwd: cwd) do
       {:ok, pane_id} ->
-        case Arvo.Session.register_pane(%{
-               pane_id: pane_id,
-               mode: mode,
-               command: command,
-               # Reaper starts after running-state return for long_lived (KTD8).
-               start_reaper: false
-             }) do
-          :ok -> :ok
-          {:error, _} -> :ok
-        end
+        reg =
+          try do
+            Arvo.Session.register_pane(%{
+              pane_id: pane_id,
+              mode: mode,
+              command: command,
+              # Reaper starts after running-state return for long_lived.
+              start_reaper: false
+            })
+          catch
+            :exit, reason -> {:error, reason}
+          end
 
-        case Arvo.Herdr.run(pane_id, command) do
+        case reg do
           :ok ->
-            case mode do
-              :finite ->
-                finite_lifecycle(pane_id, command, timeout_ms, wait_match)
+            case Arvo.Herdr.run(pane_id, command) do
+              :ok ->
+                case mode do
+                  :finite ->
+                    finite_lifecycle(pane_id, command, timeout_ms, wait_match)
 
-              :long_lived ->
-                long_lived_lifecycle(pane_id, command, timeout_ms, wait_match)
+                  :long_lived ->
+                    long_lived_lifecycle(pane_id, command, timeout_ms, wait_match)
+                end
+
+              {:error, msg} ->
+                _ = cleanup_pane(pane_id)
+                {:error, "pane run failed: #{msg}"}
             end
 
-          {:error, msg} ->
-            _ = cleanup_pane(pane_id)
-            {:error, "pane run failed: #{msg}"}
+          {:error, reason} ->
+            # Never leave an unregistered orphan after split (review P1).
+            _ = Arvo.Herdr.close(pane_id)
+            {:error, "pane register failed: #{inspect(reason)}"}
         end
 
       {:error, msg} ->

@@ -70,12 +70,22 @@ a permanent mind and not a markdown knowledge base; “learning” means reuse o
 cold evidence plus warm state. Distinct from Keepers (optional live process
 cache over cold).
 
+### Attention evidence stream
+
+Session-scoped durable record of progressive-attention access decisions (store
+or reuse cold, stub vs full-hot, fidelity exceptions, warm updates that change
+workshop state, expand/recall, denied expand). Shared product facts: the same
+stream powers operator TUI access visibility (tool-call-like) and
+Harbor-capable evals. Not bulk-injected into model hot context as scripture;
+not Keepers and not a markdown memory base.
+
 ### Dual view
 
 Human-facing transcript may stay rich for debugging while the model’s hot
 messages stay progressive (stubs/budgeted). Inspect reconciles the two; honesty
 means labeling what the model saw, not forcing identical full dumps in both
-views.
+views. Always-on dual panes are not required for attention honesty when the
+attention evidence stream surfaces high-signal access events.
 
 ### Warm work-delta
 

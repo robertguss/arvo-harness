@@ -69,7 +69,8 @@ defmodule Arvo.Tools.Pane do
                pane_id: pane_id,
                mode: mode,
                command: command,
-               start_reaper: mode == :long_lived
+               # Reaper starts after running-state return for long_lived (KTD8).
+               start_reaper: false
              }) do
           :ok -> :ok
           {:error, _} -> :ok
@@ -130,7 +131,14 @@ defmodule Arvo.Tools.Pane do
         {:error, _} -> ""
       end
 
-    # Leave pane open and registered; reaper (if any) watches process exit.
+    # Leave pane open and registered; start reaper after running-state (KTD8).
+    _ =
+      try do
+        Arvo.Session.ensure_pane_reaper(pane_id)
+      catch
+        :exit, _ -> :ok
+      end
+
     body =
       """
       [pane started — long_lived]
@@ -152,7 +160,9 @@ defmodule Arvo.Tools.Pane do
                match: wait_match,
                timeout: timeout_ms
              ) do
-          {:ok, _} = ok -> ok
+          {:ok, _} = ok ->
+            ok
+
           {:error, msg} ->
             if mode == :long_lived do
               # Best-effort started if match never appears
@@ -176,12 +186,16 @@ defmodule Arvo.Tools.Pane do
     end
   end
 
+  # Grace before treating shell-only as exit (avoids mid-spawn false exit).
+  @exit_grace_ms 500
+
   defp wait_process_exit(pane_id, timeout_ms) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_wait_exit(pane_id, deadline)
+    now = System.monotonic_time(:millisecond)
+    deadline = now + timeout_ms
+    do_wait_exit(pane_id, deadline, now, false)
   end
 
-  defp do_wait_exit(pane_id, deadline) do
+  defp do_wait_exit(pane_id, deadline, started_at, seen_work?) do
     now = System.monotonic_time(:millisecond)
 
     if now >= deadline do
@@ -189,11 +203,23 @@ defmodule Arvo.Tools.Pane do
     else
       case Arvo.Herdr.process_info(pane_id) do
         {:ok, info} ->
-          if process_exited?(info) do
-            {:ok, :exited}
-          else
-            Process.sleep(200)
-            do_wait_exit(pane_id, deadline)
+          cond do
+            not process_exited?(info) ->
+              Process.sleep(200)
+              do_wait_exit(pane_id, deadline, started_at, true)
+
+            seen_work? ->
+              # Saw a non-shell process, now back to shell-only → finished.
+              {:ok, :exited}
+
+            now - started_at < @exit_grace_ms ->
+              # Still in start grace; shell-only may mean not yet launched.
+              Process.sleep(100)
+              do_wait_exit(pane_id, deadline, started_at, seen_work?)
+
+            true ->
+              # Past grace, never saw work: command likely finished instantly.
+              {:ok, :exited}
           end
 
         {:error, _} ->

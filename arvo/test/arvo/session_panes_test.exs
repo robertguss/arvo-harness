@@ -115,6 +115,7 @@ defmodule Arvo.SessionPanesTest do
     assert Enum.any?(Arvo.Herdr.Fake.calls(), &match?({:close, ^id}, &1))
 
     entries = Arvo.Session.Store.read_all(path)
+
     assert Enum.any?(entries, fn e ->
              is_binary(e["content"]) and e["content"] =~ "tore down"
            end)
@@ -129,8 +130,10 @@ defmodule Arvo.SessionPanesTest do
                pane_id: id,
                mode: :long_lived,
                command: "sleep 999",
-               start_reaper: true
+               start_reaper: false
              })
+
+    assert :ok = Arvo.Session.ensure_pane_reaper(id)
 
     assert length(Arvo.Session.owned_panes()) == 1
 

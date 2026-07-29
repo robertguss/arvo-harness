@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from evals.harbor_agents.attention_metrics import (
+    causal_stranding_pair,
+    decision_report,
+    denied_expand_operator,
     honesty_off,
     honesty_on,
     metrics_from_events,
+    residual_metrics,
     ship_score,
     stranding_candidate,
     waste_ratio,
@@ -192,6 +196,87 @@ def test_warm_update_not_projection_honesty():
         {"type": "warm_update", "committed": "committed"},
     ]
     assert not honesty_on(events, 1)
+
+
+def test_reexpand_and_residual_metrics():
+    events = [
+        {"type": "expand", "id": "c1", "size": 100, "committed": "committed"},
+        {
+            "type": "expand",
+            "id": "c1",
+            "size": 50,
+            "returned_bytes": 40,
+            "committed": "committed",
+        },
+        {"type": "expand", "id": "c2", "size": 10, "committed": "committed"},
+        {
+            "type": "denied_expand",
+            "id": "c3",
+            "actor": "user",
+            "committed": "committed",
+        },
+        {
+            "type": "denied_expand",
+            "id": "c4",
+            "actor": "model",
+            "committed": "committed",
+        },
+    ]
+    m = metrics_from_events(events)
+    assert m["n_reexpand"] == 1
+    assert m["b_reexpand"] == 40
+    assert m["n_denied_operator"] == 1
+    assert m["n_denied_model"] == 1
+    r = residual_metrics(events)
+    assert r["n_reexpand"] == 1
+    assert "not auto-unpark" in r["human_readable"]
+
+
+def test_operator_deny_not_stranding():
+    events = [
+        {"type": "stub_in_hot", "id": "c9", "committed": "committed"},
+        {
+            "type": "denied_expand",
+            "id": "c9",
+            "actor": "user",
+            "committed": "committed",
+        },
+    ]
+    assert denied_expand_operator(events, "c9")
+    assert not stranding_candidate(
+        events,
+        task_ok=False,
+        cold_id="c9",
+        recovery_available=True,
+        hides_required_fact=True,
+    )
+
+
+def test_causal_stranding_pair_and_decision_report():
+    events_a = [
+        {"type": "session_treatment", "attention_mode": "on", "committed": "committed"},
+        {"type": "stub_in_hot", "id": "c1", "committed": "committed"},
+        {
+            "type": "expand",
+            "id": "c1",
+            "actor": "model",
+            "size": 80,
+            "committed": "committed",
+        },
+    ]
+    events_b = [
+        {"type": "session_treatment", "attention_mode": "on", "committed": "committed"},
+        {"type": "stub_in_hot", "id": "c1", "committed": "committed"},
+    ]
+    assert causal_stranding_pair(
+        events_a, events_b, cold_id="c1", task_ok_a=True, task_ok_b=False
+    )
+    rep = decision_report(
+        events_a, task_ok=True, tool_results_n=1, cold_id="c1", b_full_off=1000
+    )
+    assert "quality" in rep and "residual" in rep
+    assert "Keepers" in rep["keepers_hint"]
+    assert rep["quality"]["stranding_candidate"] is False
 
 
 def _run_all() -> None:

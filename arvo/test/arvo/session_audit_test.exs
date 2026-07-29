@@ -87,15 +87,26 @@ defmodule Arvo.SessionAuditTest do
     assert Audit.normalize_reason_class("weird") == "unknown"
   end
 
-  test "reexpand placeholders join second expand of same cold id", %{path: path} do
+  test "reexpand join second expand of same cold id (U6 residual)", %{path: path} do
     _ = Audit.append(path, :expand, %{"id" => "c1", "size" => 100}, %{sequence: 0})
-    _ = Audit.append(path, :expand, %{"id" => "c1", "size" => 50}, %{sequence: 1})
+
+    _ =
+      Audit.append(path, :expand, %{"id" => "c1", "size" => 50, "returned_bytes" => 40}, %{
+        sequence: 1
+      })
+
     _ = Audit.append(path, :expand, %{"id" => "c2", "size" => 10}, %{sequence: 2})
 
     m = Audit.metrics(path)
     assert m.expand == 3
     assert m.n_reexpand == 1
-    assert m.b_reexpand == 50
+    assert m.b_reexpand == 40
+
+    r = Audit.residual_metrics(path)
+    assert r.n_reexpand == 1
+    assert r.b_reexpand == 40
+    assert is_binary(r.human_readable)
+    assert r.human_readable =~ "not auto-unpark"
   end
 
   describe "honesty + fixture scorers (KTD-M1)" do
@@ -200,6 +211,65 @@ defmodule Arvo.SessionAuditTest do
                recovery_available: true,
                hides_required_fact: true
              )
+    end
+
+    test "operator denied_expand is not stranding" do
+      events = [
+        %{"type" => "stub_in_hot", "id" => "c9", "committed" => "committed"},
+        %{
+          "type" => "denied_expand",
+          "id" => "c9",
+          "actor" => "user",
+          "committed" => "committed"
+        }
+      ]
+
+      assert Audit.denied_expand_operator?(events, "c9")
+
+      refute Audit.stranding_candidate?(events,
+               task_ok: false,
+               cold_id: "c9",
+               recovery_available: true,
+               hides_required_fact: true
+             )
+    end
+
+    test "causal stranding pair and decision_report split quality vs residual" do
+      events_a = [
+        %{"type" => "session_treatment", "attention_mode" => "on", "committed" => "committed"},
+        %{"type" => "stub_in_hot", "id" => "c1", "committed" => "committed"},
+        %{
+          "type" => "expand",
+          "id" => "c1",
+          "actor" => "model",
+          "size" => 80,
+          "committed" => "committed"
+        }
+      ]
+
+      events_b = [
+        %{"type" => "session_treatment", "attention_mode" => "on", "committed" => "committed"},
+        %{"type" => "stub_in_hot", "id" => "c1", "committed" => "committed"}
+      ]
+
+      assert Audit.causal_stranding_pair?(events_a, events_b,
+               cold_id: "c1",
+               task_ok_a: true,
+               task_ok_b: false
+             )
+
+      report =
+        Audit.decision_report(events_a,
+          task_ok: true,
+          tool_results_n: 1,
+          cold_id: "c1",
+          b_full_off: 1000
+        )
+
+      assert report.quality.task_ok == true
+      assert report.quality.stranding_candidate == false
+      assert is_map(report.residual)
+      assert report.keepers_hint =~ "parked"
     end
 
     test "attention_audit_error counted even when committed=failed" do

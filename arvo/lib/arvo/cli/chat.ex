@@ -70,7 +70,8 @@ defmodule Arvo.CLI.Chat do
     prompt = Map.fetch!(opts, :prompt)
 
     with :ok <- ensure_cwd(cwd),
-         :ok <- ensure_prompt(prompt) do
+         :ok <- ensure_prompt(prompt),
+         :ok <- ensure_runtime!() do
       do_run(opts, cwd, prompt)
     else
       {:error, :missing_cwd} ->
@@ -80,6 +81,9 @@ defmodule Arvo.CLI.Chat do
       {:error, :missing_prompt} ->
         IO.puts(:stderr, "arvo-chat: --prompt is required (string or path to file)")
         1
+
+      {:error, :app_start} ->
+        2
     end
   end
 
@@ -240,6 +244,27 @@ defmodule Arvo.CLI.Chat do
     e ->
       IO.puts(:stderr, "arvo-chat: #{Exception.message(e)}")
       2
+  end
+
+  # Mix release `bin/arvo eval` does not start the OTP app. Ensure Session and
+  # friends are up before GenServer.call (Harbor headless path).
+  defp ensure_runtime! do
+    # Headless flags must be set *before* Application.start so Focus never boots.
+    Application.put_env(:arvo, :headless, true)
+    Application.put_env(:arvo, :start_focus, false)
+    Application.put_env(:arvo, :start_repl, false)
+    Application.put_env(:arvo, :auto_resume, false)
+    Application.put_env(:arvo, :halt_on_focus_quit, false)
+    System.put_env("ARVO_HEADLESS", "1")
+
+    case Application.ensure_all_started(:arvo) do
+      {:ok, _} ->
+        :ok
+
+      {:error, {app, reason}} ->
+        IO.puts(:stderr, "arvo-chat: failed to start #{inspect(app)}: #{inspect(reason)}")
+        {:error, :app_start}
+    end
   end
 
   defp configure_headless!(opts, cwd) do

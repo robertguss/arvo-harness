@@ -92,12 +92,17 @@ defmodule Arvo.Herdr.CLI do
     e -> {:error, "herdr pane read failed: #{Exception.message(e)}"}
   end
 
-  @impl true
-  def wait_output(pane_id, opts) when is_binary(pane_id) and is_list(opts) do
+  @doc """
+  Argv for `herdr wait output`. Exposed for tests.
+
+  Herdr 0.7+ uses top-level `wait output` (not `pane wait-output`).
+  `--regex` is a flag that treats `--match` as a Rust regex.
+  """
+  def wait_output_argv(pane_id, opts)
+      when is_binary(pane_id) and is_list(opts) do
     match = Keyword.get(opts, :match)
     regex = Keyword.get(opts, :regex)
-
-    base = ["pane", "wait-output", pane_id]
+    base = ["wait", "output", pane_id]
 
     args =
       cond do
@@ -105,19 +110,21 @@ defmodule Arvo.Herdr.CLI do
           base ++ ["--match", match]
 
         is_binary(regex) and regex != "" ->
-          base ++ ["--regex", regex]
+          base ++ ["--match", regex, "--regex"]
 
         true ->
           base
       end
 
-    args =
-      args
-      |> maybe_opt("--timeout", Keyword.get(opts, :timeout))
-      |> maybe_opt("--lines", Keyword.get(opts, :lines))
-      |> maybe_opt("--source", source_arg(Keyword.get(opts, :source)))
+    args
+    |> maybe_opt("--timeout", Keyword.get(opts, :timeout))
+    |> maybe_opt("--lines", Keyword.get(opts, :lines))
+    |> maybe_opt("--source", source_arg(Keyword.get(opts, :source)))
+  end
 
-    case cmd(args) do
+  @impl true
+  def wait_output(pane_id, opts) when is_binary(pane_id) and is_list(opts) do
+    case cmd(wait_output_argv(pane_id, opts)) do
       {:ok, data} ->
         {:ok,
          %{

@@ -92,6 +92,17 @@ defmodule Arvo.HerdrTest do
     assert String.contains?(List.last(args), "http.server")
   end
 
+  test "CLI wait_output_argv uses wait output (not pane wait-output)" do
+    # Herdr 0.7 renamed pane wait-output → wait output.
+    match_args = Arvo.Herdr.CLI.wait_output_argv("w1:p1", match: "ok", timeout: 1000)
+    assert match_args == ["wait", "output", "w1:p1", "--match", "ok", "--timeout", "1000"]
+    refute "wait-output" in match_args
+    refute "pane" in match_args
+
+    regex_args = Arvo.Herdr.CLI.wait_output_argv("w1:p2", regex: "ARVO_.*")
+    assert regex_args == ["wait", "output", "w1:p2", "--match", "ARVO_.*", "--regex"]
+  end
+
   @tag :herdr
   test "live CLI smoke: split run read close when HERDR_ENV=1" do
     if System.get_env("HERDR_ENV") == "1" and System.find_executable("herdr") do

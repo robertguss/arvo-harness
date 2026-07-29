@@ -349,10 +349,11 @@ defmodule Arvo.CLI.Chat do
     mode = normalize_attention(attention) || "on"
 
     if mode == "off" do
-      # Off path still emits session_treatment; missing file is soft (scorers check honesty_off).
-      if audit_present?(session_path), do: 0, else: 0
+      # Off honesty is scorer-side (honesty_off); headless always exits 0 when
+      # the turn itself succeeded. Missing audit file is not exit-6 for off.
+      0
     else
-      if audit_evidence_ok?(session_path) do
+      if Arvo.Session.Audit.headless_on_evidence_ok?(session_path) do
         0
       else
         IO.puts(:stderr, "arvo-chat: missing audit evidence under treatment=on (#{session_path})")
@@ -360,29 +361,6 @@ defmodule Arvo.CLI.Chat do
       end
     end
   end
-
-  defp audit_present?(session_path) when is_binary(session_path) do
-    path = Arvo.Session.Audit.path(session_path)
-    File.regular?(path)
-  end
-
-  defp audit_present?(_), do: false
-
-  defp audit_evidence_ok?(session_path) when is_binary(session_path) do
-    path = Arvo.Session.Audit.path(session_path)
-
-    if not File.regular?(path) do
-      false
-    else
-      events = Arvo.Session.Audit.list(session_path)
-
-      Enum.any?(events, fn e ->
-        e["type"] == "session_treatment" and e["committed"] in ["committed", nil]
-      end)
-    end
-  end
-
-  defp audit_evidence_ok?(_), do: false
 
   defp ensure_cwd(cwd) when is_binary(cwd) do
     if File.dir?(cwd), do: :ok, else: {:error, :missing_cwd}

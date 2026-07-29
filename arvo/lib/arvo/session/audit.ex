@@ -163,10 +163,17 @@ defmodule Arvo.Session.Audit do
   def metrics_from_events(events) when is_list(events) do
     base =
       Enum.reduce(events, empty_metrics(), fn e, acc ->
-        if committed?(e) do
-          reduce_metric(e, acc)
-        else
-          acc
+        cond do
+          # Always count audit errors so honesty gates see primary-write failures
+          # even if a buggy writer marked committed=failed.
+          e["type"] == "attention_audit_error" ->
+            Map.update!(acc, :attention_audit_error, &(&1 + 1))
+
+          committed?(e) ->
+            reduce_metric(e, acc)
+
+          true ->
+            acc
         end
       end)
 
@@ -305,7 +312,6 @@ defmodule Arvo.Session.Audit do
 
   defp reduce_metric(e, acc) do
     type = e["type"]
-    size = event_size(e)
 
     case type do
       "store_cold" ->
@@ -319,25 +325,35 @@ defmodule Arvo.Session.Audit do
         Map.update(acc, :reuse_cold, 1, &(&1 + 1))
 
       "stub_in_hot" ->
+        # B_stub = hot projected stub payload size, not original cold body.
+        stub_sz = projected_event_size(e)
+
         acc
         |> Map.update!(:stub_in_hot, &(&1 + 1))
-        |> Map.update!(:stub_bytes, &(&1 + size))
+        |> Map.update!(:stub_bytes, &(&1 + stub_sz))
 
       "full_hot" ->
+        # B_full = original / size (ingest into hot as full body).
+        full_sz = full_ingest_event_size(e)
+
         acc
         |> Map.update!(:full_hot, &(&1 + 1))
-        |> Map.update!(:full_ingest_bytes, &(&1 + size))
+        |> Map.update!(:full_ingest_bytes, &(&1 + full_sz))
 
       "attention_projection" ->
         # Alias for off-mode identity projection if used
+        full_sz = full_ingest_event_size(e)
+
         acc
         |> Map.update!(:full_hot, &(&1 + 1))
-        |> Map.update!(:full_ingest_bytes, &(&1 + size))
+        |> Map.update!(:full_ingest_bytes, &(&1 + full_sz))
 
       "fidelity_exception" ->
+        full_sz = full_ingest_event_size(e)
+
         acc
         |> Map.update!(:fidelity_exception, &(&1 + 1))
-        |> Map.update!(:fidelity_exception_bytes, &(&1 + size))
+        |> Map.update!(:fidelity_exception_bytes, &(&1 + full_sz))
 
       "warm_update" ->
         Map.update!(acc, :warm_update, &(&1 + 1))
@@ -354,8 +370,9 @@ defmodule Arvo.Session.Audit do
       "session_treatment" ->
         Map.update!(acc, :session_treatment, &(&1 + 1))
 
+      # Counted in metrics_from_events before reduce_metric; keep no-op.
       "attention_audit_error" ->
-        Map.update!(acc, :attention_audit_error, &(&1 + 1))
+        acc
 
       _ ->
         acc
@@ -392,6 +409,18 @@ defmodule Arvo.Session.Audit do
     if is_integer(size), do: size, else: 0
   end
 
+  # Hot stub payload bytes (projected_bytes preferred over original body size).
+  defp projected_event_size(e) when is_map(e) do
+    size = e["projected_bytes"] || e["size"] || e["bytes"] || 0
+    if is_integer(size), do: size, else: 0
+  end
+
+  # Full-hot ingest bytes (original/size preferred over projected).
+  defp full_ingest_event_size(e) when is_map(e) do
+    size = e["original_bytes"] || e["size"] || e["bytes"] || e["projected_bytes"] || 0
+    if is_integer(size), do: size, else: 0
+  end
+
   defp committed?(e) when is_map(e) do
     case e["committed"] do
       nil -> true
@@ -413,7 +442,58 @@ defmodule Arvo.Session.Audit do
         "denied_expand",
         "same_path_reinvoke",
         "attention_projection"
+        # warm_update is trail-only; not a projection/access honesty signal
       ]
+  end
+
+  @doc """
+  Headless treatment=on honesty gate (KTD-H1 exit 6).
+
+  Fails when:
+  - audit file missing
+  - any `attention_audit_error` present
+  - `honesty_on?` fails for estimated tool_results_n (session tool messages)
+
+  `tool_results_n` may be passed explicitly; otherwise counted from session tool rows.
+  """
+  def headless_on_evidence_ok?(session_path, tool_results_n \\ nil)
+      when is_binary(session_path) do
+    audit_path = path(session_path)
+
+    cond do
+      not File.regular?(audit_path) ->
+        false
+
+      true ->
+        events = list(session_path)
+
+        cond do
+          Enum.any?(events, &(&1["type"] == "attention_audit_error")) ->
+            false
+
+          true ->
+            n =
+              if is_integer(tool_results_n) do
+                tool_results_n
+              else
+                count_tool_result_messages(session_path)
+              end
+
+            honesty_on?(events, n)
+        end
+    end
+  end
+
+  @doc "Count tool-role messages in session JSONL (for headless honesty)."
+  def count_tool_result_messages(session_path) when is_binary(session_path) do
+    session_path
+    |> Arvo.Session.Store.read_all()
+    |> Enum.count(fn e ->
+      e["type"] == "message" and
+        (e["role"] == "tool" or (is_binary(e["tool_call_id"]) and e["tool_call_id"] != ""))
+    end)
+  rescue
+    _ -> 0
   end
 
   defp normalize_event_item({type, fields}) when is_map(fields), do: {type, fields}

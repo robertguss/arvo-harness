@@ -603,7 +603,8 @@ defmodule Arvo.TUI do
       "denied_expand" -> :denied
       "capped" -> :capped
       "cap_exceeded" -> :capped
-      other -> String.to_atom(other)
+      # Fixed atom only — never String.to_atom/1 on untrusted outcome strings
+      _other -> :unknown
     end
   rescue
     _ -> :full_hot

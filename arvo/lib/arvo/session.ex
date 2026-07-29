@@ -1655,12 +1655,14 @@ defmodule Arvo.Session do
 
   defp try_audit_error_event(state, reason) do
     # Best-effort secondary write so honesty scorers can see attention_audit_error.
+    # Envelope must be committed=committed: scorers/metrics only count committed lines.
+    # Payload records that the *primary* write failed (KTD-E1 honesty).
     envelope = %{
       session_id: state.id,
       sequence: state.audit_sequence || 0,
       attention_mode: state.attention_mode || "on",
       policy_version: state.policy_version || Arvo.Attention.policy_version(),
-      committed: "failed"
+      committed: "committed"
     }
 
     case Arvo.Session.Audit.append_many(
@@ -1670,6 +1672,7 @@ defmodule Arvo.Session do
               %{
                 "reason" => inspect(reason),
                 "reason_class" => "unknown",
+                "primary_write" => "failed",
                 "error_count" => state.audit_write_errors || 1
               }}
            ],

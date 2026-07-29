@@ -154,6 +154,46 @@ def test_ore_or_missing_trail_fails():
     assert not s["honesty_ok"]
 
 
+def test_attention_audit_error_counted_when_committed_failed():
+    events = [
+        {"type": "session_treatment", "attention_mode": "on", "committed": "committed"},
+        {
+            "type": "attention_audit_error",
+            "primary_write": "failed",
+            "committed": "failed",
+        },
+    ]
+    m = metrics_from_events(events)
+    assert m["attention_audit_error"] == 1
+    s = ship_score(events, task_ok=True, tool_results_n=0, expected_treatment="on")
+    assert s["pass"] is False
+    assert "attention_audit_error" in s["reasons"]
+
+
+def test_stub_bytes_prefer_projected_bytes():
+    events = [
+        {
+            "type": "stub_in_hot",
+            "id": "c1",
+            "size": 50_000,
+            "original_bytes": 50_000,
+            "projected_bytes": 200,
+            "committed": "committed",
+        }
+    ]
+    m = metrics_from_events(events)
+    assert m["stub_bytes"] == 200
+    assert m["stub_in_hot"] == 1
+
+
+def test_warm_update_not_projection_honesty():
+    events = [
+        {"type": "session_treatment", "attention_mode": "on", "committed": "committed"},
+        {"type": "warm_update", "committed": "committed"},
+    ]
+    assert not honesty_on(events, 1)
+
+
 def _run_all() -> None:
     """Run test_* functions without pytest (stdlib only)."""
     import traceback

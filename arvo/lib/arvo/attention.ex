@@ -16,20 +16,42 @@ defmodule Arvo.Attention do
   @doc "Stable policy version string for treatment envelope (KTD-T1)."
   def policy_version, do: @policy_version
 
-  @doc "Whether progressive attention is enabled (default true)."
+  @doc """
+  Whether progressive attention is enabled (default true).
+
+  Precedence (in-process control wins for tests / CLI configure_headless!):
+
+  1. Application env `:progressive_attention` when set
+  2. System env `ARVO_PROGRESSIVE_ATTENTION`
+  3. Default `true`
+
+  Harbor/CLI should set Application (via `--attention` / configure) before
+  opening a session; ambient shell env alone must not override an explicit
+  Application.put_env in tests.
+  """
   def enabled? do
+    case Application.get_env(:arvo, :progressive_attention) do
+      false -> false
+      v when v in [0, "0", "false", "off", :off] -> false
+      true -> true
+      v when v in [1, "1", "true", "on", :on] -> true
+      nil -> system_attention_enabled_default()
+      _other -> true
+    end
+  end
+
+  defp system_attention_enabled_default do
     case System.get_env("ARVO_PROGRESSIVE_ATTENTION") do
       v when v in ["0", "false", "off", "OFF"] -> false
       v when v in ["1", "true", "on", "ON"] -> true
-      _ -> Application.get_env(:arvo, :progressive_attention, true) != false
+      _ -> true
     end
   end
 
   @doc """
-  Normalize Application env / flag into treatment mode string `"on"` | `"off"`.
+  Normalize Application / system env into treatment mode string `"on"` | `"off"`.
 
-  Precedence: `ARVO_PROGRESSIVE_ATTENTION` system env, then Application env
-  `:progressive_attention` (KTD-T1 / headless Harbor).
+  See `enabled?/0` for precedence (Application over ambient system env).
   """
   def treatment_mode_from_env do
     if enabled?(), do: "on", else: "off"

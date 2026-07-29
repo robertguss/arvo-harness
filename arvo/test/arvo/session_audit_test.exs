@@ -201,6 +201,95 @@ defmodule Arvo.SessionAuditTest do
                hides_required_fact: true
              )
     end
+
+    test "attention_audit_error counted even when committed=failed" do
+      events = [
+        %{"type" => "session_treatment", "attention_mode" => "on", "committed" => "committed"},
+        %{
+          "type" => "attention_audit_error",
+          "primary_write" => "failed",
+          "committed" => "failed"
+        }
+      ]
+
+      m = Audit.metrics_from_events(events)
+      assert m.attention_audit_error == 1
+    end
+
+    test "attention_audit_error with committed=committed increments metrics" do
+      events = [
+        %{
+          "type" => "attention_audit_error",
+          "primary_write" => "failed",
+          "committed" => "committed"
+        }
+      ]
+
+      m = Audit.metrics_from_events(events)
+      assert m.attention_audit_error == 1
+    end
+
+    test "stub_bytes prefer projected_bytes over original size" do
+      events = [
+        %{
+          "type" => "stub_in_hot",
+          "id" => "c1",
+          "size" => 50_000,
+          "original_bytes" => 50_000,
+          "projected_bytes" => 200,
+          "committed" => "committed"
+        }
+      ]
+
+      m = Audit.metrics_from_events(events)
+      assert m.stub_in_hot == 1
+      assert m.stub_bytes == 200
+    end
+
+    test "warm_update alone is not projection honesty signal" do
+      events = [
+        %{"type" => "session_treatment", "attention_mode" => "on", "committed" => "committed"},
+        %{"type" => "warm_update", "committed" => "committed"}
+      ]
+
+      refute Audit.honesty_on?(events, 1)
+    end
+
+    test "headless_on_evidence_ok fails on audit error and tools without projection" do
+      tmp = Path.join(System.tmp_dir!(), "arvo-audit-headless-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      path = Path.join(tmp, "s.jsonl")
+      File.write!(path, "")
+
+      # treatment only, tools claimed via explicit n
+      _ =
+        Audit.append_many(
+          path,
+          [
+            {:session_treatment,
+             %{"attention_mode" => "on", "policy_version" => "1"}}
+          ],
+          %{session_id: "s1", sequence: 0, attention_mode: "on", committed: "committed"}
+        )
+
+      refute Audit.headless_on_evidence_ok?(path, 1)
+      assert Audit.headless_on_evidence_ok?(path, 0)
+
+      _ =
+        Audit.append_many(
+          path,
+          [
+            {:attention_audit_error,
+             %{"primary_write" => "failed", "reason" => "disk full"}}
+          ],
+          %{session_id: "s1", sequence: 1, attention_mode: "on", committed: "committed"}
+        )
+
+      # audit error fails even with tool_results_n=0
+      refute Audit.headless_on_evidence_ok?(path, 0)
+
+      File.rm_rf!(tmp)
+    end
   end
 
   describe "product path envelope + treatment" do

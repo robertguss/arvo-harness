@@ -14,6 +14,7 @@ from typing import Any
 
 Event = Mapping[str, Any]
 
+# Align with Arvo.Session.Audit.projection_or_access?/1 — warm_update is trail-only.
 PROJECTION_TYPES = frozenset(
     {
         "full_hot",
@@ -25,7 +26,6 @@ PROJECTION_TYPES = frozenset(
         "attention_projection",
         "expand",
         "denied_expand",
-        "warm_update",
     }
 )
 
@@ -87,8 +87,8 @@ def projection_or_access(event: Event) -> bool:
     return event.get("type") in PROJECTION_TYPES
 
 
-def event_size(event: Event) -> int:
-    for key in ("size", "bytes", "original_bytes", "projected_bytes"):
+def _int_field(event: Event, *keys: str) -> int:
+    for key in keys:
         v = event.get(key)
         if isinstance(v, bool):
             continue
@@ -97,6 +97,21 @@ def event_size(event: Event) -> int:
         if isinstance(v, str) and v.isdigit():
             return int(v)
     return 0
+
+
+def event_size(event: Event) -> int:
+    """Generic size (legacy); prefer projected/full helpers for metrics."""
+    return _int_field(event, "size", "bytes", "original_bytes", "projected_bytes")
+
+
+def projected_event_size(event: Event) -> int:
+    """B_stub: hot projected stub payload (not original cold body)."""
+    return _int_field(event, "projected_bytes", "size", "bytes")
+
+
+def full_ingest_event_size(event: Event) -> int:
+    """B_full: original/size preferred over projected."""
+    return _int_field(event, "original_bytes", "size", "bytes", "projected_bytes")
 
 
 def cold_id_of(event: Event) -> str | None:
@@ -129,9 +144,13 @@ def metrics_from_events(events: Sequence[Event]) -> dict[str, int]:
     expanded_cold: set[str] = set()
 
     for e in events:
+        t = e.get("type")
+        # Always count audit errors (even committed=failed) so ship_score fails.
+        if t == "attention_audit_error":
+            m["attention_audit_error"] += 1
+            continue
         if not committed(e):
             continue
-        t = e.get("type")
         size = event_size(e)
 
         if t == "session_treatment":
@@ -145,10 +164,10 @@ def metrics_from_events(events: Sequence[Event]) -> dict[str, int]:
             m["reuse_cold"] += 1
         elif t == "stub_in_hot":
             m["stub_in_hot"] += 1
-            m["stub_bytes"] += size
+            m["stub_bytes"] += projected_event_size(e)
         elif t == "full_hot":
             m["full_hot"] += 1
-            m["full_ingest_bytes"] += size
+            m["full_ingest_bytes"] += full_ingest_event_size(e)
         elif t == "fidelity_exception":
             m["fidelity_exception"] += 1
         elif t == "warm_update":
@@ -165,8 +184,6 @@ def metrics_from_events(events: Sequence[Event]) -> dict[str, int]:
             m["denied_expand"] += 1
         elif t == "same_path_reinvoke":
             m["same_path_reinvoke"] += 1
-        elif t == "attention_audit_error":
-            m["attention_audit_error"] += 1
 
     return m
 

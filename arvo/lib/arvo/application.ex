@@ -60,19 +60,42 @@ defmodule Arvo.Application do
   defp maybe_start_interactive do
     # Product default: Focus owns the terminal (not Repl). Repl remains library/fallback.
     # Under test, both stay off unless explicitly enabled.
-    _ = maybe_auto_resume()
+    # Headless (KTD-H1 / KTD-D1): no Focus, no auto-resume — Harbor / arvo-chat entry.
+    if headless?() do
+      Application.put_env(:arvo, :headless, true)
+      Application.put_env(:arvo, :start_focus, false)
+      Application.put_env(:arvo, :start_repl, false)
+      Application.put_env(:arvo, :auto_resume, false)
+      Logger.info("Arvo: headless boot (no Focus, no auto-resume)")
+      :ok
+    else
+      _ = maybe_auto_resume()
 
-    cond do
-      Application.get_env(:arvo, :start_focus, true) and not Application.get_env(:arvo, :start_repl, false) ->
-        # Focus.run/0 stops the VM on quit when :halt_on_focus_quit is true (default).
-        Task.start(fn -> Arvo.TUI.Focus.run() end)
+      cond do
+        Application.get_env(:arvo, :start_focus, true) and
+            not Application.get_env(:arvo, :start_repl, false) ->
+          # Focus.run/0 stops the VM on quit when :halt_on_focus_quit is true (default).
+          Task.start(fn -> Arvo.TUI.Focus.run() end)
 
-      Application.get_env(:arvo, :start_repl, false) ->
-        Task.start(fn -> Arvo.Repl.run() end)
+        Application.get_env(:arvo, :start_repl, false) ->
+          Task.start(fn -> Arvo.Repl.run() end)
 
-      true ->
-        :ok
+        true ->
+          :ok
+      end
     end
+  end
+
+  @doc """
+  True for Harbor / `arvo-chat` one-shot runs.
+
+  Detects `Application` env `:headless`, `ARVO_HEADLESS=1|true|yes`, or
+  `ARVO_MODE=chat|headless`.
+  """
+  def headless? do
+    Application.get_env(:arvo, :headless, false) == true or
+      System.get_env("ARVO_HEADLESS") in ["1", "true", "yes"] or
+      System.get_env("ARVO_MODE") in ["chat", "headless"]
   end
 
   @doc """

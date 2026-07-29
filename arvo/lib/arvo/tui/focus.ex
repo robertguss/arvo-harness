@@ -561,12 +561,18 @@ defmodule Arvo.TUI.Focus do
   end
 
   defp ensure_session do
+    # Ambient enablement (R17): Session.open_new casts attention_mode; when a
+    # session is already bound, re-push mode so ghost strip stays honest.
+    # Cast-only into TUI — never GenServer.call Session from under TUI mailbox.
     case Arvo.Session.get() do
-      %{path: path} when is_binary(path) ->
+      %{path: path} = sess when is_binary(path) ->
+        mode = Map.get(sess, :attention_mode) || "on"
+        _ = Arvo.TUI.put_attention_mode(mode)
         :ok
 
       _ ->
         cwd = Application.get_env(:arvo, :cwd) || Arvo.cwd()
+        # open_new emits session_treatment + put_attention_mode cast
         _ = Arvo.Session.open_new(cwd)
         :ok
     end

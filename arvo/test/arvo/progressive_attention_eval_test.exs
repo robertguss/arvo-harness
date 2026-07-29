@@ -40,7 +40,9 @@ defmodule Arvo.ProgressiveAttentionEvalTest do
     assert on_metrics.first_is_full_hot or on_metrics.first_cold_id != nil
   end
 
-  test "default-on product path emits audit; opt-out disables stubs", %{tmp: tmp} do
+  test "default-on product path emits audit; opt-out disables stubs but still projects", %{
+    tmp: tmp
+  } do
     Application.put_env(:arvo, :progressive_attention, true)
     {:ok, path} = Arvo.Session.open_new(tmp)
     large = String.duplicate("log\n", 3_000)
@@ -51,12 +53,23 @@ defmodule Arvo.ProgressiveAttentionEvalTest do
     m = Arvo.Session.Audit.metrics(path)
     assert m.store_cold >= 1
     assert m.stub_in_hot >= 1
+    assert m.session_treatment >= 1
+    events = Arvo.Session.Audit.list(path)
+    assert Arvo.Session.Audit.honesty_on?(events, 1)
+    assert Enum.all?(events, &(&1["schema_version"] == 1))
 
     Application.put_env(:arvo, :progressive_attention, false)
-    {:ok, _path2} = Arvo.Session.open_new(tmp)
+    {:ok, path2} = Arvo.Session.open_new(tmp)
     r2 = Arvo.Session.project_tool_result("bash", %{"command" => "cat x"}, large, false)
     assert r2.action == :full_hot
     assert r2.content == large
+
+    events2 = Arvo.Session.Audit.list(path2)
+    assert Arvo.Session.Audit.honesty_off?(events2, 1)
+    m2 = Arvo.Session.Audit.metrics(path2)
+    assert m2.full_hot >= 1
+    assert m2.full_ingest_bytes > 0
+    assert m2.stub_in_hot == 0
   end
 
   defp run_scenario(tmp, attention_on?) do

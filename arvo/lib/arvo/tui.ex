@@ -38,6 +38,36 @@ defmodule Arvo.TUI do
     GenServer.cast(__MODULE__, {:put_tokens, turn, cumulative, window})
   end
 
+  @doc """
+  Ambient progressive-attention enablement (R17). Cast-only from Session after treatment.
+  """
+  def put_attention_mode(mode) when mode in ["on", "off", :on, :off] do
+    mode = if to_string(mode) == "off", do: "off", else: "on"
+    GenServer.cast(__MODULE__, {:put_attention_mode, mode})
+  end
+
+  def put_attention_mode(_), do: :ok
+
+  @doc """
+  Operator-only access chrome item (expand/denied/capped). Cast-only from Session.
+  Never enters model hot context (R11 / KTD3).
+  """
+  def put_access_chrome(payload) when is_map(payload) do
+    GenServer.cast(__MODULE__, {:put_access_chrome, payload})
+  end
+
+  @doc """
+  Entries safe for model-facing projection — strips operator access chrome (R11).
+  """
+  def model_projection_entries(transcript) when is_list(transcript) do
+    Enum.reject(transcript, fn
+      %{kind: :attention_access} -> true
+      _ -> false
+    end)
+  end
+
+  def model_projection_entries(_), do: []
+
   def append_user(text) when is_binary(text) do
     GenServer.call(__MODULE__, {:append, %{kind: :user, text: text}})
   end
@@ -120,7 +150,9 @@ defmodule Arvo.TUI do
        palette: nil,
        tree: nil,
        # Arvo-owned pane live-job chrome (R11b) — refreshed from Session
-       live_panes: []
+       live_panes: [],
+       # Progressive attention enablement (R17) — Session cast after treatment
+       attention_mode: nil
      }}
   end
 
@@ -195,6 +227,14 @@ defmodule Arvo.TUI do
   @impl true
   def handle_cast({:put_tokens, turn, cum, window}, state) do
     {:noreply, %{state | tokens: %{turn: turn, cumulative: cum, window: window}}}
+  end
+
+  def handle_cast({:put_attention_mode, mode}, state) when mode in ["on", "off"] do
+    {:noreply, %{state | attention_mode: mode}}
+  end
+
+  def handle_cast({:put_access_chrome, payload}, state) when is_map(payload) do
+    {:noreply, append_access_chrome(state, payload)}
   end
 
   def handle_cast({:event, event}, state) do
@@ -348,27 +388,11 @@ defmodule Arvo.TUI do
     name = Map.get(ev, :name) || state.tool_name || "tool"
     id = Map.get(ev, :id)
     err? = Map.get(ev, :is_error, false)
+    # Human body only — dual-view / access chrome lives on adjacent :attention_access (R13/R19)
     text = Map.get(ev, :text) || if(err?, do: "error", else: "ok")
     action = Map.get(ev, :attention_action) || :full_hot
     cold_id = Map.get(ev, :cold_id)
     model_text = Map.get(ev, :model_text)
-
-    label =
-      case action do
-        :stub -> " [model:stub#{if cold_id, do: " cold:" <> cold_id, else: ""}]"
-        :full_hot -> " [model:full]"
-        other -> " [model:#{other}]"
-      end
-
-    detail =
-      if action == :stub and is_binary(model_text) and model_text != text do
-        text <>
-          "\n— dual-view: model saw —\n" <>
-          model_text <>
-          "\n— end dual-view#{label} —"
-      else
-        text <> label
-      end
 
     status = if err?, do: :error, else: :ok
     expanded = default_expanded(state, false)
@@ -377,12 +401,34 @@ defmodule Arvo.TUI do
       update_last_activity(state.transcript, name, id, fn entry ->
         entry
         |> Map.put(:status, status)
-        |> Map.put(:detail, detail)
+        |> Map.put(:detail, text)
         |> Map.put(:expanded, expanded)
         |> Map.put(:is_error, err?)
         |> Map.put(:attention_action, action)
         |> Map.put(:cold_id, cold_id)
       end)
+
+    # R13/R19: one high-signal access child when treatment on (R17: off = no access chrome)
+    transcript =
+      if access_chrome_enabled?(state) do
+        entry =
+          build_projection_access(%{
+            action: action,
+            cold_id: cold_id,
+            model_text: model_text,
+            human_text: text,
+            tool_call_id: id,
+            tool: name,
+            event_id: Map.get(ev, :event_id),
+            reason_class: Map.get(ev, :reason_class),
+            secondary: Map.get(ev, :attention_secondary) || [],
+            expanded: default_expanded(state, false)
+          })
+
+        transcript ++ [entry]
+      else
+        transcript
+      end
 
     # Refresh pane chrome mid-turn after long_lived returns.
     %{state | tool_name: nil, transcript: transcript, live_panes: load_live_panes()}
@@ -440,6 +486,171 @@ defmodule Arvo.TUI do
   end
 
   defp reduce_event(state, _), do: state
+
+  # R17: attention-off sessions show no tool-call-like access events.
+  # nil mode defaults on (product path) so live casts without Session still paint chrome.
+  defp access_chrome_enabled?(%{attention_mode: "off"}), do: false
+  defp access_chrome_enabled?(_), do: true
+
+  defp append_access_chrome(state, payload) do
+    # Expand/denied/capped chrome from Session cast (R20); always operator-only.
+    # Even when treatment is off, denied expand is rare product surface — still show
+    # if payload is expand-class (human/model recovery attempts).
+    entry = build_expand_access(payload, default_expanded(state, false))
+    %{state | transcript: state.transcript ++ [entry]}
+  end
+
+  defp build_projection_access(attrs) do
+    action = normalize_outcome(attrs[:action] || attrs["action"] || :full_hot)
+    cold_id = attrs[:cold_id] || attrs["cold_id"]
+    model_text = attrs[:model_text] || attrs["model_text"]
+    human_text = attrs[:human_text] || attrs["human_text"]
+    secondary = List.wrap(attrs[:secondary] || attrs["secondary"] || [])
+    reason_class = attrs[:reason_class] || attrs["reason_class"]
+    event_id = attrs[:event_id] || attrs["event_id"]
+    tool_call_id = attrs[:tool_call_id] || attrs["tool_call_id"]
+    tool = attrs[:tool] || attrs["tool"]
+    expanded = attrs[:expanded] == true
+
+    label = projection_label(action, cold_id, secondary)
+
+    detail =
+      case action do
+        :stub when is_binary(model_text) and model_text != human_text ->
+          "— dual-view: model saw —\n" <>
+            model_text <>
+            "\n— end dual-view#{label} —"
+
+        _ ->
+          String.trim_leading(label)
+      end
+
+    %{
+      kind: :attention_access,
+      outcome: action,
+      cold_id: cold_id,
+      reason_class: reason_class && to_string(reason_class),
+      secondary: secondary,
+      event_id: event_id,
+      tool_call_id: tool_call_id,
+      tool: tool,
+      model_text: model_text,
+      summary: "access · " <> outcome_word(action) <> secondary_suffix(secondary) <> cold_suffix(cold_id),
+      detail: detail,
+      label: label,
+      expanded: expanded
+    }
+  end
+
+  defp build_expand_access(payload, expanded) do
+    outcome =
+      normalize_outcome(
+        payload[:outcome] || payload["outcome"] || payload[:type] || payload["type"] || :expand
+      )
+
+    cold_id = payload[:cold_id] || payload["cold_id"] || payload[:id] || payload["id"]
+    reason_class = payload[:reason_class] || payload["reason_class"]
+    event_id = payload[:event_id] || payload["event_id"]
+    tool_call_id = payload[:tool_call_id] || payload["tool_call_id"]
+    actor = payload[:actor] || payload["actor"]
+
+    summary =
+      "access · " <>
+        outcome_word(outcome) <>
+        cold_suffix(cold_id) <>
+        reason_suffix(reason_class)
+
+    detail =
+      [
+        "outcome=#{outcome_word(outcome)}",
+        if(reason_class, do: "reason_class=#{reason_class}", else: nil),
+        if(cold_id, do: "cold:#{cold_id}", else: nil),
+        if(actor, do: "actor=#{actor}", else: nil),
+        if(event_id, do: "event_id=#{event_id}", else: nil)
+      ]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.join(" · ")
+
+    %{
+      kind: :attention_access,
+      outcome: outcome,
+      cold_id: cold_id,
+      reason_class: reason_class && to_string(reason_class),
+      secondary: [],
+      event_id: event_id,
+      tool_call_id: tool_call_id,
+      tool: nil,
+      model_text: nil,
+      summary: summary,
+      detail: detail,
+      label: " [#{outcome_word(outcome)}#{cold_suffix(cold_id)}]",
+      expanded: expanded
+    }
+  end
+
+  defp normalize_outcome(v) do
+    case to_string(v) do
+      "stub" -> :stub
+      "stub_in_hot" -> :stub
+      "full_hot" -> :full_hot
+      "full" -> :full_hot
+      "reuse" -> :reuse
+      "reuse_cold" -> :reuse
+      "store" -> :store
+      "store_cold" -> :store
+      "expand" -> :expand
+      "denied" -> :denied
+      "denied_expand" -> :denied
+      "capped" -> :capped
+      "cap_exceeded" -> :capped
+      # Fixed atom only — never String.to_atom/1 on untrusted outcome strings
+      _other -> :unknown
+    end
+  rescue
+    _ -> :full_hot
+  end
+
+  defp projection_label(:stub, cold_id, _sec),
+    do: " [model:stub#{if cold_id, do: " cold:" <> cold_id, else: ""}]"
+
+  defp projection_label(:full_hot, _cold_id, _sec), do: " [model:full]"
+  defp projection_label(:reuse, cold_id, _sec),
+    do: " [model:reuse#{if cold_id, do: " cold:" <> cold_id, else: ""}]"
+
+  defp projection_label(other, cold_id, _sec),
+    do: " [model:#{other}#{if cold_id, do: " cold:" <> cold_id, else: ""}]"
+
+  defp outcome_word(:full_hot), do: "full-hot"
+  defp outcome_word(:stub), do: "stub"
+  defp outcome_word(:reuse), do: "reuse"
+  defp outcome_word(:store), do: "store"
+  defp outcome_word(:expand), do: "expand"
+  defp outcome_word(:denied), do: "denied"
+  defp outcome_word(:capped), do: "capped"
+  defp outcome_word(other), do: to_string(other)
+
+  defp cold_suffix(nil), do: ""
+  defp cold_suffix(""), do: ""
+  defp cold_suffix(id), do: " · cold:#{id}"
+
+  defp reason_suffix(nil), do: ""
+  defp reason_suffix(""), do: ""
+  defp reason_suffix(rc), do: " · #{rc}"
+
+  defp secondary_suffix([]), do: ""
+  defp secondary_suffix(sec) do
+    flags =
+      sec
+      |> Enum.map(fn
+        s when s in [:store, "store", :store_cold, "store_cold"] -> "store"
+        s when s in [:reuse, "reuse", :reuse_cold, "reuse_cold"] -> "reuse"
+        other -> to_string(other)
+      end)
+      |> Enum.uniq()
+      |> Enum.join("+")
+
+    if flags == "", do: "", else: "+#{flags}"
+  end
 
   defp default_expanded(%{expand_all: true}, _live_default), do: true
   defp default_expanded(%{expand_all: false}, _live_default), do: false
@@ -501,7 +712,7 @@ defmodule Arvo.TUI do
 
     transcript =
       Enum.map(state.transcript, fn
-        %{kind: k} = e when k in [:thought, :activity, :tool] ->
+        %{kind: k} = e when k in [:thought, :activity, :tool, :attention_access] ->
           Map.put(e, :expanded, next)
 
         other ->
@@ -515,7 +726,7 @@ defmodule Arvo.TUI do
     transcript
     |> Enum.with_index()
     |> Enum.filter(fn
-      {%{kind: k}, _} when k in [:thought, :activity, :tool] -> true
+      {%{kind: k}, _} when k in [:thought, :activity, :tool, :attention_access] -> true
       _ -> false
     end)
     |> Enum.map(&elem(&1, 1))
@@ -550,7 +761,7 @@ defmodule Arvo.TUI do
     if is_integer(idx) and idx < length(state.transcript) do
       transcript =
         List.update_at(state.transcript, idx, fn
-          %{kind: k} = e when k in [:thought, :activity, :tool] ->
+          %{kind: k} = e when k in [:thought, :activity, :tool, :attention_access] ->
             Map.put(e, :expanded, !Map.get(e, :expanded, false))
 
           other ->
@@ -664,6 +875,8 @@ defmodule Arvo.TUI do
 
   @doc false
   def rehydrate_transcript_from_messages(state, messages) when is_list(messages) do
+    # R4 ship-ready: live-turn access chrome only — do NOT rebuild :attention_access
+    # from audit on /resume. Messages never carry chrome kinds (R11).
     entries =
       Enum.flat_map(messages, fn msg ->
         role = msg[:role] || msg["role"] || "user"
@@ -1035,9 +1248,10 @@ defmodule Arvo.TUI do
     if id == "" do
       {{:ok, :handled, "usage: /recall <cold-id>"}, state}
     else
+      # Session.recall commits audit + casts operator access chrome (R20).
+      # Expand body is real session content (not chrome); inject for next model turn.
       case Arvo.Session.recall(id, actor: :user) do
         {:ok, slice} ->
-          # Inject into session history so next TurnContext / model turn sees the expand
           _ =
             Arvo.Session.record_message(%{
               role: "system",
@@ -1146,7 +1360,9 @@ defmodule Arvo.TUI do
         palette: nil,
         tree: nil,
         tokens: %{turn: 0, cumulative: 0, window: 500_000},
-        transcript: []
+        transcript: [],
+        # Session.open_new casts put_attention_mode after treatment; keep prior until cast
+        attention_mode: state[:attention_mode]
     }
   end
 
@@ -1165,6 +1381,15 @@ defmodule Arvo.TUI do
     state =
       case resumed[:model] || resumed["model"] do
         m when is_binary(m) -> %{state | model: m}
+        _ -> state
+      end
+
+    # R17 enablement from session meta on resume; R4 access chrome rebuild deferred (live-only)
+    state =
+      case resumed[:attention_mode] || resumed["attention_mode"] do
+        "off" -> %{state | attention_mode: "off"}
+        :off -> %{state | attention_mode: "off"}
+        m when m in ["on", :on] -> %{state | attention_mode: "on"}
         _ -> state
       end
 

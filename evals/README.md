@@ -1,11 +1,67 @@
-# Ore Harbor evals
+# Harbor evals (Ore + Arvo attention)
 
-Tasks for the real `ore chat` product path via
-`evals/harbor_agents/ore_agent.py`.
+Two product paths:
+
+| Suite | Agent adapter | Artifact |
+| ----- | ------------- | -------- |
+| Ore coding / fff-search | `evals/harbor_agents/ore_agent.py` | Host `ore` binary upload |
+| **Arvo progressive attention** | `evals/harbor_agents/arvo_agent.py` | **Mix release tarball** (ERTS), not Ore packaging |
+
+Ore-only jobs are **not** attention wins (AE9). Attention ship scores read
+`$HOME/.arvo/sessions/**/*.audit.jsonl` from the Arvo product trail.
 
 ## Suites
 
-### Generic coding
+### Arvo progressive attention (`suite = arvo-attention`) — ship-ready U4
+
+| Task | Capability | Primary reward |
+| ---- | ---------- | -------------- |
+| `arvo-attention-reread` | Large re-read + rename edit under attention **on** vs **off** | `task_ok` + treatment-aware **honesty** + on: stub/reuse signal; off: full_hot identity |
+
+**Ship metrics (KTD-M1)** from committed audit events:
+
+| Metric | Pass rule |
+| ------ | --------- |
+| Honesty on | `treatment=on` + ≥1 projection when tools ran |
+| Honesty off | `treatment=off` + `session_treatment` + ≥1 `full_hot` when tools ran |
+| Task success | `big_module.ex` has `defmodule BigFixed do` + `PAYLOAD_TOKEN_7f3a9c` |
+| Stub/reuse (on) | `N_stub + N_reuse ≥ 1` |
+| Hot waste (paired) | `waste_ratio = B_full_on / max(B_full_off, 1) < 1.0` (compare on/off job metrics JSON) |
+
+**Unit baselines (no Harbor network):**
+
+```bash
+# Elixir trail + progressive scenario
+cd arvo && mix test test/arvo/progressive_attention_eval_test.exs test/arvo/session_audit_test.exs
+
+# Python pure scorers (fixtures)
+export PYTHONPATH=$PWD${PYTHONPATH:+:$PYTHONPATH}
+python3 -m pytest evals/harbor_agents/test_attention_metrics.py -q
+```
+
+**Release + live Harbor:**
+
+```bash
+# 1) Build arch-matching Mix release (KTD-D1)
+cd arvo && MIX_ENV=prod mix release arvo
+# tarball: arvo/_build/prod/arvo-*.tar.gz  (or set ARVO_RELEASE)
+
+# 2) Oracle (task edit only; no attention honesty)
+export PYTHONPATH=$PWD${PYTHONPATH:+:$PYTHONPATH}
+harbor run -c evals/jobs-config/arvo-attention-reread-oracle.json -y
+
+# 3) Attention on / off (needs XAI_API_KEY)
+harbor run -c evals/jobs-config/arvo-attention-reread-on.json -y --ae XAI_API_KEY
+harbor run -c evals/jobs-config/arvo-attention-reread-off.json -y --ae XAI_API_KEY
+```
+
+Compare `/logs/verifier/attention-metrics.json` (or job artifacts) for `b_full`
+on vs off after both trials. Failures with tools but no treatment/projection
+events are honesty fails (AE9)—including Ore adapter misuse.
+
+Docs: `arvo/rel/RELEASE.md` (install layout, exit codes, audit glob).
+
+### Generic coding (Ore)
 
 | Task                   | Capability                               | Beads                      |
 | ---------------------- | ---------------------------------------- | -------------------------- |
@@ -37,23 +93,32 @@ Epic: `coding-agent-harness-ffy.1`.
 
 ### Job configs
 
-Reusable Harbor job JSON under
-`evals/jobs-config/ore-fff-*-{oracle,nop,ore}.json`. Example:
+Reusable Harbor job JSON under `evals/jobs-config/`:
 
 ```bash
 export PYTHONPATH=$PWD${PYTHONPATH:+:$PYTHONPATH}
+
+# Ore fff
 harbor run -c evals/jobs-config/ore-fff-fuzzy-path-oracle.json -y
 harbor run -c evals/jobs-config/ore-fff-gitignore-oracle.json -y
+
+# Arvo attention ship-ready
+harbor run -c evals/jobs-config/arvo-attention-reread-oracle.json -y
+harbor run -c evals/jobs-config/arvo-attention-reread-on.json -y --ae XAI_API_KEY
+harbor run -c evals/jobs-config/arvo-attention-reread-off.json -y --ae XAI_API_KEY
 ```
 
 ## Prerequisites
 
 ```bash
-# Install ore (host binary uploaded into the sandbox)
+# Ore path: host binary uploaded into the sandbox
 cargo install --path ore/crates/ore --locked --force
 
+# Arvo path: Mix release tarball (includes ERTS)
+cd arvo && MIX_ENV=prod mix release arvo
+
 # Harbor + credentials for live agent trials
-# XAI_API_KEY or ~/.ore/auth.json from `ore login`
+# XAI_API_KEY (Arvo; also Ore if not using ~/.ore/auth.json)
 ```
 
 ## Run patterns
@@ -61,20 +126,39 @@ cargo install --path ore/crates/ore --locked --force
 ```bash
 # Unit engine bar (fast, no Docker)
 cd ore && cargo test -p ore-plugin-fff
+cd arvo && mix test test/arvo/progressive_attention_eval_test.exs
 
-# Oracle (expected reward 1) / nop (expected 0) — adjust harbor CLI to your install
+# Oracle (expected reward 1)
 harbor run -p evals/ore-fff-locate-then-edit -a oracle
-harbor run -p evals/ore-fff-prefer-plugin -a oracle
+harbor run -p evals/arvo-attention-reread -a oracle
 
-# Live Ore agent (needs network allowlist + key)
-harbor run -p evals/ore-fff-locate-then-edit -a ore --agent-import-path evals.harbor_agents.ore_agent:OreAgent --ae XAI_API_KEY
-harbor run -p evals/ore-fff-prefer-plugin -a ore --agent-import-path evals.harbor_agents.ore_agent:OreAgent --ae XAI_API_KEY
+# Live Ore agent
+harbor run -p evals/ore-fff-locate-then-edit -a ore \
+  --agent-import-path evals.harbor_agents.ore_agent:OreAgent --ae XAI_API_KEY
+
+# Live Arvo agent (attention on)
+harbor run -p evals/arvo-attention-reread \
+  -a evals.harbor_agents.arvo_agent:ArvoAgent \
+  --ae XAI_API_KEY
+# kwargs: attention=on|off via jobs-config or agent kwargs
 ```
 
 Exact Harbor flags may vary by Harbor version; see prior job logs under
 `evals/jobs/`.
 
 ## Design notes
+
+### Arvo attention
+
+- Adapter role matches Ore (setup / env / timeout / logs) but packaging is
+  **release tarball** → `/opt/arvo` + `arvo-chat` on PATH (`HOME=/home/agent`).
+- Treatment set **before** session open: `ARVO_PROGRESSIVE_ATTENTION` +
+  `--attention on|off`.
+- Scorers are pure over audit events (`evals/harbor_agents/attention_metrics.py`);
+  task verifier embeds a copy under `tests/` for sandbox isolation.
+- Residual Keepers metrics (`N_reexpand`, `B_reexpand`) are placeholders until U6.
+
+### Ore fff
 
 - Project fixtures set `.ore/config.toml` → `profile = "search"` so boot
   auto-activates `fff`.

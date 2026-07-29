@@ -8,14 +8,33 @@ defmodule Arvo.MixProject do
       elixir: "~> 1.20",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      elixirc_paths: elixirc_paths(Mix.env())
+      elixirc_paths: elixirc_paths(Mix.env()),
+      releases: releases()
     ]
   end
 
   def application do
     [
-      extra_applications: [:logger],
+      extra_applications: [:logger, :inets, :ssl, :crypto],
       mod: {Arvo.Application, []}
+    ]
+  end
+
+  # KTD-D1: Mix release + ERTS (not Ore-style single static binary).
+  # Build on arch matching Harbor task (linux/amd64 unless jobs say otherwise):
+  #   MIX_ENV=prod mix release arvo
+  # Artifact: _build/prod/arvo-*.tar.gz (or _build/prod/rel/arvo/)
+  defp releases do
+    [
+      arvo: [
+        include_executables_for: [:unix],
+        include_erts: true,
+        applications: [runtime_tools: :permanent],
+        steps: [:assemble, :tar],
+        overlays: "rel/overlays",
+        # Cookie not required for eval/one-shot; set for completeness.
+        cookie: "arvo_headless"
+      ]
     ]
   end
 

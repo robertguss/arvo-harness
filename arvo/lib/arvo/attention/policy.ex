@@ -137,7 +137,7 @@ defmodule Arvo.Attention.Policy do
 
     """
     [cold:#{cold_id} tool=#{tool} bytes=#{size}#{path_line}]
-    Full body stored cold; not in model hot context. Ask the user to /recall #{cold_id} (capped) if needed.
+    Full body stored cold; not in model hot context. Call tool RecallEvidence with cold_id=#{cold_id} (capped) if needed; interactive operators may /recall #{cold_id}.
     preview:
     #{preview}
     """

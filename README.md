@@ -96,6 +96,7 @@ cd arvo && mix test
 | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
 | [SPEC.md](SPEC.md)                                                                                                         | Locked v0.1 specification     |
 | [CONTEXT.md](CONTEXT.md)                                                                                                   | Normative vocabulary          |
+| [wiki/](wiki/)                                                                                                             | LLM wiki (compiled knowledge) |
 | [docs/adr/](docs/adr/)                                                                                                     | Architecture decision records |
 | [docs/plans/2026-07-27-001-feat-arvo-d1-daily-driver-plan.md](docs/plans/2026-07-27-001-feat-arvo-d1-daily-driver-plan.md) | D1 plan                       |
 | [arvo/](arvo/)                                                                                                             | Elixir mix project            |

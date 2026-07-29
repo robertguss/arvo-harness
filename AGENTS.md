@@ -34,6 +34,20 @@ bd dolt push          # Push beads data to remote
   concepts). Relevant when orienting to the codebase or discussing domain
   concepts.
 
+## LLM Wiki
+
+Persistent project knowledge base under `wiki/` (Karpathy LLM-wiki pattern).
+LLM maintains markdown pages; raw sources stay elsewhere in the repo (read-only
+for wiki work).
+
+- Schema / workflows: `wiki/AGENTS.md`
+- Start here: `wiki/index.md`, then `wiki/overview.md`
+- Ops: ingest sources → update entities/concepts → refresh index → append
+  `wiki/log.md`; periodic lint → `wiki/lint-report.md`
+
+Normative vocabulary still lives in `CONTEXT.md` / `CONCEPTS.md`. Wiki compiles
+and cross-links; it does not replace those sources.
+
 ## Non-Interactive Shell Commands
 
 **ALWAYS use non-interactive flags** with file operations to avoid hanging on

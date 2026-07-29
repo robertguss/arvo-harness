@@ -78,6 +78,13 @@ subordinate to explicit user, repository, and orchestrator instructions.
 error.
 <!-- END BEADS INTEGRATION -->
 
+## LLM Wiki
+
+Project knowledge wiki at `wiki/` (LLM-maintained; sources stay in-repo paths).
+Read `wiki/AGENTS.md` for schema and ingest/query/lint workflows. Orient via
+`wiki/index.md` and `wiki/overview.md`. Do not edit raw sources as part of wiki
+maintenance. Normative names: `CONTEXT.md` / `CONCEPTS.md`.
+
 ## Build & Test
 
 _Add your build and test commands here_

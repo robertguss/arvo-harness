@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Headless product entry for Harbor / CI (KTD-H1 + KTD-D1).
+# Installs as PATH wrapper name `arvo-chat` under /usr/local/arvo or /opt/arvo.
+set -euo pipefail
+
+BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+export ARVO_HEADLESS=1
+export ARVO_MODE="${ARVO_MODE:-chat}"
+export HOME="${HOME:-/home/agent}"
+
+# Encode argv as base64 lines so spaces/newlines survive into Elixir eval.
+ARGS_FILE="$(mktemp)"
+trap 'rm -f "$ARGS_FILE"' EXIT
+for a in "$@"; do
+  b64="$(printf '%s' "$a" | base64 -w0 2>/dev/null || printf '%s' "$a" | base64 | tr -d '\n')"
+  printf '%s\n' "$b64" >>"$ARGS_FILE"
+done
+export ARVO_CHAT_ARGS_B64_FILE="$ARGS_FILE"
+
+# Assembled release: bin/arvo sits beside this overlay script.
+if [[ -x "${BIN_DIR}/arvo" ]]; then
+  exec "${BIN_DIR}/arvo" eval 'Arvo.CLI.Chat.main()'
+fi
+
+# Dev fallback: mix project checkout (source-tree overlay path).
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_SOURCE" ]]; do
+  DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+  SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
+  [[ "$SCRIPT_SOURCE" != /* ]] && SCRIPT_SOURCE="$DIR/$SCRIPT_SOURCE"
+done
+OVERLAY_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+# arvo/rel/overlays/bin → arvo project root
+PROJECT_ROOT="$(cd "${OVERLAY_DIR}/../../.." && pwd)"
+if [[ -f "${PROJECT_ROOT}/mix.exs" ]]; then
+  cd "${PROJECT_ROOT}"
+  EXPR='System.halt(Arvo.CLI.Chat.main_no_halt(Arvo.CLI.Chat.argv_from_env() || System.argv()))'
+  if command -v mise >/dev/null 2>&1; then
+    exec mise exec -- mix run -e "$EXPR"
+  else
+    exec mix run -e "$EXPR"
+  fi
+fi
+
+echo "arvo-chat: release binary not found at ${BIN_DIR}/arvo" >&2
+exit 1

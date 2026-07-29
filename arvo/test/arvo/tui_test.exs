@@ -1,6 +1,13 @@
 defmodule Arvo.TUITest do
   use ExUnit.Case, async: false
 
+  setup do
+    # Shared named TUI GenServer — restore ambient attention so off-tests don't leak
+    :ok = Arvo.TUI.put_attention_mode("on")
+    _ = Arvo.TUI.state()
+    :ok
+  end
+
   test "state derives only from events — no agent logic" do
     :ok = Arvo.TUI.handle_event_sync({:agent_start, %{}})
     st = Arvo.TUI.state()
@@ -37,13 +44,27 @@ defmodule Arvo.TUITest do
       Arvo.TUI.handle_event_sync({:tool_call_end, %{name: "read", is_error: false, text: "ok"}})
 
     st = Arvo.TUI.state()
-    act = Enum.find(st.transcript, &(&1.kind == :activity && &1.name == "read"))
+
+    act =
+      st.transcript
+      |> Enum.filter(&(&1.kind == :activity && &1.name == "read" && &1.detail == "ok"))
+      |> List.last()
+
+    assert act
     assert act.status == :ok
     assert act.summary =~ "read"
     assert act.summary =~ "x.ex"
-    assert act.detail =~ "ok"
-    assert act.detail =~ "[model:full]"
+    # Human body clean — chrome is adjacent :attention_access (R13)
+    assert act.detail == "ok"
     assert act.expanded == false
+
+    access =
+      st.transcript
+      |> Enum.filter(&(&1.kind == :attention_access && &1.tool == "read" && &1.outcome == :full_hot))
+      |> List.last()
+
+    assert access
+    assert access.label =~ "[model:full]" or access.detail =~ "[model:full]"
 
     :ok = Arvo.TUI.handle_event_sync({:agent_error, %{error: "boom"}})
     st = Arvo.TUI.state()
@@ -53,6 +74,7 @@ defmodule Arvo.TUITest do
   end
 
   test "dual-view stub shows model pane with stub text" do
+    # Characterization: stub projection → one access chrome child with dual-view body (R13/R19)
     :ok = Arvo.TUI.handle_event_sync({:agent_start, %{}})
 
     :ok =
@@ -67,7 +89,9 @@ defmodule Arvo.TUITest do
           text: String.duplicate("full log\n", 50),
           model_text: "[cold:abc123 tool=bash bytes=900]",
           attention_action: :stub,
-          cold_id: "abc123"
+          cold_id: "abc123",
+          event_id: "evt-stub-1",
+          attention_secondary: [:store]
         }
       })
 
@@ -81,10 +105,25 @@ defmodule Arvo.TUITest do
     assert act
     assert act.summary =~ "ls"
     assert act.detail =~ "full log"
-    assert act.detail =~ "[model:stub"
-    assert act.detail =~ "cold:abc123"
-    assert act.detail =~ "model saw"
-    assert act.detail =~ "[cold:abc123"
+    # No competing dual-view taxonomy on activity body
+    refute act.detail =~ "[model:stub"
+    refute act.detail =~ "dual-view"
+
+    access =
+      st.transcript
+      |> Enum.filter(&(&1.kind == :attention_access))
+      |> List.last()
+
+    assert access
+    assert access.outcome == :stub
+    assert access.cold_id == "abc123"
+    assert access.event_id == "evt-stub-1"
+    assert access.detail =~ "[model:stub"
+    assert access.detail =~ "cold:abc123"
+    assert access.detail =~ "model saw"
+    assert access.detail =~ "[cold:abc123"
+    assert access.summary =~ "stub"
+    assert :store in access.secondary or access.summary =~ "store"
   end
 
   test "message_delta accumulates without requiring full redraw" do
@@ -783,6 +822,254 @@ defmodule Arvo.TUITest do
     assert is_binary(st.tree[:error]) and st.tree.error =~ "not a jump target"
     # Always leave tree closed for sibling tests sharing the TUI GenServer
     _ = Arvo.TUI.key(:esc)
+  end
+
+  describe "access chrome and enablement (U5)" do
+    test "ambient enablement on without tools (AE10)" do
+      :ok = Arvo.TUI.put_attention_mode("on")
+      # cast — drain via sync state call
+      st = Arvo.TUI.state()
+      assert st.attention_mode == "on"
+
+      frame = Arvo.TUI.Render.frame(st, width: 80, height: 12)
+      plain = String.replace(frame, ~r/\e\[[0-9;]*m/, "")
+      assert plain =~ "attn:on"
+      refute plain =~ "attn:off"
+    end
+
+    test "attention-off: no access chrome; enablement off (AE4/R17)" do
+      :ok = Arvo.TUI.put_attention_mode("off")
+      st0 = Arvo.TUI.state()
+      assert st0.attention_mode == "off"
+      access_before = Enum.count(st0.transcript, &(&1.kind == :attention_access))
+
+      :ok = Arvo.TUI.handle_event_sync({:agent_start, %{}})
+
+      :ok =
+        Arvo.TUI.handle_event_sync(
+          {:tool_call_start, %{name: "bash", arguments: %{command: "echo off-mode"}}}
+        )
+
+      :ok =
+        Arvo.TUI.handle_event_sync({
+          :tool_call_end,
+          %{
+            name: "bash",
+            is_error: false,
+            text: "hello-off-mode",
+            model_text: "hello-off-mode",
+            attention_action: :full_hot
+          }
+        })
+
+      st = Arvo.TUI.state()
+      access_after = Enum.count(st.transcript, &(&1.kind == :attention_access))
+      # No new access chrome under treatment off (R17)
+      assert access_after == access_before
+
+      act =
+        st.transcript
+        |> Enum.filter(&(&1.kind == :activity && &1.detail == "hello-off-mode"))
+        |> List.last()
+
+      assert act
+
+      frame = Arvo.TUI.Render.frame(st, width: 80, height: 16)
+      plain = String.replace(frame, ~r/\e\[[0-9;]*m/, "")
+      assert plain =~ "attn:off"
+
+      # Restore for sibling tests sharing the TUI GenServer
+      :ok = Arvo.TUI.put_attention_mode("on")
+      _ = Arvo.TUI.state()
+    end
+
+    test "denied expand chrome shows outcome reason_class cold id (AE3/R20)" do
+      :ok = Arvo.TUI.put_attention_mode("on")
+      _ = Arvo.TUI.state()
+
+      :ok =
+        Arvo.TUI.put_access_chrome(%{
+          outcome: :denied,
+          cold_id: "deadbeef",
+          reason_class: "not_found",
+          event_id: "evt-deny-1",
+          actor: "user"
+        })
+
+      st = Arvo.TUI.state()
+
+      access =
+        Enum.find(
+          st.transcript,
+          &(&1.kind == :attention_access && &1.cold_id == "deadbeef" && &1.event_id == "evt-deny-1")
+        )
+
+      assert access
+      assert access.outcome == :denied
+      assert access.reason_class == "not_found"
+      assert access.summary =~ "denied"
+      assert access.detail =~ "not_found"
+      assert access.detail =~ "cold:deadbeef"
+
+      frame = Arvo.TUI.Render.frame(%{st | transcript: [access]}, width: 70, height: 12)
+      plain = String.replace(frame, ~r/\e\[[0-9;]*m/, "")
+      assert plain =~ "denied"
+      assert plain =~ "cold:deadbeef" or plain =~ "not_found"
+    end
+
+    test "capped expand chrome is distinct from denied" do
+      :ok =
+        Arvo.TUI.put_access_chrome(%{
+          outcome: :capped,
+          cold_id: "big1",
+          reason_class: "cap_exceeded",
+          event_id: "evt-cap-1"
+        })
+
+      st = Arvo.TUI.state()
+      access = Enum.find(st.transcript, &(&1.kind == :attention_access && &1.outcome == :capped))
+      assert access
+      assert access.reason_class == "cap_exceeded"
+      assert access.summary =~ "capped"
+    end
+
+    test "projection filter strips access chrome from model-visible entries (R11/AE8)" do
+      :ok = Arvo.TUI.handle_event_sync({:agent_start, %{}})
+
+      :ok =
+        Arvo.TUI.handle_event_sync({:tool_call_start, %{name: "read", arguments: %{path: "a"}}})
+
+      :ok =
+        Arvo.TUI.handle_event_sync({
+          :tool_call_end,
+          %{
+            name: "read",
+            text: "FULL BODY SECRET",
+            model_text: "[cold:x tool=read bytes=12]",
+            attention_action: :stub,
+            cold_id: "x"
+          }
+        })
+
+      st = Arvo.TUI.state()
+      assert Enum.any?(st.transcript, &(&1.kind == :attention_access))
+
+      model_entries = Arvo.TUI.model_projection_entries(st.transcript)
+      refute Enum.any?(model_entries, &(&1.kind == :attention_access))
+
+      # Chrome strings must not leak into model-filtered set as scripture
+      chrome_blob =
+        st.transcript
+        |> Enum.filter(&(&1.kind == :attention_access))
+        |> Enum.map_join(" ", &(&1.detail || ""))
+
+      assert chrome_blob =~ "model saw" or chrome_blob =~ "[model:stub"
+
+      model_blob =
+        model_entries
+        |> Enum.map_join(" ", fn e ->
+          Map.get(e, :detail) || Map.get(e, :text) || Map.get(e, :summary) || ""
+        end)
+
+      refute model_blob =~ "dual-view"
+      refute model_blob =~ "access ·"
+    end
+
+    test "one chrome item per projection with secondary store flag (R19)" do
+      :ok = Arvo.TUI.handle_event_sync({:agent_start, %{}})
+      before = Enum.count(Arvo.TUI.state().transcript, &(&1.kind == :attention_access))
+
+      :ok =
+        Arvo.TUI.handle_event_sync(
+          {:tool_call_start, %{name: "bash", arguments: %{command: "x-r19"}}}
+        )
+
+      :ok =
+        Arvo.TUI.handle_event_sync({
+          :tool_call_end,
+          %{
+            name: "bash",
+            text: "body-r19",
+            model_text: "[cold:c1 tool=bash bytes=4]",
+            attention_action: :stub,
+            cold_id: "c1",
+            event_id: "evt-agg-1",
+            attention_secondary: [:store]
+          }
+        })
+
+      st = Arvo.TUI.state()
+      access_items = Enum.filter(st.transcript, &(&1.kind == :attention_access))
+      # Exactly one new access chrome for this projection (R19 aggregation)
+      assert length(access_items) == before + 1
+
+      access = Enum.find(access_items, &(&1.event_id == "evt-agg-1"))
+      assert access
+      assert access.outcome == :stub
+      assert :store in access.secondary
+    end
+
+    test "Session open_new casts ambient enablement" do
+      tmp = Path.join(System.tmp_dir!(), "arvo-attn-en-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      old = System.get_env("HOME")
+      System.put_env("HOME", tmp)
+      Application.put_env(:arvo, :cwd, tmp)
+      Application.put_env(:arvo, :progressive_attention, true)
+
+      on_exit(fn ->
+        if old, do: System.put_env("HOME", old)
+        File.rm_rf!(tmp)
+      end)
+
+      {:ok, _path} = Arvo.Session.open_new(tmp)
+      # cast drain
+      Process.sleep(20)
+      st = Arvo.TUI.state()
+      assert st.attention_mode == "on"
+      ghost = Arvo.TUI.Render.ghost_line(st, 100)
+      plain = String.replace(ghost, ~r/\e\[[0-9;]*m/, "")
+      assert plain =~ "attn:on"
+    end
+
+    test "Session recall denied casts access chrome with event_id" do
+      tmp = Path.join(System.tmp_dir!(), "arvo-attn-deny-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      old = System.get_env("HOME")
+      System.put_env("HOME", tmp)
+      Application.put_env(:arvo, :cwd, tmp)
+
+      on_exit(fn ->
+        if old, do: System.put_env("HOME", old)
+        File.rm_rf!(tmp)
+      end)
+
+      {:ok, path} = Arvo.Session.open_new(tmp)
+      Process.sleep(10)
+      _ = Arvo.TUI.reset_idle()
+
+      assert {:error, :not_found} = Arvo.Session.recall("missing-id", actor: :user)
+      Process.sleep(20)
+
+      st = Arvo.TUI.state()
+
+      access =
+        Enum.find(
+          st.transcript,
+          &(&1.kind == :attention_access && &1.cold_id == "missing-id")
+        )
+
+      assert access
+      assert access.outcome in [:denied, :capped]
+      assert access.reason_class == "not_found"
+      assert is_binary(access.event_id)
+
+      # Join with durable trail
+      events = Arvo.Session.Audit.list(path)
+      deny = Enum.find(events, &(&1["type"] == "denied_expand" && &1["id"] == "missing-id"))
+      assert deny
+      assert deny["event_id"] == access.event_id
+    end
   end
 
   describe "live pane chrome (R11b)" do

@@ -67,14 +67,16 @@ defmodule Arvo.TUI.Render do
     cum = tokens[:cumulative] || 0
     win = tokens[:window] || 500_000
     status = status_label(state)
+    # R17 ambient enablement — always answerable without log files
+    attn = attention_label(state)
     # Use TUI-cached live_panes only — Session push updates on register/teardown.
     panes = live_panes_label(state)
 
     line =
       if panes == "" do
-        " #{model} · #{profile} · ctx #{cum}/#{win} · #{status}"
+        " #{model} · #{profile} · #{attn} · ctx #{cum}/#{win} · #{status}"
       else
-        " #{model} · #{profile} · ctx #{cum}/#{win} · #{status} · #{panes}"
+        " #{model} · #{profile} · #{attn} · ctx #{cum}/#{win} · #{status} · #{panes}"
       end
 
     Theme.dim(String.slice(line, 0, max(width, 1)))
@@ -461,6 +463,41 @@ defmodule Arvo.TUI.Render do
     end
   end
 
+  # R13/R19/R20 operator access chrome — child/adjacent of tool projection or expand
+  defp wrap_entry(%{kind: :attention_access} = entry, width, opts) do
+    focused? = Keyword.get(opts, :focused?, false)
+    expanded? = Map.get(entry, :expanded, false)
+    summary = Map.get(entry, :summary) || "access"
+    detail = Map.get(entry, :detail)
+    outcome = Map.get(entry, :outcome)
+
+    {glyph, paint} =
+      case outcome do
+        o when o in [:denied, :capped] -> {"✗ ", &Theme.error/1}
+        :expand -> {"◇ ", &Theme.accent/1}
+        _ -> {"▸ ", &Theme.dim/1}
+      end
+
+    line = glyph <> summary
+    line = if focused?, do: Theme.bold(paint.(line)), else: paint.(line)
+    body_w = max(width - 4, 1)
+
+    cond do
+      not is_binary(detail) or detail == "" ->
+        [line]
+
+      expanded? ->
+        [line | preview_body(detail, body_w, @detail_expanded_lines)]
+
+      long_detail?(detail) ->
+        [line | preview_body(detail, body_w, @detail_collapsed_lines)]
+
+      true ->
+        # Short dual-view / deny lines stay one-row when collapsed
+        [line]
+    end
+  end
+
   # Legacy :tool entries (tests / older sessions) — compact + optional expand
   defp wrap_entry(%{kind: :tool, text: t, name: n} = entry, width, opts) do
     focused? = Keyword.get(opts, :focused?, false)
@@ -657,6 +694,15 @@ defmodule Arvo.TUI.Render do
   defp status_label(%{status: :running}), do: "running"
   defp status_label(%{status: :idle}), do: "idle"
   defp status_label(_), do: "idle"
+
+  # R17: progressive attention enablement continuously answerable from product UI.
+  # Quiet "attn:on" must not read as off; "attn:off" is explicit.
+  defp attention_label(%{attention_mode: "off"}), do: "attn:off"
+  defp attention_label(%{attention_mode: :off}), do: "attn:off"
+  defp attention_label(%{attention_mode: "on"}), do: "attn:on"
+  defp attention_label(%{attention_mode: :on}), do: "attn:on"
+  # nil = not yet bound; product default is on (matches Attention.enabled?)
+  defp attention_label(_), do: "attn:on"
 
   # Show Arvo-owned pane work even when Session is idle after long_lived return.
   defp live_panes_label(state) do

@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Dev/headless entry: run arvo-chat without a full Mix release (KTD-H1).
+# Harbor should use the release tarball wrapper under rel/overlays/bin/arvo-chat.
+set -euo pipefail
+
+export ARVO_HEADLESS=1
+export ARVO_MODE="${ARVO_MODE:-chat}"
+export ARVO_CWD="${ARVO_CWD:-$PWD}"
+export HOME="${HOME:-$HOME}"
+
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE" ]]; do
+  DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+CHECKOUT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "${CHECKOUT}"
+
+ARGS_FILE="$(mktemp)"
+trap 'rm -f "$ARGS_FILE"' EXIT
+for a in "$@"; do
+  b64="$(printf '%s' "$a" | base64 -w0 2>/dev/null || printf '%s' "$a" | base64 | tr -d '\n')"
+  printf '%s\n' "$b64" >>"$ARGS_FILE"
+done
+export ARVO_CHAT_ARGS_B64_FILE="$ARGS_FILE"
+
+EXPR='System.halt(Arvo.CLI.Chat.main_no_halt(Arvo.CLI.Chat.argv_from_env() || System.argv()))'
+
+if command -v mise >/dev/null 2>&1; then
+  exec mise exec -- mix run -e "$EXPR"
+else
+  exec mix run -e "$EXPR"
+fi

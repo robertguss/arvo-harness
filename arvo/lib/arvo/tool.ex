@@ -21,7 +21,14 @@ defmodule Arvo.Tool do
 
   @doc "Core v0.1 tool modules."
   def core_tools do
-    [Arvo.Tools.Read, Arvo.Tools.Bash, Arvo.Tools.Edit, Arvo.Tools.Write, Arvo.Tools.Pane]
+    [
+      Arvo.Tools.Read,
+      Arvo.Tools.Bash,
+      Arvo.Tools.Edit,
+      Arvo.Tools.Write,
+      Arvo.Tools.Pane,
+      Arvo.Tools.RecallEvidence
+    ]
   end
 
   @doc "Build Arvo.Tool.spec/0 map from a Jido.Action module's `to_tool/0`."

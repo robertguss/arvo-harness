@@ -212,7 +212,7 @@ defmodule Arvo.Agent do
                "Unknown tool: #{name}. Available: #{Enum.map_join(Map.keys(tool_by_name), ", ", & &1)}"}
 
             mod ->
-              case Arvo.Tool.invoke(mod, args, tool_ctx(ctx)) do
+              case Arvo.Tool.invoke(mod, args, tool_ctx(ctx, id)) do
                 {:ok, out} -> {false, out}
                 {:error, out} -> {true, out}
               end
@@ -222,6 +222,7 @@ defmodule Arvo.Agent do
         model_content = Map.get(projected, :content) || text
         human_text = Map.get(projected, :full_text) || text
 
+        # Access chrome fields for TUI only — model msg uses model_content (R11).
         event_fun.({
           :tool_call_end,
           %{
@@ -231,7 +232,10 @@ defmodule Arvo.Agent do
             text: human_text,
             model_text: model_content,
             cold_id: Map.get(projected, :cold_id),
-            attention_action: Map.get(projected, :action) || :full_hot
+            attention_action: Map.get(projected, :action) || :full_hot,
+            event_id: Map.get(projected, :event_id),
+            reason_class: Map.get(projected, :reason_class),
+            attention_secondary: Map.get(projected, :attention_secondary) || []
           }
         })
 
@@ -321,11 +325,12 @@ defmodule Arvo.Agent do
     end
   end
 
-  defp tool_ctx(ctx) do
+  defp tool_ctx(ctx, tool_call_id) do
     %{
       cwd: Map.get(ctx, :cwd) || Arvo.cwd(),
       session_id: Map.get(ctx, :session_id),
-      config: Map.get(ctx, :config) || %{}
+      config: Map.get(ctx, :config) || %{},
+      tool_call_id: tool_call_id
     }
   end
 

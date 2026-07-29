@@ -35,6 +35,18 @@ defmodule Arvo.Session.Store do
     profile = Keyword.get(opts, :profile) || "base"
     parent_session_id = Keyword.get(opts, :parent_session_id)
 
+    attention_mode =
+      Keyword.get(opts, :attention_mode) || Arvo.Attention.treatment_mode_from_env()
+
+    attention_mode = if to_string(attention_mode) == "off", do: "off", else: "on"
+
+    policy_version =
+      Keyword.get(opts, :policy_version) || Arvo.Attention.policy_version()
+
+    treatment_assigned_at =
+      Keyword.get(opts, :treatment_assigned_at) ||
+        DateTime.utc_now() |> DateTime.to_iso8601()
+
     meta =
       %{
         "id" => new_id(),
@@ -44,7 +56,10 @@ defmodule Arvo.Session.Store do
         "cwd" => cwd,
         "model" => model,
         "profile" => profile,
-        "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+        "created_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+        "attention_mode" => attention_mode,
+        "policy_version" => to_string(policy_version),
+        "treatment_assigned_at" => treatment_assigned_at
       }
       |> then(fn m ->
         if parent_session_id, do: Map.put(m, "parent_session_id", parent_session_id), else: m

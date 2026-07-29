@@ -296,6 +296,9 @@ defmodule Arvo.Session do
             "xai:grok-4.5"
         )
         |> Keyword.put_new(:profile, Keyword.get(opts, :profile) || profile_name())
+        # Bind treatment from env/config at open (KTD-T1); Store persists into meta
+        |> Keyword.put_new(:attention_mode, Arvo.Attention.treatment_mode_from_env())
+        |> Keyword.put_new(:policy_version, Arvo.Attention.policy_version())
 
       {:ok, path, meta} = Arvo.Session.Store.create(cwd, opts)
 
@@ -315,6 +318,10 @@ defmodule Arvo.Session do
             owned_panes: %{}
         }
         |> put_attention_defaults()
+        |> put_treatment_from_meta(meta)
+
+      state = emit_session_treatment(state)
+      cast_attention_mode(state)
 
       {:reply, {:ok, path}, state}
     end
@@ -372,8 +379,13 @@ defmodule Arvo.Session do
             }
             |> put_attention_defaults(warm)
             |> Map.put(:attention_path_index, path_index)
+            # KTD-T1: metadata wins after open — do not flip treatment from ambient env
+            |> put_treatment_from_meta(meta)
+            |> restore_audit_sequence(path)
 
-          # Do not call TUI here — resume is often invoked from TUI.slash (deadlock).
+          # Do not GenServer.call TUI here — resume is often invoked from TUI.slash (deadlock).
+          # R17: include attention_mode in reply so TUI rehydrate can set ambient enablement.
+          # R4: access chrome rebuild from audit on resume is deferred (live-only ship-ready).
           messages = Arvo.Session.Store.messages_to_head(entries)
 
           {:reply,
@@ -385,7 +397,8 @@ defmodule Arvo.Session do
               head_id: head,
               tokens: tokens,
               model: state.model,
-              profile: state.profile
+              profile: state.profile,
+              attention_mode: state.attention_mode || "on"
             }}, state}
       end
     end
@@ -612,55 +625,91 @@ defmodule Arvo.Session do
          budgets: state.attention_budgets || Arvo.Attention.default_budgets()
        }, state}
     else
-      retention = state.attention_retention || %{}
-      # Fidelity TTL uses product-turn clock (bumped in start_turn), not per-tool
-      turn = Map.get(retention, :current_turn) || state.attention_product_turn || 0
+      # RecallEvidence already expanded under caps and audited via Session.recall —
+      # never re-stub recovery results (would re-strand the model).
+      if recovery_tool?(tool) do
+        {:reply,
+         %{
+           content: text,
+           full_text: text,
+           action: :full_hot,
+           cold_id: nil,
+           decision: %{action: :full_hot, reason: :recovery_tool},
+           audit_error?: (state.audit_write_errors || 0) > 0
+         }, state}
+      else
+        retention = state.attention_retention || %{}
+        # Fidelity TTL uses product-turn clock (bumped in start_turn), not per-tool
+        turn = Map.get(retention, :current_turn) || state.attention_product_turn || 0
+        tool_call_id = Map.get(meta, :tool_call_id) || Map.get(meta, "tool_call_id")
 
-      result =
-        Arvo.Attention.project_tool_result(tool, args, text, is_error, %{
-          session_path: state.path,
-          retention: retention,
-          budgets: state.attention_budgets || Arvo.Attention.default_budgets(),
-          current_turn: turn,
-          path_index: state.attention_path_index || %{},
-          tool_call_id: Map.get(meta, :tool_call_id) || Map.get(meta, "tool_call_id")
-        })
+        result =
+          Arvo.Attention.project_tool_result(tool, args, text, is_error, %{
+            session_path: state.path,
+            retention: retention,
+            budgets: state.attention_budgets || Arvo.Attention.default_budgets(),
+            current_turn: turn,
+            path_index: state.attention_path_index || %{},
+            tool_call_id: tool_call_id,
+            attention_mode: state.attention_mode || "on",
+            turn_id: state.attention_product_turn
+          })
 
-      prev_warm = state.warm || Arvo.Session.Warm.empty()
+        prev_warm = state.warm || Arvo.Session.Warm.empty()
 
-      warm =
-        Arvo.Session.Warm.update_from_tool(prev_warm, %{
-          tool: tool,
-          args: args,
-          is_error: is_error,
-          text: if(is_error, do: String.slice(to_string(text), 0, 300), else: nil),
-          path: result.decision[:path]
-        })
+        warm =
+          Arvo.Session.Warm.update_from_tool(prev_warm, %{
+            tool: tool,
+            args: args,
+            is_error: is_error,
+            text: if(is_error, do: String.slice(to_string(text), 0, 300), else: nil),
+            path: result.decision[:path]
+          })
 
-      if warm != prev_warm do
-        case Arvo.Session.Audit.append(state.path, :warm_update, %{
-               "paths" => warm["paths"],
-               "goal_known" => warm["goal_known"]
-             }) do
-          {:ok, _} ->
-            :ok
+        events = Map.get(result, :events) || []
 
-          {:error, reason} ->
-            Logger.warning("Arvo.Session warm_update audit failed: #{inspect(reason)}")
-        end
+        events =
+          if warm != prev_warm do
+            events ++
+              [
+                {:warm_update,
+                 %{
+                   "paths" => warm["paths"],
+                   "goal_known" => warm["goal_known"]
+                 }}
+              ]
+          else
+            events
+          end
+
+        {state, written} =
+          commit_audit_events_with_written(state, events, %{
+            tool_call_id: tool_call_id,
+            turn_id: state.attention_product_turn
+          })
+
+        state = %{
+          state
+          | warm: warm,
+            attention_retention: result.retention,
+            attention_budgets: result.budgets,
+            attention_path_index: result.path_index
+        }
+
+        chrome = aggregate_projection_chrome(written, result)
+
+        # Agent only needs the projected surface + chrome join keys for TUI (R13/AE11).
+        # Retention/budgets stay in Session state. Access chrome is TUI-local (R11).
+        reply =
+          result
+          |> Map.take([:content, :full_text, :action, :cold_id, :decision])
+          |> Map.put(:audit_error?, (state.audit_write_errors || 0) > 0)
+          |> Map.put(:event_id, chrome.event_id)
+          |> Map.put(:reason_class, chrome.reason_class)
+          |> Map.put(:attention_secondary, chrome.secondary)
+
+        {:reply, reply, state}
       end
-
-      state = %{
-        state
-        | warm: warm,
-          attention_retention: result.retention,
-          attention_budgets: result.budgets,
-          attention_path_index: result.path_index
-      }
-
-      # Agent only needs the projected surface; retention/budgets stay in Session state
-      reply = Map.take(result, [:content, :full_text, :action, :cold_id, :decision])
-      {:reply, reply, state}
     end
   end
 
@@ -668,7 +717,20 @@ defmodule Arvo.Session do
     if is_nil(state.path) do
       {:reply, {:error, :no_session}, state}
     else
-      {:reply, Arvo.Attention.expand(state.path, cold_id, opts), state}
+      tool_call_id = Keyword.get(opts, :tool_call_id)
+      envelope = %{turn_id: state.attention_product_turn, tool_call_id: tool_call_id}
+
+      case Arvo.Attention.expand(state.path, cold_id, opts) do
+        {:ok, out, events} ->
+          {state, written} = commit_audit_events_with_written(state, events, envelope)
+          cast_expand_access_chrome(written, cold_id, tool_call_id)
+          {:reply, {:ok, out}, state}
+
+        {:error, reason, events} ->
+          {state, written} = commit_audit_events_with_written(state, events, envelope)
+          cast_expand_access_chrome(written, cold_id, tool_call_id)
+          {:reply, {:error, reason}, state}
+      end
     end
   end
 
@@ -692,7 +754,11 @@ defmodule Arvo.Session do
        warm: state.warm || Arvo.Session.Warm.empty(),
        cold: cold,
        metrics: metrics,
-       progressive_attention: Arvo.Attention.enabled?()
+       progressive_attention: (state.attention_mode || "on") == "on",
+       attention_mode: state.attention_mode || "on",
+       policy_version: state.policy_version || Arvo.Attention.policy_version(),
+       treatment_assigned_at: state.treatment_assigned_at,
+       audit_write_errors: state.audit_write_errors || 0
      }, state}
   end
 
@@ -1393,8 +1459,245 @@ defmodule Arvo.Session do
       attention_retention: %{},
       attention_budgets: Arvo.Attention.default_budgets(),
       attention_path_index: %{},
-      attention_product_turn: 0
+      attention_product_turn: 0,
+      attention_mode: Map.get(state, :attention_mode) || "on",
+      policy_version: Map.get(state, :policy_version) || Arvo.Attention.policy_version(),
+      treatment_assigned_at: Map.get(state, :treatment_assigned_at),
+      audit_sequence: Map.get(state, :audit_sequence) || 0,
+      audit_write_errors: Map.get(state, :audit_write_errors) || 0
     })
+  end
+
+  defp put_treatment_from_meta(state, meta) when is_map(meta) do
+    mode =
+      case meta["attention_mode"] do
+        "off" -> "off"
+        :off -> "off"
+        _ -> "on"
+      end
+
+    %{
+      state
+      | attention_mode: mode,
+        policy_version: meta["policy_version"] || Arvo.Attention.policy_version(),
+        treatment_assigned_at: meta["treatment_assigned_at"]
+    }
+  end
+
+  defp put_treatment_from_meta(state, _), do: state
+
+  defp emit_session_treatment(state) do
+    if is_binary(state.path) do
+      events = [
+        {:session_treatment,
+         %{
+           "attention_mode" => state.attention_mode || "on",
+           "policy_version" => state.policy_version || Arvo.Attention.policy_version(),
+           "treatment_assigned_at" =>
+             state.treatment_assigned_at || DateTime.utc_now() |> DateTime.to_iso8601()
+         }}
+      ]
+
+      commit_audit_events(state, events, %{})
+    else
+      state
+    end
+  end
+
+  # Ambient enablement for Focus ghost (R17). Cast-only — never call TUI under Session.
+  defp cast_attention_mode(state) do
+    mode = if (state.attention_mode || "on") == "off", do: "off", else: "on"
+
+    try do
+      _ = Arvo.TUI.put_attention_mode(mode)
+    rescue
+      _ -> :ok
+    catch
+      :exit, _ -> :ok
+    end
+
+    :ok
+  end
+
+  # R20 expand/denied chrome from committed audit events (operator display only).
+  defp cast_expand_access_chrome(written, cold_id, tool_call_id) when is_list(written) do
+    written
+    |> Enum.filter(fn e -> e["type"] in ["expand", "denied_expand"] end)
+    |> Enum.each(fn e ->
+      type = e["type"]
+      reason_class = e["reason_class"]
+
+      outcome =
+        cond do
+          type == "expand" -> :expand
+          reason_class in ["cap_exceeded", "capped"] -> :capped
+          true -> :denied
+        end
+
+      payload = %{
+        outcome: outcome,
+        type: type,
+        cold_id: e["id"] || cold_id,
+        reason_class: reason_class,
+        event_id: e["event_id"],
+        tool_call_id: e["tool_call_id"] || tool_call_id,
+        actor: e["actor"]
+      }
+
+      try do
+        _ = Arvo.TUI.put_access_chrome(payload)
+      rescue
+        _ -> :ok
+      catch
+        :exit, _ -> :ok
+      end
+    end)
+
+    :ok
+  end
+
+  defp cast_expand_access_chrome(_, _, _), do: :ok
+
+  # R19: one primary projection outcome + secondary store/reuse flags from audit.
+  defp aggregate_projection_chrome(written, result) when is_list(written) do
+    types = MapSet.new(Enum.map(written, & &1["type"]))
+
+    primary =
+      Enum.find(written, &(&1["type"] == "stub_in_hot")) ||
+        Enum.find(written, &(&1["type"] == "full_hot")) ||
+        Enum.find(written, &(&1["type"] == "reuse_cold")) ||
+        List.last(written)
+
+    secondary =
+      []
+      |> then(fn s -> if MapSet.member?(types, "store_cold"), do: [:store | s], else: s end)
+      |> then(fn s -> if MapSet.member?(types, "reuse_cold"), do: [:reuse | s], else: s end)
+      |> Enum.reverse()
+
+    reason_class =
+      (primary && primary["reason_class"]) ||
+        get_in(result, [:decision, :reason]) ||
+        get_in(result, [:decision, "reason"])
+
+    reason_class =
+      if reason_class,
+        do: Arvo.Session.Audit.normalize_reason_class(reason_class),
+        else: nil
+
+    %{
+      event_id: primary && primary["event_id"],
+      reason_class: reason_class,
+      secondary: secondary
+    }
+  end
+
+  defp aggregate_projection_chrome(_, result) do
+    reason =
+      get_in(result, [:decision, :reason]) || get_in(result, [:decision, "reason"])
+
+    %{
+      event_id: nil,
+      reason_class: reason && Arvo.Session.Audit.normalize_reason_class(reason),
+      secondary: []
+    }
+  end
+
+  # Session sole durable writer (KTD-E1). Surfaces failures when treatment=on.
+  defp commit_audit_events(state, events, meta) do
+    {state, _written} = commit_audit_events_with_written(state, events, meta)
+    state
+  end
+
+  defp commit_audit_events_with_written(state, [], _meta), do: {state, []}
+
+  defp commit_audit_events_with_written(state, events, meta) when is_list(events) do
+    if is_nil(state.path) do
+      {state, []}
+    else
+      envelope = %{
+        session_id: state.id,
+        sequence: state.audit_sequence || 0,
+        attention_mode: state.attention_mode || "on",
+        policy_version: state.policy_version || Arvo.Attention.policy_version(),
+        turn_id: Map.get(meta, :turn_id) || Map.get(meta, "turn_id"),
+        tool_call_id: Map.get(meta, :tool_call_id) || Map.get(meta, "tool_call_id"),
+        committed: "committed"
+      }
+
+      case Arvo.Session.Audit.append_many(state.path, events, envelope) do
+        {:ok, written} ->
+          next_seq =
+            written
+            |> Enum.map(& &1["sequence"])
+            |> Enum.reject(&is_nil/1)
+            |> Enum.max(fn -> state.audit_sequence || 0 end)
+
+          {%{state | audit_sequence: next_seq}, written}
+
+        {:error, reason} ->
+          Logger.error("Arvo.Session audit write failed: #{inspect(reason)}")
+          errors = (state.audit_write_errors || 0) + 1
+          state = %{state | audit_write_errors: errors}
+
+          # Surface as scorer-visible failure when treatment is on (KTD-E1).
+          # Primary path failed — still record in-memory; do not Logger-only.
+          state =
+            if (state.attention_mode || "on") == "on" do
+              try_audit_error_event(state, reason)
+            else
+              state
+            end
+
+          {state, []}
+      end
+    end
+  end
+
+  defp try_audit_error_event(state, reason) do
+    # Best-effort secondary write so honesty scorers can see attention_audit_error.
+    envelope = %{
+      session_id: state.id,
+      sequence: state.audit_sequence || 0,
+      attention_mode: state.attention_mode || "on",
+      policy_version: state.policy_version || Arvo.Attention.policy_version(),
+      committed: "failed"
+    }
+
+    case Arvo.Session.Audit.append_many(
+           state.path,
+           [
+             {:attention_audit_error,
+              %{
+                "reason" => inspect(reason),
+                "reason_class" => "unknown",
+                "error_count" => state.audit_write_errors || 1
+              }}
+           ],
+           envelope
+         ) do
+      {:ok, written} ->
+        next_seq =
+          written
+          |> Enum.map(& &1["sequence"])
+          |> Enum.reject(&is_nil/1)
+          |> Enum.max(fn -> state.audit_sequence || 0 end)
+
+        %{state | audit_sequence: next_seq}
+
+      {:error, _} ->
+        state
+    end
+  end
+
+  defp restore_audit_sequence(state, path) when is_binary(path) do
+    max_seq =
+      path
+      |> Arvo.Session.Audit.list()
+      |> Enum.map(& &1["sequence"])
+      |> Enum.filter(&is_integer/1)
+      |> Enum.max(fn -> 0 end)
+
+    %{state | audit_sequence: max_seq}
   end
 
   defp rebuild_path_index(session_path) when is_binary(session_path) do
@@ -1523,6 +1826,12 @@ defmodule Arvo.Session do
       :outside_sessions_root
     end
   end
+
+  defp recovery_tool?(tool) when is_binary(tool) do
+    tool in ["RecallEvidence", "recall_evidence"]
+  end
+
+  defp recovery_tool?(_), do: false
 
   defp elem_tag(event) when is_tuple(event) and tuple_size(event) > 0, do: elem(event, 0)
   defp elem_tag(other), do: other

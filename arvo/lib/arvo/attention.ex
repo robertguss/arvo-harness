@@ -1,32 +1,58 @@
 defmodule Arvo.Attention do
   @moduledoc """
   Progressive attention facade: project tool results for model hot context,
-  store cold bodies, update warm, append audit.
+  store cold bodies, update warm, return candidate audit events.
 
-  Session product path and Agent call into this. Pure policy lives in
-  `Arvo.Attention.Policy`.
+  Session is the sole durable audit writer (KTD-E1). This module returns
+  typed `{type, fields}` candidates; product path commits them via Session.
+  Pure policy lives in `Arvo.Attention.Policy`.
   """
 
   alias Arvo.Attention.Policy
-  alias Arvo.Session.{Audit, Cold}
+  alias Arvo.Session.Cold
+
+  @policy_version "1"
+
+  @doc "Stable policy version string for treatment envelope (KTD-T1)."
+  def policy_version, do: @policy_version
 
   @doc "Whether progressive attention is enabled (default true)."
   def enabled? do
-    Application.get_env(:arvo, :progressive_attention, true) != false
+    case System.get_env("ARVO_PROGRESSIVE_ATTENTION") do
+      v when v in ["0", "false", "off", "OFF"] -> false
+      v when v in ["1", "true", "on", "ON"] -> true
+      _ -> Application.get_env(:arvo, :progressive_attention, true) != false
+    end
+  end
+
+  @doc """
+  Normalize Application env / flag into treatment mode string `"on"` | `"off"`.
+
+  Precedence: `ARVO_PROGRESSIVE_ATTENTION` system env, then Application env
+  `:progressive_attention` (KTD-T1 / headless Harbor).
+  """
+  def treatment_mode_from_env do
+    if enabled?(), do: "on", else: "off"
   end
 
   @doc """
   Project a tool result for the model message list.
 
-  When disabled, returns full text identity. When enabled: store cold, decide
-  policy, return stub or full-hot content.
+  When treatment is off (or `enabled?` false): identity full-hot projection and
+  candidate `full_hot` events with `reason_class=opt_out` when `session_path` is set.
+
+  When on: store cold, decide policy, return stub or full-hot content plus events.
 
   Context keys:
-  - `:session_path` — required for cold/audit when enabled
+  - `:session_path` — required for cold when enabled; required for audit candidates
   - `:retention`, `:budgets`, `:current_turn`
   - `:pinned?`
-  - `:on_audit` — optional `(events) -> any` where events is `[{type, fields}]`
-  - `:path_index` — optional `%{source_path => cold_entry}` to avoid index scans
+  - `:attention_mode` — `"on"` | `"off"` (session treatment; defaults from enabled?)
+  - `:tool_call_id`, `:turn_id`
+  - `:path_index` — optional `%{source_path => cold_entry}`
+  - `:on_audit` — optional callback for tests; **does not** replace Session writer
+
+  Return map always includes `:events` as `[{type, fields}]` candidates (may be empty).
   """
   def project_tool_result(tool, args, text, is_error?, ctx \\ %{})
       when is_binary(tool) or is_atom(tool) do
@@ -34,21 +60,165 @@ defmodule Arvo.Attention do
     text = to_string(text)
     args = args || %{}
     ctx = ctx || %{}
+    session_path = Map.get(ctx, :session_path)
+    # Session treatment is authoritative when provided (KTD-T1 metadata wins).
+    mode =
+      case Map.fetch(ctx, :attention_mode) do
+        {:ok, m} -> normalize_mode(m)
+        :error -> treatment_mode_from_env()
+      end
 
-    if not enabled?() or not is_binary(Map.get(ctx, :session_path)) do
-      %{
-        content: text,
-        full_text: text,
-        action: :full_hot,
-        cold_id: nil,
-        decision: %{action: :full_hot, size: byte_size(text), reason: :opt_out},
-        retention: Map.get(ctx, :retention) || %{},
-        budgets: Map.get(ctx, :budgets) || default_budgets(),
-        path_index: Map.get(ctx, :path_index) || %{}
-      }
-    else
-      do_project(tool, args, text, is_error?, ctx)
+    cond do
+      not is_binary(session_path) ->
+        identity_result(text, :no_session, [])
+
+      mode == "off" ->
+        opt_out_project(tool, text, ctx)
+
+      true ->
+        do_project(tool, args, text, is_error?, ctx)
     end
+  end
+
+  @doc """
+  Expand cold body into a bounded hot slice.
+
+  Returns `{:ok, text, events}` | `{:error, reason, events}`. Session persists events.
+  Actor: :user | :model | :policy.
+  """
+  def expand(session_path, cold_id, opts \\ [])
+      when is_binary(session_path) and is_binary(cold_id) do
+    actor = Keyword.get(opts, :actor, :user)
+    cap = Keyword.get(opts, :cap_bytes, Policy.default_expand_cap_bytes())
+    max_bytes = Keyword.get(opts, :max_bytes, cap)
+    tool_call_id = Keyword.get(opts, :tool_call_id)
+
+    base_fields = fn extra ->
+      %{"id" => cold_id, "actor" => to_string(actor)}
+      |> Map.merge(extra)
+      |> maybe_put_tool_call(tool_call_id)
+    end
+
+    case Cold.fetch_slice(session_path, cold_id, max_bytes) do
+      {:error, :not_found} ->
+        events = [
+          {:denied_expand,
+           base_fields.(%{
+             "reason" => "not_found",
+             "reason_class" => "not_found"
+           })}
+        ]
+
+        {:error, :not_found, events}
+
+      {:error, reason} ->
+        events = [
+          {:denied_expand,
+           base_fields.(%{
+             "reason" => to_string(reason),
+             "reason_class" => Arvo.Session.Audit.normalize_reason_class(reason)
+           })}
+        ]
+
+        {:error, reason, events}
+
+      {:ok, slice, body_bytes} ->
+        case Policy.expand_allowed?(%{
+               body_bytes: body_bytes,
+               requested_bytes: min(body_bytes, max_bytes),
+               cap_bytes: cap
+             }) do
+          {:deny, reason} ->
+            events = [
+              {:denied_expand,
+               base_fields.(%{
+                 "reason" => to_string(reason),
+                 "reason_class" => Arvo.Session.Audit.normalize_reason_class(reason),
+                 "size" => body_bytes,
+                 "cap" => cap
+               })}
+            ]
+
+            {:error, reason, events}
+
+          {:ok, _} ->
+            out =
+              if body_bytes <= max_bytes do
+                slice
+              else
+                slice <> "\n[expanded #{byte_size(slice)}/#{body_bytes} bytes; cold:#{cold_id}]"
+              end
+
+            events = [
+              {:expand,
+               base_fields.(%{
+                 "size" => byte_size(out),
+                 "body_bytes" => body_bytes,
+                 "reason_class" => "policy"
+               })}
+            ]
+
+            {:ok, out, events}
+        end
+    end
+  end
+
+  def default_budgets do
+    %{
+      exception_bytes: 0,
+      exception_count: 0,
+      max_exception_bytes: Policy.default_max_exception_bytes(),
+      max_exception_count: Policy.default_max_exception_count()
+    }
+  end
+
+  # --- internals ---
+
+  defp opt_out_project(tool, text, ctx) do
+    size = byte_size(text)
+
+    events = [
+      {:full_hot,
+       %{
+         "tool" => tool,
+         "size" => size,
+         "original_bytes" => size,
+         "projected_bytes" => size,
+         "decision" => "full_hot",
+         "reason" => "opt_out",
+         "reason_class" => "opt_out",
+         "path" => nil,
+         "id" => nil
+       }}
+    ]
+
+    events = maybe_deliver_on_audit(ctx, events)
+
+    %{
+      content: text,
+      full_text: text,
+      action: :full_hot,
+      cold_id: nil,
+      decision: %{action: :full_hot, size: size, reason: :opt_out},
+      retention: Map.get(ctx, :retention) || %{},
+      budgets: Map.get(ctx, :budgets) || default_budgets(),
+      path_index: Map.get(ctx, :path_index) || %{},
+      events: events
+    }
+  end
+
+  defp identity_result(text, reason, events) do
+    %{
+      content: text,
+      full_text: text,
+      action: :full_hot,
+      cold_id: nil,
+      decision: %{action: :full_hot, size: byte_size(text), reason: reason},
+      retention: %{},
+      budgets: default_budgets(),
+      path_index: %{},
+      events: events
+    }
   end
 
   defp do_project(tool, args, text, is_error?, ctx) do
@@ -93,7 +263,8 @@ defmodule Arvo.Attention do
       maybe_reinvoke_event(tool, is_error?, existing, path, path_changed?) ++
         store_events ++ action_events
 
-    flush_audit(session_path, ctx, events)
+    events = maybe_attach_tool_call(events, Map.get(ctx, :tool_call_id))
+    events = maybe_deliver_on_audit(ctx, events)
 
     new_retention =
       Policy.update_retention(retention, tool, path, Map.put(decision, :is_error, is_error?), current_turn)
@@ -115,76 +286,10 @@ defmodule Arvo.Attention do
       decision: decision,
       retention: new_retention,
       budgets: new_budgets,
-      path_index: path_index
+      path_index: path_index,
+      events: events
     }
   end
-
-  @doc "Expand cold body into a bounded hot slice. Actor: :user | :model | :policy."
-  def expand(session_path, cold_id, opts \\ []) when is_binary(session_path) and is_binary(cold_id) do
-    actor = Keyword.get(opts, :actor, :user)
-    cap = Keyword.get(opts, :cap_bytes, Policy.default_expand_cap_bytes())
-    max_bytes = Keyword.get(opts, :max_bytes, cap)
-
-    case Cold.fetch_slice(session_path, cold_id, max_bytes) do
-      {:error, :not_found} ->
-        _ = Audit.append(session_path, :denied_expand, %{
-          "id" => cold_id,
-          "actor" => to_string(actor),
-          "reason" => "not_found"
-        })
-
-        {:error, :not_found}
-
-      {:error, reason} ->
-        {:error, reason}
-
-      {:ok, slice, body_bytes} ->
-        case Policy.expand_allowed?(%{
-               body_bytes: body_bytes,
-               requested_bytes: min(body_bytes, max_bytes),
-               cap_bytes: cap
-             }) do
-          {:deny, reason} ->
-            _ = Audit.append(session_path, :denied_expand, %{
-              "id" => cold_id,
-              "actor" => to_string(actor),
-              "reason" => to_string(reason),
-              "size" => body_bytes,
-              "cap" => cap
-            })
-
-            {:error, reason}
-
-          {:ok, _} ->
-            out =
-              if body_bytes <= max_bytes do
-                slice
-              else
-                slice <> "\n[expanded #{byte_size(slice)}/#{body_bytes} bytes; cold:#{cold_id}]"
-              end
-
-            _ = Audit.append(session_path, :expand, %{
-              "id" => cold_id,
-              "actor" => to_string(actor),
-              "size" => byte_size(out),
-              "body_bytes" => body_bytes
-            })
-
-            {:ok, out}
-        end
-    end
-  end
-
-  def default_budgets do
-    %{
-      exception_bytes: 0,
-      exception_count: 0,
-      max_exception_bytes: Policy.default_max_exception_bytes(),
-      max_exception_count: Policy.default_max_exception_count()
-    }
-  end
-
-  # --- internals ---
 
   defp lookup_existing(path, path_index, session_path) do
     cond do
@@ -213,15 +318,17 @@ defmodule Arvo.Attention do
     path_index = Map.get(ctx, :path_index) || %{}
     path_index = if is_binary(path), do: Map.put(path_index, path, existing), else: path_index
 
-    # Distinct event: reuse is not a durable body write
     events = [
       {:reuse_cold,
-       %{
-         "id" => cold_id,
-         "tool" => tool,
-         "size" => decision.size,
-         "path" => path
-       }}
+       with_reason(
+         %{
+           "id" => cold_id,
+           "tool" => tool,
+           "size" => decision.size,
+           "path" => path
+         },
+         :same_path_reuse
+       )}
     ]
 
     {cold_id, decision, path_index, events}
@@ -246,7 +353,13 @@ defmodule Arvo.Attention do
           if is_binary(path), do: Map.put(path_index, path, entry), else: path_index
 
         events = [
-          {:store_cold, %{"id" => cold_id, "tool" => tool, "size" => decision.size, "path" => path}}
+          {:store_cold,
+           %{
+             "id" => cold_id,
+             "tool" => tool,
+             "size" => decision.size,
+             "path" => path
+           }}
         ]
 
         {cold_id, decision, path_index, events}
@@ -257,41 +370,71 @@ defmodule Arvo.Attention do
 
         events = [
           {:store_cold,
-           %{
-             "error" => inspect(reason),
-             "tool" => tool,
-             "size" => decision.size,
-             "path" => path
-           }}
+           with_reason(
+             %{
+               "error" => inspect(reason),
+               "tool" => tool,
+               "size" => decision.size,
+               "path" => path
+             },
+             :cold_store_failed
+           )}
         ]
 
-        decision = %{decision | action: :full_hot, reason: :cold_store_failed, fidelity_exception: false}
+        decision = %{
+          decision
+          | action: :full_hot,
+            reason: :cold_store_failed,
+            fidelity_exception: false
+        }
+
         {nil, decision, path_index, events}
     end
   end
 
   defp project_content(text, tool, decision, cold_id) do
-    base = %{"tool" => tool, "size" => decision.size, "path" => decision.path, "id" => cold_id}
+    reason = decision.reason
+    size = decision.size
+
+    base =
+      with_reason(
+        %{
+          "tool" => tool,
+          "size" => size,
+          "path" => decision.path,
+          "id" => cold_id,
+          "original_bytes" => size
+        },
+        reason
+      )
 
     case {decision.action, cold_id} do
       {:stub, id} when is_binary(id) ->
+        stub = Policy.stub_content(Map.put(decision, :tool, tool), id)
+
         events = [
-          {:stub_in_hot, Map.put(base, "reason", to_string(decision.reason))}
+          {:stub_in_hot,
+           base
+           |> Map.put("projected_bytes", byte_size(stub))
+           |> Map.put("decision", "stub")}
         ]
 
-        {Policy.stub_content(Map.put(decision, :tool, tool), id), :stub, events}
+        {stub, :stub, events}
 
       {:stub, _} ->
         {text, :full_hot, []}
 
       {:full_hot, _id} ->
         events = [
-          {:full_hot, Map.put(base, "reason", to_string(decision.reason))}
+          {:full_hot,
+           base
+           |> Map.put("projected_bytes", size)
+           |> Map.put("decision", "full_hot")}
         ]
 
         events =
           if decision.fidelity_exception do
-            events ++ [{:fidelity_exception, base}]
+            events ++ [{:fidelity_exception, Map.put(base, "decision", "full_hot")}]
           else
             events
           end
@@ -307,37 +450,37 @@ defmodule Arvo.Attention do
     if is_map(existing) and tool == "read" and not is_error? do
       [
         {:same_path_reinvoke,
-         %{
-           "path" => path,
-           "cold_id" => existing["id"],
-           "tool" => tool,
-           "size" => existing["size"],
-           "path_changed" => path_changed?
-         }}
+         with_reason(
+           %{
+             "path" => path,
+             "cold_id" => existing["id"],
+             "id" => existing["id"],
+             "tool" => tool,
+             "size" => existing["size"],
+             "path_changed" => path_changed?
+           },
+           :same_path_reuse
+         )}
       ]
     else
       []
     end
   end
 
-  defp flush_audit(session_path, ctx, events) when is_list(events) do
+  # Optional test hook: deliver candidates without Session ownership.
+  # Production Session ignores this and commits result.events itself.
+  defp maybe_deliver_on_audit(ctx, events) when is_list(events) do
     case Map.get(ctx, :on_audit) do
       fun when is_function(fun, 1) ->
         fun.(events)
+        events
 
       fun when is_function(fun, 2) ->
         Enum.each(events, fn {type, fields} -> fun.(type, fields) end)
+        events
 
       _ ->
-        case Audit.append_many(session_path, events) do
-          {:ok, _} ->
-            :ok
-
-          {:error, reason} ->
-            require Logger
-            Logger.warning("Arvo.Attention audit write failed: #{inspect(reason)}")
-            :error
-        end
+        events
     end
   end
 
@@ -371,4 +514,28 @@ defmodule Arvo.Attention do
   defp body_digest(text) when is_binary(text) do
     :crypto.hash(:sha256, text) |> Base.encode16(case: :lower)
   end
+
+  defp with_reason(fields, reason) do
+    fields
+    |> Map.put("reason", to_string(reason))
+    |> Map.put("reason_class", Arvo.Session.Audit.normalize_reason_class(reason))
+  end
+
+  defp maybe_attach_tool_call(events, nil), do: events
+  defp maybe_attach_tool_call(events, id) when is_binary(id) do
+    Enum.map(events, fn {type, fields} ->
+      {type, Map.put_new(fields, "tool_call_id", id)}
+    end)
+  end
+
+  defp maybe_attach_tool_call(events, _), do: events
+
+  defp maybe_put_tool_call(fields, nil), do: fields
+  defp maybe_put_tool_call(fields, id) when is_binary(id), do: Map.put(fields, "tool_call_id", id)
+  defp maybe_put_tool_call(fields, _), do: fields
+
+  defp normalize_mode(mode) when mode in [false, 0, "0", "off", :off], do: "off"
+  defp normalize_mode(mode) when mode in [true, 1, "1", "on", :on], do: "on"
+  defp normalize_mode("off"), do: "off"
+  defp normalize_mode(_), do: "on"
 end

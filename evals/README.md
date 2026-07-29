@@ -61,6 +61,39 @@ events are honesty fails (AE9)—including Ore adapter misuse.
 
 Docs: `arvo/rel/RELEASE.md` (install layout, exit codes, audit glob).
 
+### Decision-ready matrix (U6 / R15–R16 / AE6–AE7)
+
+Ship quality and residual-need are **separate sections**. Attention quality alone
+must **not** unpark Keepers (R12/R15).
+
+| Matrix row | What it shows | How to run / score |
+| ---------- | ------------- | ------------------ |
+| Re-read waste | on vs off `B_full` / stub-reuse | ship jobs `arvo-attention-reread-on` + `-off` |
+| Expand / deny honesty | `expand` vs `denied_expand`; operator deny ≠ stranding | ExUnit + pure scorers; trail `actor=user` vs `model` |
+| Multi-step coding path | task_ok under attention on product path | same reread/edit task (or future multi-step task) |
+| Stranding class (ship) | stub + no model recovery + task fail | fixtures / `stranding_candidate` |
+| Causal stranding pair | recovery-on succeeds; recovery-off fails with stranded shape | pure `causal_stranding_pair` (min 1 pair; prefer ≥3 live) |
+| Residual-need | `N_reexpand`, `B_reexpand`, deny actor split | `residual_metrics` / `decision_report` |
+
+**Unit residual / decision report (no Harbor):**
+
+```bash
+cd arvo && mix test test/arvo/session_audit_test.exs
+export PYTHONPATH=$PWD${PYTHONPATH:+:$PYTHONPATH}
+python3 evals/harbor_agents/test_attention_metrics.py
+```
+
+**Human park/unpark packet (AE6) — read in this order:**
+
+1. **Quality** (from ship scores): task success on/off, honesty, waste_ratio, non-stranding.
+2. **Residual** (from `residual_metrics` / audit metrics): `N_reexpand`, `B_reexpand`, operator vs model denies.
+3. **Decision:** keep Keepers **parked** unless residual pain remains after attention quality is known (or an explicit BEAM-depth milestone)—never reopen because quality alone failed.
+
+Pure helpers:
+
+- Elixir: `Arvo.Session.Audit.residual_metrics/1`, `decision_report/2`, `causal_stranding_pair?/3`, `denied_expand_operator?/2`
+- Python: `evals.harbor_agents.attention_metrics` same names
+
 ### Generic coding (Ore)
 
 | Task                   | Capability                               | Beads                      |
@@ -156,7 +189,8 @@ Exact Harbor flags may vary by Harbor version; see prior job logs under
   `--attention on|off`.
 - Scorers are pure over audit events (`evals/harbor_agents/attention_metrics.py`);
   task verifier embeds a copy under `tests/` for sandbox isolation.
-- Residual Keepers metrics (`N_reexpand`, `B_reexpand`) are placeholders until U6.
+- Residual Keepers metrics (`N_reexpand`, `B_reexpand`, deny actor split) are
+  decision-ready (U6); see Decision-ready matrix above — not ship auto-unpark.
 
 ### Ore fff
 

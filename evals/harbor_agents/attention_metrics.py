@@ -138,8 +138,10 @@ def metrics_from_events(events: Sequence[Event]) -> dict[str, int]:
         "same_path_reinvoke": 0,
         "session_treatment": 0,
         "attention_audit_error": 0,
-        "n_reexpand": 0,  # residual U6 placeholder
+        "n_reexpand": 0,  # U6 residual
         "b_reexpand": 0,
+        "n_denied_operator": 0,
+        "n_denied_model": 0,
     }
     expanded_cold: set[str] = set()
 
@@ -175,13 +177,19 @@ def metrics_from_events(events: Sequence[Event]) -> dict[str, int]:
         elif t == "expand":
             m["expand"] += 1
             cid = cold_id_of(e)
+            ret = _int_field(e, "returned_bytes", "projected_bytes", "size", "bytes")
             if cid and cid in expanded_cold:
                 m["n_reexpand"] += 1
-                m["b_reexpand"] += size
+                m["b_reexpand"] += ret
             if cid:
                 expanded_cold.add(cid)
         elif t == "denied_expand":
             m["denied_expand"] += 1
+            actor = str(e.get("actor") or "").lower()
+            if actor in ("user", "operator", "human"):
+                m["n_denied_operator"] += 1
+            elif actor == "model":
+                m["n_denied_model"] += 1
         elif t == "same_path_reinvoke":
             m["same_path_reinvoke"] += 1
 
@@ -219,22 +227,36 @@ def waste_ratio(b_full_on: int, b_full_off: int) -> float:
     return float(b_full_on) / float(max(int(b_full_off), 1))
 
 
-def stranding_candidate(
+def denied_expand_operator(
+    events: Sequence[Event], cold_id: str | None = None
+) -> bool:
+    """Operator deny (actor=user|operator|human) — not stranding."""
+    for e in events:
+        if not committed(e) or e.get("type") != "denied_expand":
+            continue
+        if cold_id is not None and cold_id_of(e) != cold_id:
+            continue
+        actor = str(e.get("actor") or "").lower()
+        if actor in ("user", "operator", "human"):
+            return True
+    return False
+
+
+def stub_stranded_shape(
     events: Sequence[Event],
     *,
     task_ok: bool,
     cold_id: str | None,
-    recovery_available: bool = True,
     hides_required_fact: bool = True,
 ) -> bool:
-    """Ship stranding class (non-causal-complete)."""
+    """Stranding trail shape without recovery_available gate (causal pair B)."""
     if task_ok:
-        return False
-    if not recovery_available:
         return False
     if not hides_required_fact:
         return False
     if not isinstance(cold_id, str) or not cold_id:
+        return False
+    if denied_expand_operator(events, cold_id):
         return False
 
     has_stub = any(
@@ -254,6 +276,125 @@ def stranding_candidate(
         for e in events
     )
     return not model_expand_ok
+
+
+def stranding_candidate(
+    events: Sequence[Event],
+    *,
+    task_ok: bool,
+    cold_id: str | None,
+    recovery_available: bool = True,
+    hides_required_fact: bool = True,
+) -> bool:
+    """Ship stranding class (non-causal-complete); requires recovery available."""
+    if not recovery_available:
+        return False
+    return stub_stranded_shape(
+        events,
+        task_ok=task_ok,
+        cold_id=cold_id,
+        hides_required_fact=hides_required_fact,
+    )
+
+
+def residual_metrics(events: Sequence[Event]) -> dict[str, Any]:
+    """R15 residual-need signals (separate from attention quality)."""
+    m = metrics_from_events(events)
+    human = (
+        "Residual-need (Keepers park/unpark input — not auto-unpark):\n"
+        f"  N_reexpand={m['n_reexpand']} B_reexpand={m['b_reexpand']}\n"
+        f"  N_expand={m['expand']} N_denied={m['denied_expand']} "
+        f"(operator={m['n_denied_operator']} model={m['n_denied_model']})\n"
+        "  Read with attention quality (task success, waste, non-stranding) separately.\n"
+        "  Reopen Keepers only if residual pain remains after attention quality is known (R15)."
+    )
+    return {
+        "n_reexpand": m["n_reexpand"],
+        "b_reexpand": m["b_reexpand"],
+        "n_expand": m["expand"],
+        "n_denied": m["denied_expand"],
+        "n_denied_operator": m["n_denied_operator"],
+        "n_denied_model": m["n_denied_model"],
+        "human_readable": human,
+    }
+
+
+def decision_report(
+    events: Sequence[Event],
+    *,
+    task_ok: bool = True,
+    tool_results_n: int = 0,
+    cold_id: str | None = None,
+    recovery_available: bool = True,
+    hides_required_fact: bool = True,
+    b_full_off: int | None = None,
+) -> dict[str, Any]:
+    """Decision-ready report: quality + residual sections (AE6)."""
+    m = metrics_from_events(events)
+    residual = residual_metrics(events)
+    mode = treatment_mode(events)
+    if mode == "on":
+        honesty = honesty_on(events, tool_results_n)
+    elif mode == "off":
+        honesty = honesty_off(events, tool_results_n)
+    else:
+        honesty = False
+
+    stranded = stranding_candidate(
+        events,
+        task_ok=task_ok,
+        cold_id=cold_id,
+        recovery_available=recovery_available,
+        hides_required_fact=hides_required_fact,
+    )
+    waste = None
+    if b_full_off is not None:
+        waste = waste_ratio(m["full_ingest_bytes"], b_full_off)
+
+    quality = {
+        "task_ok": task_ok,
+        "treatment": mode,
+        "honesty": honesty,
+        "waste_ratio": waste,
+        "b_full": m["full_ingest_bytes"],
+        "stub_reuse": m["stub_in_hot"] + m["reuse_cold"],
+        "stranding_candidate": stranded,
+        "attention_audit_error": m["attention_audit_error"],
+    }
+    return {
+        "quality": quality,
+        "residual": residual,
+        "keepers_hint": (
+            "Keep Keepers parked unless residual-need (re-expand pain / isolation) is "
+            "human-reviewed. Attention quality alone must not unpark (R12/R15/AE6)."
+        ),
+    }
+
+
+def causal_stranding_pair(
+    events_a: Sequence[Event],
+    events_b: Sequence[Event],
+    *,
+    cold_id: str | None,
+    task_ok_a: bool = True,
+    task_ok_b: bool = False,
+    hides_required_fact: bool = True,
+) -> bool:
+    """True when recovery-enabled A succeeds and recovery-disabled B strands (AE7)."""
+    a_stranded = stranding_candidate(
+        events_a,
+        task_ok=task_ok_a,
+        cold_id=cold_id,
+        recovery_available=True,
+        hides_required_fact=hides_required_fact,
+    )
+    b_shape = stub_stranded_shape(
+        events_b,
+        task_ok=task_ok_b,
+        cold_id=cold_id,
+        hides_required_fact=hides_required_fact,
+    )
+    return bool(task_ok_a and not a_stranded and not task_ok_b and b_shape)
 
 
 def load_events_jsonl(lines: Iterable[str]) -> list[dict[str, Any]]:

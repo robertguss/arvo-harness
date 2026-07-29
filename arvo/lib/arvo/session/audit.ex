@@ -154,7 +154,8 @@ defmodule Arvo.Session.Audit do
   Aggregate counters from audit events for tests/evals.
 
   Counts **committed** events only (`committed` missing treated as committed for
-  legacy lines). Residual re-expand join keys are placeholders until U6.
+  legacy lines). Residual re-expand join keys (`n_reexpand` / `b_reexpand`) are
+  decision-ready (U6 / R15), not ship quality alone.
   """
   def metrics(session_path) when is_binary(session_path) do
     metrics_from_events(list(session_path))
@@ -177,8 +178,11 @@ defmodule Arvo.Session.Audit do
         end
       end)
 
-    # Residual placeholders (U6 join may refine); zero-cost stubs for ship formulas
-    Map.merge(base, reexpand_placeholders(events))
+    residual = residual_join_metrics(events)
+    base
+    |> Map.merge(residual)
+    |> Map.put(:n_denied_operator, residual.n_denied_operator)
+    |> Map.put(:n_denied_model, residual.n_denied_model)
   end
 
   def empty_metrics do
@@ -197,9 +201,11 @@ defmodule Arvo.Session.Audit do
       denied_expand: 0,
       session_treatment: 0,
       attention_audit_error: 0,
-      # Residual U6 symbols (placeholders; reexpand_placeholders may fill)
+      # Decision-ready residual (U6 / R15)
       n_reexpand: 0,
-      b_reexpand: 0
+      b_reexpand: 0,
+      n_denied_operator: 0,
+      n_denied_model: 0
     }
   end
 
@@ -259,18 +265,33 @@ defmodule Arvo.Session.Audit do
 
   task_ok == false AND stub hides required fact AND recovery available
   AND no successful model expand for that cold_id.
+
+  Operator `denied_expand` (`actor=user`) is **not** stranding — use
+  `denied_expand_operator?/2`.
   """
   def stranding_candidate?(events, opts) when is_list(events) and is_list(opts) do
+    recovery_available? = Keyword.get(opts, :recovery_available, true)
+
+    # Ship class requires recovery available at decision time (Metric Spec).
+    if recovery_available? do
+      stub_stranded_shape?(events, opts)
+    else
+      false
+    end
+  end
+
+  @doc """
+  Trail shape of stranding without recovery_available gate: task fail + stub hides
+  fact + no successful model expand (or last expand denied for model). Used for
+  recovery-disabled causal pair (B) where recovery was intentionally off.
+  """
+  def stub_stranded_shape?(events, opts) when is_list(events) and is_list(opts) do
     task_ok? = Keyword.get(opts, :task_ok, true)
     cold_id = Keyword.get(opts, :cold_id)
-    recovery_available? = Keyword.get(opts, :recovery_available, true)
     hides_fact? = Keyword.get(opts, :hides_required_fact, true)
 
     cond do
       task_ok? ->
-        false
-
-      not recovery_available? ->
         false
 
       not hides_fact? ->
@@ -279,22 +300,160 @@ defmodule Arvo.Session.Audit do
       not is_binary(cold_id) ->
         false
 
+      # Operator deny is a correct deny, not stranding (Metric Spec).
+      denied_expand_operator?(events, cold_id) ->
+        false
+
       not Enum.any?(events, fn e ->
-            e["type"] == "stub_in_hot" and committed?(e) and
-              (e["id"] == cold_id or e["cold_id"] == cold_id)
+            e["type"] == "stub_in_hot" and committed?(e) and cold_id_match?(e, cold_id)
           end) ->
         false
 
       true ->
         model_expand_ok? =
           Enum.any?(events, fn e ->
-            e["type"] == "expand" and committed?(e) and
-              (e["id"] == cold_id or e["cold_id"] == cold_id) and
-              to_string(e["actor"] || "") == "model"
+            e["type"] == "expand" and committed?(e) and cold_id_match?(e, cold_id) and
+              actor_of(e) == "model"
           end)
 
-        not model_expand_ok?
+        last_denied_model? =
+          case last_expand_class(events, cold_id) do
+            {:denied, "model"} -> true
+            {:denied, nil} -> true
+            _ -> false
+          end
+
+        not model_expand_ok? or last_denied_model?
     end
+  end
+
+  @doc """
+  Operator-visible denied/capped expand (`actor=user` or missing actor with
+  explicit operator scenario). Not a stranding class.
+  """
+  def denied_expand_operator?(events, cold_id \\ nil) when is_list(events) do
+    Enum.any?(events, fn e ->
+      e["type"] == "denied_expand" and committed?(e) and
+        (is_nil(cold_id) or cold_id_match?(e, cold_id)) and
+        actor_of(e) in ["user", "operator", "human"]
+    end)
+  end
+
+  @doc """
+  Residual-need signals for Keepers park/unpark (R15). Separate from attention
+  quality scores — never auto-unpark.
+  """
+  def residual_metrics(events) when is_list(events) do
+    m = metrics_from_events(events)
+    join = residual_join_metrics(events)
+
+    %{
+      n_reexpand: m.n_reexpand,
+      b_reexpand: m.b_reexpand,
+      n_expand: m.expand,
+      n_denied: m.denied_expand,
+      n_denied_operator: join.n_denied_operator,
+      n_denied_model: join.n_denied_model,
+      human_readable: residual_human_readable(m, join)
+    }
+  end
+
+  def residual_metrics(session_path) when is_binary(session_path) do
+    residual_metrics(list(session_path))
+  end
+
+  @doc """
+  Decision-ready report: quality section + residual section (AE6).
+
+  Options: `:task_ok`, `:tool_results_n`, `:cold_id`, `:recovery_available`,
+  `:hides_required_fact`, `:b_full_off`.
+  """
+  def decision_report(events, opts \\ []) when is_list(events) and is_list(opts) do
+    task_ok? = Keyword.get(opts, :task_ok, true)
+    tool_n = Keyword.get(opts, :tool_results_n, 0)
+    cold_id = Keyword.get(opts, :cold_id)
+    recovery? = Keyword.get(opts, :recovery_available, true)
+    hides? = Keyword.get(opts, :hides_required_fact, true)
+    b_off = Keyword.get(opts, :b_full_off)
+
+    m = metrics_from_events(events)
+    residual = residual_metrics(events)
+    mode = treatment_mode(events)
+
+    honesty =
+      case mode do
+        "on" -> honesty_on?(events, tool_n)
+        "off" -> honesty_off?(events, tool_n)
+        _ -> false
+      end
+
+    stranded? =
+      stranding_candidate?(events,
+        task_ok: task_ok?,
+        cold_id: cold_id,
+        recovery_available: recovery?,
+        hides_required_fact: hides?
+      )
+
+    waste =
+      if is_integer(b_off) do
+        waste_ratio(m.full_ingest_bytes, b_off)
+      else
+        nil
+      end
+
+    quality = %{
+      task_ok: task_ok?,
+      treatment: mode,
+      honesty: honesty,
+      waste_ratio: waste,
+      b_full: m.full_ingest_bytes,
+      stub_reuse: m.stub_in_hot + m.reuse_cold,
+      stranding_candidate: stranded?,
+      attention_audit_error: m.attention_audit_error
+    }
+
+    %{
+      quality: quality,
+      residual: residual,
+      # Explicit: residual never auto-unparks Keepers
+      keepers_hint:
+        "Keep Keepers parked unless residual-need (re-expand pain / isolation) is " <>
+          "human-reviewed. Attention quality alone must not unpark (R12/R15/AE6)."
+    }
+  end
+
+  @doc """
+  Causal stranding pair (decision-ready AE7): recovery-enabled trial A vs
+  recovery-disabled/denied trial B. True only when A succeeds and B fails with
+  stranding_candidate.
+  """
+  def causal_stranding_pair?(events_a, events_b, opts \\ [])
+      when is_list(events_a) and is_list(events_b) and is_list(opts) do
+    cold_id = Keyword.get(opts, :cold_id)
+    hides? = Keyword.get(opts, :hides_required_fact, true)
+
+    a_ok? = Keyword.get(opts, :task_ok_a, true)
+    b_ok? = Keyword.get(opts, :task_ok_b, false)
+
+    a_stranded? =
+      stranding_candidate?(events_a,
+        task_ok: a_ok?,
+        cold_id: cold_id,
+        recovery_available: true,
+        hides_required_fact: hides?
+      )
+
+    # B: recovery intentionally off — use stranded shape, not ship recovery gate
+    b_shape? =
+      stub_stranded_shape?(events_b,
+        task_ok: b_ok?,
+        cold_id: cold_id,
+        hides_required_fact: hides?
+      )
+
+    # Attribute causal stranding only when recovery path succeeds and denied path strands
+    a_ok? and not a_stranded? and not b_ok? and b_shape?
   end
 
   def treatment_mode(events) when is_list(events) do
@@ -379,8 +538,8 @@ defmodule Arvo.Session.Audit do
     end
   end
 
-  defp reexpand_placeholders(events) do
-    # Simple same-cold expand join (U6 may refine). Placeholder keys always present.
+  # U6 residual join: N_reexpand / B_reexpand + deny actor split.
+  defp residual_join_metrics(events) do
     expand_events = Enum.filter(events, &(&1["type"] == "expand" and committed?(&1)))
 
     {n, b, _seen} =
@@ -392,21 +551,73 @@ defmodule Arvo.Session.Audit do
             {n, b, seen}
 
           MapSet.member?(seen, id) ->
-            {n + 1, b + event_size(e), seen}
+            # Re-expand: count + sum returned expand payload size
+            {n + 1, b + expand_return_size(e), seen}
 
           true ->
             {n, b, MapSet.put(seen, id)}
         end
       end)
 
-    %{n_reexpand: n, b_reexpand: b}
+    denied = Enum.filter(events, &(&1["type"] == "denied_expand" and committed?(&1)))
+
+    n_op =
+      Enum.count(denied, fn e -> actor_of(e) in ["user", "operator", "human"] end)
+
+    n_model =
+      Enum.count(denied, fn e -> actor_of(e) == "model" end)
+
+    %{
+      n_reexpand: n,
+      b_reexpand: b,
+      n_denied_operator: n_op,
+      n_denied_model: n_model
+    }
   end
 
-  defp event_size(nil), do: 0
-
-  defp event_size(e) when is_map(e) do
-    size = e["size"] || e["bytes"] || e["projected_bytes"] || e["original_bytes"] || 0
+  defp expand_return_size(e) when is_map(e) do
+    # Prefer returned slice size for residual cost
+    size = e["returned_bytes"] || e["projected_bytes"] || e["size"] || e["bytes"] || 0
     if is_integer(size), do: size, else: 0
+  end
+
+  defp residual_human_readable(m, join) do
+    [
+      "Residual-need (Keepers park/unpark input — not auto-unpark):",
+      "  N_reexpand=#{m.n_reexpand} B_reexpand=#{m.b_reexpand}",
+      "  N_expand=#{m.expand} N_denied=#{m.denied_expand} " <>
+        "(operator=#{join.n_denied_operator} model=#{join.n_denied_model})",
+      "  Read with attention quality (task success, waste, non-stranding) separately.",
+      "  Reopen Keepers only if residual pain remains after attention quality is known (R15)."
+    ]
+    |> Enum.join("\n")
+  end
+
+  defp cold_id_match?(e, cold_id) when is_binary(cold_id) do
+    e["id"] == cold_id or e["cold_id"] == cold_id
+  end
+
+  defp actor_of(e) when is_map(e) do
+    case e["actor"] do
+      a when is_binary(a) -> String.downcase(a)
+      a when is_atom(a) -> a |> Atom.to_string() |> String.downcase()
+      _ -> nil
+    end
+  end
+
+  defp last_expand_class(events, cold_id) when is_binary(cold_id) do
+    events
+    |> Enum.filter(fn e ->
+      committed?(e) and cold_id_match?(e, cold_id) and
+        e["type"] in ["expand", "denied_expand"]
+    end)
+    |> List.last()
+    |> case do
+      nil -> nil
+      %{"type" => "expand"} = e -> {:expand, actor_of(e)}
+      %{"type" => "denied_expand"} = e -> {:denied, actor_of(e)}
+      _ -> nil
+    end
   end
 
   # Hot stub payload bytes (projected_bytes preferred over original body size).

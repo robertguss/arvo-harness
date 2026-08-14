@@ -11,7 +11,7 @@ This file is the system of record for *conversation so far*. Chat is not authori
 
 **Sort (2026-08-14):** [`SORT.md`](SORT.md) — five tests locked; framing agreed. Dump below is preserved. Discovery is **not** accepted.
 
-**Next after human accepts and commits the Blueprint:** Charter, in a fresh session. Do not scrape more.
+**Next:** Charter, fresh session — start at root [`HANDOFF.md`](../../HANDOFF.md). Do not scrape more.
 
 **Paper field guide (Front A intake):** [`ARXIV-WATCH.md`](ARXIV-WATCH.md) — P-001…P-026.
 

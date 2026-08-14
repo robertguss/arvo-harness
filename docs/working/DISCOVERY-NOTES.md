@@ -17,6 +17,8 @@ X bookmarks dumped 2026-08-14: 197 posts → [`x-bookmarks/`](x-bookmarks/) · c
 
 **When home:** pull the arXiv PDFs/list off the home laptop and drop them here (see [`ARXIV-WATCH.md`](ARXIV-WATCH.md) §9).
 
+**Obsidian vault (cloned 2026-08-14):** `../arvo-claw-obsidian-vault` — prior autoresearch on agent-harnesses + RLM/DSPy/GEPA. Map: [`VAULT-WATCH.md`](VAULT-WATCH.md).
+
 ---
 
 ## In one paragraph
@@ -205,6 +207,7 @@ Still to cover (after the dump is sorted): rigor tier, formal tracks, where phas
 | [arvo-beam-harness-research](https://github.com/robertguss/arvo-beam-harness-research) | **This program** (created from the template 2026-08-14). `just init name="arvo-beam-harness-research"` run 2026-08-14. |
 | [artifact-driven-research-program](https://github.com/robertguss/artifact-driven-research-program) | **Template only.** Do not land program notes here |
 | [coding-agent-harness](https://github.com/robertguss/coding-agent-harness) `arvo/` | Daily-driver Elixir harness. **Local checkout:** `../coding-agent-harness` (sibling of this repo). Ignore `ore/` unless we say so |
+| [arvo-claw-obsidian-vault](https://github.com/robertguss/arvo-claw-obsidian-vault) | Prior OpenClaw/Obsidian library. Autoresearch runs on harnesses + RLM/GEPA. **Local:** `../arvo-claw-obsidian-vault` |
 | [alexzhang13/rlm](https://github.com/alexzhang13/rlm) | Official RLM (Python REPL) |
 
 ---

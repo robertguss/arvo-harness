@@ -1,11 +1,17 @@
 # Living notes — Arvo / BEAM research program
 
+**Blueprint (2026-08-14):** [`docs/00-program-blueprint.md`](../00-program-blueprint.md) — human accepted; accepting commit not yet recorded.
+
 - **Repo:** [robertguss/arvo-beam-harness-research](https://github.com/robertguss/arvo-beam-harness-research)
 - **Status:** Working notes. **Not** an accepted Blueprint or Charter.
-- **Updated:** 2026-08-14 (rev 10 — arXiv watch field guide; X bookmarks next)
+- **Updated:** 2026-08-14 (rev 13 — Blueprint filled, not accepted)
 - **Owner:** Robert Guss (with Thinking Partner, Research, Engineering)
 
-This file is the system of record for *conversation so far*. Chat is not authority. Placeholders in `docs/00-program-blueprint.md` stay placeholders until discovery framing is approved.
+This file is the system of record for *conversation so far*. Chat is not authority.
+
+**Sort (2026-08-14):** [`SORT.md`](SORT.md) — five tests locked; framing agreed. Dump below is preserved. Discovery is **not** accepted.
+
+**Next after human accepts and commits the Blueprint:** Charter, in a fresh session. Do not scrape more.
 
 **Paper field guide (Front A intake):** [`ARXIV-WATCH.md`](ARXIV-WATCH.md) — P-001…P-026.
 
@@ -40,7 +46,9 @@ This repo catalogs theses. A later project tries them. Landing in `arvo/` is a t
 
 The template’s “implementation plan” in **phase 1** means: **ranked hypotheses + what we would measure + keep/drop criteria**. It does not mean code.
 
-**Lab vs product:** the lab may try things Arvo’s daily-driver refusal list forbids (MCP, plan mode, etc.). Landing in [coding-agent-harness](https://github.com/robertguss/coding-agent-harness) `arvo/` is a **separate gate**.
+**Lab vs `arvo/` tree:** the lab may try things the *intended* refusal list forbids (MCP, plan mode, etc.). Copying into [coding-agent-harness](https://github.com/robertguss/coding-agent-harness) `arvo/` is a **separate gate**.
+
+**Arvo is not Robert’s daily driver (locked 2026-08-14).** He does not use it now. He is not sure the features in the tree work. Older notes that say “daily driver” mean “the product-shaped codebase / intended stance,” not “the tool he works in every day.” Grounding snapshot = what the code looks like, not a verified product.
 
 ---
 
@@ -182,21 +190,21 @@ Horde / libcluster / Oban as the architecture; MCP in core; Jido or Alloy *as* S
 
 ## Discovery status
 
-Interview paused for an **ideation dump**. Do not accept Blueprint until framing is approved *and* the dump has been sorted.
+Interview paused after an **ideation dump**. First sort is in [`SORT.md`](SORT.md). Do not accept Blueprint until framing is approved *and* Robert says the sort is right.
 
 | # | Topic | State |
 |---|--------|--------|
 | 1 | Problem | **Locked:** personal lab; José hypothesis; learn + catalog; not compete |
 | 2 | Done-enough for *this* phase | **Locked:** open-ended research; output is a collection of hypotheses; spikes are the *next* project |
-| 3 | Graduation bar | **Leaning loose intake**; shelves proposed (Watch / Translate / Graduate) |
-| 4 | Work sequence | **Paused:** dump first; sort later |
+| 3 | Graduation bar | **Headline five locked** (Robert 2026-08-14). Loose intake still; most ideas stay on Watch. |
+| 4 | Work sequence | **Sort + framing agreed.** Blueprint next, fresh session. |
 | 5 | Edification | **Revised:** papers and other harnesses are in-scope to *learn and to try*. A same-VM-idea Elixir rewrite is allowed as a lab experiment. Not automatic as an `arvo/` landing. |
 | 6 | Working method | **Locked:** braindump of theses / theories / hypotheses. Papers + harness techniques + squeeze BEAM primitives. No testing design, no spike planning, no Blueprint until Robert wants to sort. |
 | 7 | Rewrite rule | **Challenged / unlocked.** Adaptation is the verb. |
 | 8 | Central insight | **Leaning locked:** papers specify OTP, then fake an OS in TS/Python. Stop simulating the runtime; use it. |
 | 9 | Program purpose | **Leaning locked:** discover reinvented-BEAM patterns in TS/Python innovation; experiment with them on the real runtime. Elixir flies under the radar; that is an opportunity, not a complaint. |
 
-Still to cover (after the dump is sorted): rigor tier, formal tracks, where phase-2 repo lives, catalog success criteria.
+Framing leftover from the dump is **agreed** in [`SORT.md`](SORT.md) (focused, three tracks, new sibling repo, catalog as success). Not yet copied into the Blueprint.
 
 ---
 
@@ -206,7 +214,7 @@ Still to cover (after the dump is sorted): rigor tier, formal tracks, where phas
 |------|------|
 | [arvo-beam-harness-research](https://github.com/robertguss/arvo-beam-harness-research) | **This program** (created from the template 2026-08-14). `just init name="arvo-beam-harness-research"` run 2026-08-14. |
 | [artifact-driven-research-program](https://github.com/robertguss/artifact-driven-research-program) | **Template only.** Do not land program notes here |
-| [coding-agent-harness](https://github.com/robertguss/coding-agent-harness) `arvo/` | Daily-driver Elixir harness. **Local checkout:** `../coding-agent-harness` (sibling of this repo). Ignore `ore/` unless we say so |
+| [coding-agent-harness](https://github.com/robertguss/coding-agent-harness) `arvo/` | Product-shaped Elixir harness **in the tree**. Not Robert’s daily driver; features unverified. **Local:** `../coding-agent-harness`. Ignore `ore/` unless we say so |
 | [arvo-claw-obsidian-vault](https://github.com/robertguss/arvo-claw-obsidian-vault) | Prior OpenClaw/Obsidian library. Autoresearch runs on harnesses + RLM/GEPA. **Local:** `../arvo-claw-obsidian-vault` |
 | [alexzhang13/rlm](https://github.com/alexzhang13/rlm) | Official RLM (Python REPL) |
 
@@ -214,10 +222,8 @@ Still to cover (after the dump is sorted): rigor tier, formal tracks, where phas
 
 ## Next (research, not spikes)
 
-1. **Now:** keep dumping. Missing ideas go in the catalog below (`H-###`).
-2. **Then:** sort onto Watch / Translate / Graduate (and Refuse).
-3. **Then:** pick next steps and only then fill the Blueprint.
-4. `just init` done (2026-08-14).
+1. **Now:** fill the Blueprint in a **fresh** session. Start with root [`HANDOFF.md`](../../HANDOFF.md).
+2. `just init` already done (2026-08-14). Do not accept discovery in the writing session.
 
 Prior ideation in the *product* repo (do not treat as this program's authority): `coding-agent-harness` `docs/ideation/` (2026-07-27) and ADR-0001/0002. This dump may repeat those ideas so they live here.
 
@@ -831,4 +837,18 @@ Not only agent papers. The same move shows up across “modern backend,” “du
 
 ---
 
-*Dump still open. Add `H-369+`. Sort when Robert says stop.*
+## Idea dump continued — sort walkthrough (`H-369+`)
+
+Robert walked the five “try later” items 2026-08-14. Kept all five. Added:
+
+- **H-369** Helper agents are **specialized** (scout / critic / planner): different rules, tools, and job — not a persona stuffed into the parent prompt.
+- **H-370** For each helper, test **another copy of the parent model** vs a **smaller cheaper model**. Include a **local** model on Robert’s machine as the cheap arm when we can.
+- **H-371** Local/smaller is allowed to make things worse. Measure success, cost, and time. Do not assume local is better. The parent model does not have to be local.
+
+Also locked in conversation (see [`SORT.md`](SORT.md)): G-001–G-003 kept; G-002 is the one he cares about most; G-004 lab loop ≠ “improves while you use it” (bigger cousin, don’t merge).
+
+- **H-372** Arvo is **not** Robert’s daily driver. He does not use it. He is not sure the features work. Do not plan as if we are protecting a tool he relies on. “In the tree” ≠ “works.”
+
+---
+
+*Dump still open. Add `H-373+`. First sort is in [`SORT.md`](SORT.md).*

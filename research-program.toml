@@ -1,7 +1,7 @@
 schema_version = 1
 program_id = "arvo-beam-harness-research"
 program_name = "arvo-beam-harness-research"
-rigor_tier = "standard" # focused | standard | high-assurance — proposed until Blueprint approval
+rigor_tier = "focused" # focused | standard | high-assurance — selected in Blueprint; awaiting human acceptance
 status = "active"      # active | blocked | completed | superseded
 created_date = "2026-08-14"
 last_updated_date = "2026-08-14"
@@ -34,14 +34,13 @@ reconciliation_required_when_used = true
 [review]
 additional_round_policy = "risk-triggered"
 
-# Fixed governance spine. Focused research tracks are added after Blueprint
-# (no pre-created focus stages in this template).
+# Fixed governance spine plus three focused tracks from the Blueprint draft.
 
 [[stages]]
 id = "discovery"
 kind = "discovery"
 name = "Project Discovery"
-status = "planned"
+status = "awaiting-validation"
 depends_on = []
 outputs = ["docs/00-program-blueprint.md"]
 accepted_commit = ""
@@ -56,16 +55,44 @@ outputs = ["docs/01-research-charter.md"]
 accepted_commit = ""
 
 [[stages]]
+id = "runtime"
+kind = "independent"
+name = "Runtime primitives"
+status = "planned"
+depends_on = ["charter"]
+outputs = ["docs/reports/10-runtime-research-report.md"]
+recommendation_range = "REC-001..REC-099"
+accepted_commit = ""
+
+[[stages]]
+id = "leftovers"
+kind = "independent"
+name = "Paper leftovers"
+status = "planned"
+depends_on = ["charter"]
+outputs = ["docs/reports/11-leftovers-research-report.md"]
+recommendation_range = "REC-100..REC-199"
+accepted_commit = ""
+
+[[stages]]
+id = "score-harness"
+kind = "independent"
+name = "Score the harness"
+status = "planned"
+depends_on = ["charter"]
+outputs = ["docs/reports/12-score-harness-research-report.md"]
+recommendation_range = "REC-200..REC-299"
+accepted_commit = ""
+
+[[stages]]
 id = "synthesis"
 kind = "chief-architect-synthesis"
 name = "Definitive Specification Synthesis"
 status = "planned"
 prompt = "docs/prompts/NN-chief-architect-synthesis-prompt.md"
 outputs = ["docs/specifications/01-definitive-specification.md"]
-depends_on = ["charter"]
+depends_on = ["charter", "runtime", "leftovers", "score-harness"]
 requirement_range = "REQ-001..REQ-299"
-# Note: after focused research stages are added, list them in depends_on instead
-# of (or in addition to) charter as appropriate.
 
 [[stages]]
 id = "spec-review"

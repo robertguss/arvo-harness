@@ -1,10 +1,10 @@
 schema_version = 1
-program_id = "{{PROGRAM_ID}}"
-program_name = "{{PROJECT_NAME}}"
+program_id = "arvo-beam-harness-research"
+program_name = "arvo-beam-harness-research"
 rigor_tier = "standard" # focused | standard | high-assurance — proposed until Blueprint approval
 status = "active"      # active | blocked | completed | superseded
-created_date = "{{CREATED_DATE}}"
-last_updated_date = "{{CREATED_DATE}}"
+created_date = "2026-08-14"
+last_updated_date = "2026-08-14"
 
 [governance]
 blueprint = "docs/00-program-blueprint.md"

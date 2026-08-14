@@ -1,11 +1,11 @@
-# Research Charter — {{PROJECT_NAME}}
+# Research Charter — arvo-beam-harness-research
 
 - **Artifact type:** Research Charter
-- **Program:** {{PROJECT_NAME}}
+- **Program:** arvo-beam-harness-research
 - **Status:** Placeholder — not accepted
 - **Version:** 0.0
-- **Created:** {{CREATED_DATE}}
-- **Last updated:** {{CREATED_DATE}}
+- **Created:** 2026-08-14
+- **Last updated:** 2026-08-14
 - **Depends on:** Accepted Program Blueprint
 
 > Placeholder skeleton. Inherit and specialize methodology from

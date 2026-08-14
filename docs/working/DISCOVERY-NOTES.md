@@ -202,7 +202,7 @@ Still to cover (after the dump is sorted): rigor tier, formal tracks, where phas
 
 | Repo | Role |
 |------|------|
-| [arvo-beam-harness-research](https://github.com/robertguss/arvo-beam-harness-research) | **This program** (created from the template 2026-08-14). `research-program.toml` still has `{{PROJECT_NAME}}` placeholders — `just init` not run yet |
+| [arvo-beam-harness-research](https://github.com/robertguss/arvo-beam-harness-research) | **This program** (created from the template 2026-08-14). `just init name="arvo-beam-harness-research"` run 2026-08-14. |
 | [artifact-driven-research-program](https://github.com/robertguss/artifact-driven-research-program) | **Template only.** Do not land program notes here |
 | [coding-agent-harness](https://github.com/robertguss/coding-agent-harness) `arvo/` | Daily-driver Elixir harness. **Local checkout:** `../coding-agent-harness` (sibling of this repo). Ignore `ore/` unless we say so |
 | [alexzhang13/rlm](https://github.com/alexzhang13/rlm) | Official RLM (Python REPL) |
@@ -214,7 +214,7 @@ Still to cover (after the dump is sorted): rigor tier, formal tracks, where phas
 1. **Now:** keep dumping. Missing ideas go in the catalog below (`H-###`).
 2. **Then:** sort onto Watch / Translate / Graduate (and Refuse).
 3. **Then:** pick next steps and only then fill the Blueprint.
-4. Later: `just init` so `research-program.toml` stops being `{{PROJECT_NAME}}`.
+4. `just init` done (2026-08-14).
 
 Prior ideation in the *product* repo (do not treat as this program's authority): `coding-agent-harness` `docs/ideation/` (2026-07-27) and ADR-0001/0002. This dump may repeat those ideas so they live here.
 

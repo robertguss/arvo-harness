@@ -1,7 +1,7 @@
-# Final Revised Implementation Plan — {{PROJECT_NAME}}
+# Final Revised Implementation Plan — arvo-beam-harness-research
 
 - **Artifact type:** Final revised implementation plan
-- **Program:** {{PROJECT_NAME}}
+- **Program:** arvo-beam-harness-research
 - **Status:** Placeholder — not accepted
 - **Version:** 0.0
 - **Delivery status:** Not set (placeholder)

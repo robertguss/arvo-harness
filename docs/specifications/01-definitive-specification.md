@@ -1,7 +1,7 @@
-# Definitive Specification — {{PROJECT_NAME}}
+# Definitive Specification — arvo-beam-harness-research
 
 - **Artifact type:** Proposed definitive specification
-- **Program:** {{PROJECT_NAME}}
+- **Program:** arvo-beam-harness-research
 - **Status:** Placeholder — not accepted
 - **Version:** 0.0
 - **Implementation status:** Not proposed (placeholder)

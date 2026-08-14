@@ -1,7 +1,7 @@
-# Implementation Plan — {{PROJECT_NAME}}
+# Implementation Plan — arvo-beam-harness-research
 
 - **Artifact type:** Implementation plan
-- **Program:** {{PROJECT_NAME}}
+- **Program:** arvo-beam-harness-research
 - **Status:** Placeholder — not accepted
 - **Version:** 0.0
 - **Delivery status:** Not proposed (placeholder)

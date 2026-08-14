@@ -1,7 +1,7 @@
-# Chief Architect Synthesis Prompt — {{PROJECT_NAME}}
+# Chief Architect Synthesis Prompt — arvo-beam-harness-research
 
 - **Artifact ID:** PROMPT-synthesis
-- **Program:** {{PROJECT_NAME}}
+- **Program:** arvo-beam-harness-research
 - **Stage:** synthesis
 - **Status:** Placeholder — generate just-in-time after research is accepted
 - **Required output:** docs/specifications/01-definitive-specification.md

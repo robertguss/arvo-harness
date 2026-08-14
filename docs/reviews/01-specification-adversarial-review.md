@@ -1,7 +1,7 @@
-# Specification Adversarial Review — {{PROJECT_NAME}}
+# Specification Adversarial Review — arvo-beam-harness-research
 
 - **Artifact type:** Adversarial review
-- **Program:** {{PROJECT_NAME}}
+- **Program:** arvo-beam-harness-research
 - **Status:** Placeholder — not accepted
 - **Version:** 0.0
 - **Subject:** docs/specifications/01-definitive-specification.md

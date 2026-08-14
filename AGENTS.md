@@ -1,4 +1,4 @@
-# Agent Rules — {{PROJECT_NAME}}
+# Agent Rules — arvo-beam-harness-research
 
 Repository-local rules for humans and agents operating this research program.
 

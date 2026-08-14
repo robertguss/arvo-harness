@@ -1,4 +1,4 @@
-# {{PROJECT_NAME}}
+# arvo-beam-harness-research
 
 Artifact-driven research program repository (GitHub template).
 

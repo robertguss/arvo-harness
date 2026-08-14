@@ -1,7 +1,7 @@
-# Final Plan Revision Prompt — {{PROJECT_NAME}}
+# Final Plan Revision Prompt — arvo-beam-harness-research
 
 - **Artifact ID:** PROMPT-plan-revision
-- **Program:** {{PROJECT_NAME}}
+- **Program:** arvo-beam-harness-research
 - **Stage:** plan-revision
 - **Status:** Placeholder — generate just-in-time after plan review accepted
 - **Required output:** docs/plans/02-implementation-plan-revised.md

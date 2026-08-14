@@ -1,7 +1,7 @@
-# Implementation Plan Prompt — {{PROJECT_NAME}}
+# Implementation Plan Prompt — arvo-beam-harness-research
 
 - **Artifact ID:** PROMPT-implementation-plan
-- **Program:** {{PROJECT_NAME}}
+- **Program:** arvo-beam-harness-research
 - **Stage:** implementation-plan
 - **Status:** Placeholder — generate just-in-time after revised specification
   accepted as implementation authority (or consciously plan under blocked status

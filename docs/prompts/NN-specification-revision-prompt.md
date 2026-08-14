@@ -1,7 +1,7 @@
-# Specification Revision Prompt — {{PROJECT_NAME}}
+# Specification Revision Prompt — arvo-beam-harness-research
 
 - **Artifact ID:** PROMPT-spec-revision
-- **Program:** {{PROJECT_NAME}}
+- **Program:** arvo-beam-harness-research
 - **Stage:** spec-revision
 - **Status:** Placeholder — generate just-in-time after spec review accepted
 - **Required output:** docs/specifications/02-definitive-specification-revised.md

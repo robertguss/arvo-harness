@@ -1,7 +1,7 @@
-# Specification Adversarial Review Prompt — {{PROJECT_NAME}}
+# Specification Adversarial Review Prompt — arvo-beam-harness-research
 
 - **Artifact ID:** PROMPT-spec-review
-- **Program:** {{PROJECT_NAME}}
+- **Program:** arvo-beam-harness-research
 - **Stage:** spec-review
 - **Status:** Placeholder — generate just-in-time after proposed specification
 - **Required output:** docs/reviews/01-specification-adversarial-review.md

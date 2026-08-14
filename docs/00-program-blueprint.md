@@ -1,11 +1,11 @@
-# Program Blueprint — {{PROJECT_NAME}}
+# Program Blueprint — arvo-beam-harness-research
 
 - **Artifact type:** Program Blueprint
-- **Program:** {{PROJECT_NAME}}
+- **Program:** arvo-beam-harness-research
 - **Status:** Placeholder — not accepted
 - **Version:** 0.0
-- **Created:** {{CREATED_DATE}}
-- **Last updated:** {{CREATED_DATE}}
+- **Created:** 2026-08-14
+- **Last updated:** 2026-08-14
 - **Rigor tier (proposed):** standard — approve or change during discovery
 
 > This file is a **section skeleton**. It does not prove stage completion.
@@ -15,7 +15,7 @@
 
 | Field      | Value          |
 | ---------- | -------------- |
-| Program ID | {{PROGRAM_ID}} |
+| Program ID | arvo-beam-harness-research |
 | Owner      |                |
 | Repository |                |
 

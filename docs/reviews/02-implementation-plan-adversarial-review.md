@@ -1,7 +1,7 @@
-# Implementation Plan Adversarial Review — {{PROJECT_NAME}}
+# Implementation Plan Adversarial Review — arvo-beam-harness-research
 
 - **Artifact type:** Adversarial review
-- **Program:** {{PROJECT_NAME}}
+- **Program:** arvo-beam-harness-research
 - **Status:** Placeholder — not accepted
 - **Version:** 0.0
 - **Subject:** docs/plans/01-implementation-plan.md

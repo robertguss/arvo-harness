@@ -7,7 +7,15 @@
 
 This file is the system of record for *conversation so far*. Chat is not authority. Placeholders in `docs/00-program-blueprint.md` stay placeholders until discovery framing is approved.
 
-**Paper field guide (Front A intake):** [`ARXIV-WATCH.md`](ARXIV-WATCH.md) — P-001…P-026. Same lens: circle OTP, underline leftover. X bookmarks are the next trail.
+**Paper field guide (Front A intake):** [`ARXIV-WATCH.md`](ARXIV-WATCH.md) — P-001…P-026.
+
+**LangChain / Trivedy:** [`LANGCHAIN-WATCH.md`](LANGCHAIN-WATCH.md). Harness-eval gospel next to José’s runtime gospel.
+
+**Autoresearch → harness:** [`AUTORESEARCH-WATCH.md`](AUTORESEARCH-WATCH.md). Karpathy’s keep/reset loop with the *harness* as `train.py` and Harbor as `prepare.py`.
+
+X bookmarks dumped 2026-08-14: 197 posts → [`x-bookmarks/`](x-bookmarks/) · cards [`X-BOOKMARKS-WATCH.md`](X-BOOKMARKS-WATCH.md).
+
+**When home:** pull the arXiv PDFs/list off the home laptop and drop them here (see [`ARXIV-WATCH.md`](ARXIV-WATCH.md) §9).
 
 ---
 

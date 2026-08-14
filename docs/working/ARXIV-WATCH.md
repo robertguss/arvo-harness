@@ -184,6 +184,6 @@ Worth a later pass, not blocking:
 
 ## 9. Next trail
 
-Robert’s **X bookmarks** — likely denser in *practitioner* harness tricks than arXiv. Same lens: circle the primitive, underline the leftover, ignore the TS/Python furniture.
-
-Do not start that trail until asked in the next turn (this file is the arXiv pass).
+- LangChain / `@Vtrivedy10` started: [`LANGCHAIN-WATCH.md`](LANGCHAIN-WATCH.md).
+- Robert’s **X bookmarks:** dumped 2026-08-14 (197). See [`X-BOOKMARKS-WATCH.md`](X-BOOKMARKS-WATCH.md). Refresh: `python3 scripts/x_dump_bookmarks.py`.
+- **HOME LAPTOP — arXiv stash (do this when you get home):** Robert has several arXiv papers saved locally. Dump them into this repo (PDFs, a folder of links, or paste titles/IDs in chat). Same lens: circle OTP, underline leftover, add `P-027+` here. Do not rely on chat memory — put files or a list under `docs/working/` (e.g. `docs/working/arxiv-home/`).

@@ -2,16 +2,16 @@
 
 - **Artifact type:** Program Blueprint
 - **Program:** arvo-beam-harness-research
-- **Status:** Accepted by human — awaiting accepting commit
+- **Status:** Accepted
 - **Version:** 1.0
 - **Created:** 2026-08-14
 - **Last updated:** 2026-08-14
 - **Rigor tier:** focused (approved with this Blueprint)
+- **Accepting commit:** `0b49540cae7d2a30ad4b4b145999e27b82c50dad`
 
 > This file is the governing plan for *this* repository. It does not conduct
-> the focused research. Robert accepted this draft on 2026-08-14. The
-> discovery stage is not `accepted` in `research-program.toml` until the
-> accepting commit is recorded.
+> the focused research. Robert accepted this draft on 2026-08-14. Discovery
+> is `accepted` in `research-program.toml` at the commit above.
 >
 > Framing sources (not higher than this file once accepted):
 > [`docs/working/SORT.md`](working/SORT.md),
@@ -234,7 +234,6 @@ This program does **not** succeed by shipping a harness.
   spikes here.
 - **Approval:** Approved with this Blueprint (Robert, 2026-08-14). Framing
   already chose focused ([`docs/working/SORT.md`](working/SORT.md) Framing).
-  Manifest `accepted_commit` still empty until the human commits.
 
 See [`program/reference/rigor-tiers.md`](../program/reference/rigor-tiers.md).
 
@@ -530,14 +529,9 @@ Independent validation before acceptance
 skill `research-validate`). Validators fix mechanical issues only. They do
 not invent research.
 
-Suggested commit after the human is happy with this draft (human runs git):
-
-```text
-docs: fill Program Blueprint from agreed sort (not accepted)
-```
-
-Accepting commit (later, different commit) is the only thing that may set
-`discovery.status = "accepted"` and fill `accepted_commit`.
+Accepting commit for discovery: `0b49540cae7d2a30ad4b4b145999e27b82c50dad`.
+That commit set `discovery.status = "accepted"` in a follow-up recording
+commit. Later stages still need their own human accept + commit.
 
 ## 20. Amendment Protocol
 
@@ -593,4 +587,4 @@ hundreds of coding-agent tasks.
 - [x] Identifier ranges allocated
 - [x] Rigor tier approved
 - [x] Human accepts Blueprint
-- [ ] Manifest updated; accepting commit recorded
+- [x] Manifest updated; accepting commit recorded

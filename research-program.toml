@@ -1,7 +1,7 @@
 schema_version = 1
 program_id = "arvo-beam-harness-research"
 program_name = "arvo-beam-harness-research"
-rigor_tier = "focused" # focused | standard | high-assurance — selected in Blueprint; awaiting human acceptance
+rigor_tier = "focused" # focused | standard | high-assurance — approved with Blueprint
 status = "active"      # active | blocked | completed | superseded
 created_date = "2026-08-14"
 last_updated_date = "2026-08-14"
@@ -40,10 +40,10 @@ additional_round_policy = "risk-triggered"
 id = "discovery"
 kind = "discovery"
 name = "Project Discovery"
-status = "awaiting-validation"
+status = "accepted"
 depends_on = []
 outputs = ["docs/00-program-blueprint.md"]
-accepted_commit = ""
+accepted_commit = "0b49540cae7d2a30ad4b4b145999e27b82c50dad"
 
 [[stages]]
 id = "charter"

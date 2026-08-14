@@ -2,10 +2,12 @@
 
 - **Repo:** [robertguss/arvo-beam-harness-research](https://github.com/robertguss/arvo-beam-harness-research)
 - **Status:** Working notes. **Not** an accepted Blueprint or Charter.
-- **Updated:** 2026-08-14 (rev 9 — purpose: discover reinvented-BEAM patterns; experiment later)
+- **Updated:** 2026-08-14 (rev 10 — arXiv watch field guide; X bookmarks next)
 - **Owner:** Robert Guss (with Thinking Partner, Research, Engineering)
 
 This file is the system of record for *conversation so far*. Chat is not authority. Placeholders in `docs/00-program-blueprint.md` stay placeholders until discovery framing is approved.
+
+**Paper field guide (Front A intake):** [`ARXIV-WATCH.md`](ARXIV-WATCH.md) — P-001…P-026. Same lens: circle OTP, underline leftover. X bookmarks are the next trail.
 
 ---
 

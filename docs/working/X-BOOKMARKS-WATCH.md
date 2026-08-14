@@ -4,6 +4,7 @@
 - **Fetched:** 2026-08-14
 - **Count:** 197 (API returned two pages; no further `next_token`)
 - **Dump:** [`x-bookmarks/INDEX.md`](x-bookmarks/INDEX.md) · [`x-bookmarks/bookmarks.json`](x-bookmarks/bookmarks.json)
+- **X Articles (46, title+URL only, unread):** [`x-bookmarks/ARTICLES.md`](x-bookmarks/ARTICLES.md)
 - **Lens:** circle OTP; underline leftover. Ignore prompt-slop and model-of-the-week.
 
 No tokens in these files.

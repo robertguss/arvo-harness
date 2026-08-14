@@ -143,6 +143,7 @@ These four are one family:
 | ACE | Playbook (prompt *or* memory) | Generate / reflect / curate; incremental |
 | AHE | Harness **files** (tools, middleware, memory) | Observability + falsifiable edit contracts |
 | Meta-Harness | Harness **code** | Agentic proposer over a filesystem of prior tries |
+| Bilevel Autoresearch (P-027) | The *search mechanism* (`program.md` / inner loop) | Outer loop writes new search code and injects it |
 
 **Leftover they share:** the interesting object is not the next user token. It is the **organism** (constitution, playbook, tool set, compact policy).
 
@@ -186,4 +187,21 @@ Worth a later pass, not blocking:
 
 - LangChain / `@Vtrivedy10` started: [`LANGCHAIN-WATCH.md`](LANGCHAIN-WATCH.md).
 - Robert’s **X bookmarks:** dumped 2026-08-14 (197). See [`X-BOOKMARKS-WATCH.md`](X-BOOKMARKS-WATCH.md). Refresh: `python3 scripts/x_dump_bookmarks.py`.
-- **HOME LAPTOP — arXiv stash (do this when you get home):** Robert has several arXiv papers saved locally. Dump them into this repo (PDFs, a folder of links, or paste titles/IDs in chat). Same lens: circle OTP, underline leftover, add `P-027+` here. Do not rely on chat memory — put files or a list under `docs/working/` (e.g. `docs/working/arxiv-home/`).
+- Laptop stash **arrived** 2026-08-14: [`arxiv-home/INDEX.md`](arxiv-home/INDEX.md). New cards **P-027–P-030** below.
+
+---
+
+## 10. Laptop stash (PDFs on disk)
+
+Readable natively (text extract + page images). No conversion needed. Files under `docs/working/arxiv-home/ai-papers/`.
+
+| ID | Paper | Local | Leftover / why |
+|----|--------|-------|----------------|
+| P-004 | Meta-Harness | yes | Already carded. Local PDF is the same [2603.28052](https://arxiv.org/abs/2603.28052). |
+| P-010 | RLM | yes | Already carded. Local PDF is [2512.24601](https://arxiv.org/abs/2512.24601). |
+| P-027 | [Bilevel Autoresearch](https://arxiv.org/abs/2603.23420) (Qu & Lu) | yes | Karpathy’s *meta*: an **outer** loop that reads the inner loop’s code, invents new search mechanisms (tabu, bandit, orthogonal exploration), injects Python at runtime. 5× vs inner loop alone on val_bpb; twiddling parameters without new mechanisms does nothing. Same LLM at both levels. **This is `program.md` evolving itself.** Circled: nested supervisors. Underlined: the organism is the *search policy*, not the weights — and it must stay fenced from the judge. |
+| P-028 | [The Semi-Executable Stack](https://arxiv.org/abs/2604.15468) (Feldt et al.) | yes | Agentic SE expands the engineered object: not just code, but prompts, workflows, controls, org routines — **semi-executable**. Six-ring diagnostic. Keynote companion, not empirical. **Our constitution / `program.md` / Harbor tasks live on that stack.** Circled: none (not OTP). Underlined: harness artifacts are first-class SE, not glue. |
+| P-029 | [GenericAgent](https://arxiv.org/abs/2604.17091) | yes | Long-horizon = **information density** in a finite window, not more tokens. Minimal tools, hierarchical on-demand memory, evolve verified trajectories into SOPs + **executable code**, compress to keep density. Self-evolving. Voyager-shaped skills + our rings. Circled: progressive disclosure. Underlined: density as the metric; SOPs as loadable modules. |
+| P-030 | [LeWorldModel](https://arxiv.org/abs/2603.19312) | yes | JEPA world model from pixels. Control / latent dynamics. **Not harness engineering.** Watch only if we ever care about world models. |
+
+**P-027 vs our autoresearch card:** Shopify generalized the *organism* (any metric). Bilevel generalizes the *searcher* (the loop that chooses experiments). Together: Harbor is `prepare.py`; harness files are `train.py`; `program.md` can itself be what the outer loop mutates — slowly, with a holdout.

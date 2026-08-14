@@ -15,7 +15,7 @@ This file is the system of record for *conversation so far*. Chat is not authori
 
 X bookmarks dumped 2026-08-14: 197 posts → [`x-bookmarks/`](x-bookmarks/) · cards [`X-BOOKMARKS-WATCH.md`](X-BOOKMARKS-WATCH.md).
 
-**When home:** pull the arXiv PDFs/list off the home laptop and drop them here (see [`ARXIV-WATCH.md`](ARXIV-WATCH.md) §9).
+**Laptop papers:** 6 PDFs in [`arxiv-home/`](arxiv-home/INDEX.md). Indexed as P-004, P-010, P-027–P-030. Readable natively (no markdown conversion).
 
 **Obsidian vault (cloned 2026-08-14):** `../arvo-claw-obsidian-vault` — prior autoresearch on agent-harnesses + RLM/DSPy/GEPA. Map: [`VAULT-WATCH.md`](VAULT-WATCH.md).
 

@@ -114,10 +114,11 @@ accepted_commit = "e00ee9c5e79adffd93c13ce2a03b92517a6b8c26"
 id = "spec-revision"
 kind = "artifact-revision"
 name = "Revised Definitive Specification"
-status = "planned"
-prompt = "docs/prompts/NN-specification-revision-prompt.md"
+status = "prompt-ready"
+prompt = "docs/prompts/15-specification-revision-prompt.md"
 outputs = ["docs/specifications/02-definitive-specification-revised.md"]
 depends_on = ["spec-review"]
+requirement_range = "REQ-001..REQ-299"
 
 [[stages]]
 id = "implementation-plan"

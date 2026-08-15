@@ -3,9 +3,10 @@
 - **Artifact type:** Focused research report
 - **Program:** arvo-beam-harness-research
 - **Stage:** runtime — Runtime primitives
-- **Status:** Draft — not accepted
+- **Status:** Accepted by human — awaiting accepting commit
 - **Version:** 1.0
 - **Created:** 2026-08-15
+- **Last updated:** 2026-08-15
 - **Research date:** 2026-08-15
 - **Depends on:** Accepted Research Charter
   ([`docs/01-research-charter.md`](../01-research-charter.md),
@@ -26,7 +27,9 @@
 
 > This file catalogs three host primitives. It does not implement them,
 > boot Arvo, or prove any feature works when run.
-> A human must accept this report. This writing session does not.
+> Robert accepted this draft on 2026-08-15. The runtime stage is not
+> `accepted` in `research-program.toml` until the accepting commit is
+> recorded.
 
 ## 1. Artifact metadata and actual research date
 
@@ -41,7 +44,7 @@
 | Rigor | focused (Blueprint §9) |
 | Replication | off |
 | DEC minted | none |
-| Accepting commit | *(empty — not accepted)* |
+| Accepting commit | *(empty — awaiting recording commit)* |
 
 ## 2. Executive answer
 
@@ -1625,8 +1628,8 @@ Do not cite chat, root HANDOFF, or attachment manifests as evidence.
 - [x] Exa used (ordinary search/fetch; Agent/deep documented as 401)
 - [x] Intake not reopened
 - [x] Plain-language summary shown to Robert *(in the session message, not this file)*
-- [ ] Human accepts report — **leave unchecked**
-- [ ] Manifest updated; accepting commit recorded — **leave unchecked**
+- [x] Human accepts report
+- [ ] Manifest updated; accepting commit recorded
 
 [^jose-1]: José Valim, 14 Aug 2026, https://x.com/josevalim/status/2088186994849468659 — accessed 2026-08-15.
 [^jose-2]: José Valim, 14 Aug 2026, https://x.com/josevalim/status/2088208133487264078 — accessed 2026-08-15.

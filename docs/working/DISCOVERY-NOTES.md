@@ -4,6 +4,7 @@
 **Charter (2026-08-15):** [`docs/01-research-charter.md`](../01-research-charter.md) — accepted at `081ad36`.
 **Runtime (2026-08-15):** [`docs/reports/10-runtime-research-report.md`](../reports/10-runtime-research-report.md) — accepted at `636123f`.
 **Leftovers (2026-08-15):** [`docs/reports/11-leftovers-research-report.md`](../reports/11-leftovers-research-report.md) — accepted at `9698362`.
+**Score-harness packet (2026-08-15):** [`docs/prompts/12-score-harness-research-prompt.md`](../prompts/12-score-harness-research-prompt.md) — installed, not executed. Launch: root [`HANDOFF.md`](../../HANDOFF.md).
 
 - **Repo:** [robertguss/arvo-beam-harness-research](https://github.com/robertguss/arvo-beam-harness-research)
 - **Status:** Working notes. **Not** an accepted Blueprint or Charter.
@@ -14,7 +15,7 @@ This file is the system of record for *conversation so far*. Chat is not authori
 
 **Sort (2026-08-14):** [`SORT.md`](SORT.md) — five tests locked; framing agreed. Dump below is preserved. Discovery is **not** accepted.
 
-**Next:** Runtime report, fresh session — start at root [`HANDOFF.md`](../../HANDOFF.md). Do not scrape more.
+**Next:** Score-harness report, fresh session — start at root [`HANDOFF.md`](../../HANDOFF.md). Do not scrape more.
 
 **Paper field guide (Front A intake):** [`ARXIV-WATCH.md`](ARXIV-WATCH.md) — P-001…P-026.
 

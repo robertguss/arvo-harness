@@ -92,11 +92,12 @@ accepted_commit = "c15dd31c44c197340d2b339657eb7f072f066d44"
 id = "synthesis"
 kind = "chief-architect-synthesis"
 name = "Definitive Specification Synthesis"
-status = "awaiting-validation"
+status = "accepted"
 prompt = "docs/prompts/13-chief-architect-synthesis-prompt.md"
 outputs = ["docs/specifications/01-definitive-specification.md"]
 depends_on = ["charter", "runtime", "leftovers", "score-harness"]
 requirement_range = "REQ-001..REQ-299"
+accepted_commit = "26bd0e4070ef822bdcd5c69d5f57a2a80131176f"
 
 [[stages]]
 id = "spec-review"

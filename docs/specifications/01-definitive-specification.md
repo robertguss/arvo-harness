@@ -3,12 +3,12 @@
 - **Artifact type:** Proposed definitive specification
 - **Program:** arvo-beam-harness-research
 - **Status:** Proposed — pending adversarial review
-- **Human acceptance:** Accepted by human 2026-08-15 — awaiting accepting commit
+- **Human acceptance:** Accepted by human 2026-08-15
 - **Version:** 0.1
 - **Created:** 2026-08-15
 - **Last updated:** 2026-08-15
 - **Implementation status:** Catalog proposed. Not implementation authority. This repository still only catalogs ideas.
-- **Accepting commit:** *(empty — awaiting recording commit)*
+- **Accepting commit:** `26bd0e4070ef822bdcd5c69d5f57a2a80131176f`
 - **Requirement range used:** `REQ-001`…`REQ-047`
 - **Risks minted here:** `RSK-030` (inherited `RSK-001`…`RSK-029` carried forward)
 - **Open questions minted here:** none (`OQ-001`…`OQ-018` inherited; `OQ-011` closed)
@@ -20,9 +20,9 @@
 > this repository, not a Harbor result, and not proof that anything in
 > Arvo works when run. It does not authorize Elixir, Harbor, or PRs into
 > `arvo/` **here**. Robert accepted this draft on 2026-08-15. Synthesis
-> is not `accepted` in `research-program.toml` until the accepting
-> commit is recorded. Adversarial review is the next stage after that.
-> This file is not implementation authority.
+> is `accepted` in `research-program.toml` at the commit above.
+> Adversarial review is the next stage, in a fresh session. This file
+> is not implementation authority.
 
 ## 1. Artifact Metadata
 
@@ -40,8 +40,8 @@
 | Replication | off |
 | Contract | [`program/contracts/definitive-specification.md`](../../program/contracts/definitive-specification.md); [`program/contracts/synthesis.md`](../../program/contracts/synthesis.md) |
 | Requirement shape | [`program/templates/requirement.md`](../../program/templates/requirement.md) |
-| Human acceptance | Accepted by human 2026-08-15 — awaiting accepting commit |
-| Accepting commit | *(empty — awaiting recording commit)* |
+| Human acceptance | Accepted by human 2026-08-15 |
+| Accepting commit | `26bd0e4070ef822bdcd5c69d5f57a2a80131176f` |
 
 ### What this file claims
 
@@ -107,9 +107,8 @@ It does not reopen them.
     confidence is rare. “Holdout would rise” stays Medium or Low.
 
 This specification is **Proposed — pending adversarial review**.
-Robert accepted this draft as the synthesis output on 2026-08-15.
-It is not implementation authority. The synthesis stage is not
-`accepted` in the index until the accepting commit is recorded.
+Robert accepted this draft as the synthesis output on 2026-08-15
+(`26bd0e4`). It is not implementation authority.
 
 ## 3. Authority and Intended Use
 
@@ -2375,4 +2374,4 @@ revised spec or an implementation plan now.
 - [x] Plain-language summary shown to Robert *(session message, not this file)*
 - [x] Independent validation passed
 - [x] Human accepts specification
-- [ ] Manifest updated; accepting commit recorded
+- [x] Manifest updated; accepting commit recorded

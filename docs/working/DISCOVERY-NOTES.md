@@ -5,7 +5,7 @@
 **Runtime (2026-08-15):** [`docs/reports/10-runtime-research-report.md`](../reports/10-runtime-research-report.md) — accepted at `636123f`.
 **Leftovers (2026-08-15):** [`docs/reports/11-leftovers-research-report.md`](../reports/11-leftovers-research-report.md) — accepted at `9698362`.
 **Score-harness (2026-08-15):** [`docs/reports/12-score-harness-research-report.md`](../reports/12-score-harness-research-report.md) — accepted at `c15dd31`.
-**Proposed specification (2026-08-15):** [`docs/specifications/01-definitive-specification.md`](../specifications/01-definitive-specification.md) — human accepted; awaiting recording commit.
+**Proposed specification (2026-08-15):** [`docs/specifications/01-definitive-specification.md`](../specifications/01-definitive-specification.md) — accepted at `26bd0e4`.
 
 - **Repo:** [robertguss/arvo-beam-harness-research](https://github.com/robertguss/arvo-beam-harness-research)
 - **Status:** Working notes. **Not** an accepted Blueprint or Charter.
@@ -16,7 +16,7 @@ This file is the system of record for *conversation so far*. Chat is not authori
 
 **Sort (2026-08-14):** [`SORT.md`](SORT.md) — five tests locked; framing agreed. Dump below is preserved. Discovery is **not** accepted.
 
-**Next:** Record the synthesis accepting commit, then spec-review in a fresh session. Do not start spec-review now. Do not scrape more.
+**Next:** Spec-review, fresh session — after a spec-review stage package. Do not scrape more.
 
 **Paper field guide (Front A intake):** [`ARXIV-WATCH.md`](ARXIV-WATCH.md) — P-001…P-026.
 

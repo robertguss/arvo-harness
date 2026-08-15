@@ -81,12 +81,12 @@ accepted_commit = "9698362dbe5f90ff48e7aa1093d547d2e14d410a"
 id = "score-harness"
 kind = "independent"
 name = "Score the harness"
-status = "awaiting-validation"
+status = "accepted"
 prompt = "docs/prompts/12-score-harness-research-prompt.md"
 depends_on = ["charter"]
 outputs = ["docs/reports/12-score-harness-research-report.md"]
 recommendation_range = "REC-200..REC-299"
-accepted_commit = ""
+accepted_commit = "c15dd31c44c197340d2b339657eb7f072f066d44"
 
 [[stages]]
 id = "synthesis"

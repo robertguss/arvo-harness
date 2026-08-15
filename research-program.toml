@@ -49,11 +49,11 @@ accepted_commit = "0b49540cae7d2a30ad4b4b145999e27b82c50dad"
 id = "charter"
 kind = "research-charter"
 name = "Research Charter"
-status = "awaiting-validation"
+status = "accepted"
 prompt = "docs/prompts/01-research-charter-prompt.md"
 depends_on = ["discovery"]
 outputs = ["docs/01-research-charter.md"]
-accepted_commit = ""
+accepted_commit = "081ad36932be7f3f0df062b592cc306c49f72af4"
 
 [[stages]]
 id = "runtime"

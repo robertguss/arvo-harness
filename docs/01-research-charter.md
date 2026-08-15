@@ -2,19 +2,19 @@
 
 - **Artifact type:** Research Charter
 - **Program:** arvo-beam-harness-research
-- **Status:** Accepted by human — awaiting accepting commit
+- **Status:** Accepted
 - **Version:** 1.0
 - **Created:** 2026-08-14
 - **Last updated:** 2026-08-15
 - **Depends on:** Accepted Program Blueprint
   ([`docs/00-program-blueprint.md`](00-program-blueprint.md),
   accepting commit `0b49540cae7d2a30ad4b4b145999e27b82c50dad`)
+- **Accepting commit:** `081ad36932be7f3f0df062b592cc306c49f72af4`
 
 > This file is the evidence and decision methodology every later stage
 > inherits. It does not conduct the research, write pattern cards, or
-> sequence experiments. Robert accepted this draft on 2026-08-15. The
-> charter stage is not `accepted` in `research-program.toml` until the
-> accepting commit is recorded.
+> sequence experiments. Robert accepted this draft on 2026-08-15.
+> Charter is `accepted` in `research-program.toml` at the commit above.
 
 ## 1. Artifact Metadata
 
@@ -557,10 +557,10 @@ Substantive defects → stage `requires-revision`. Do not mark the stage
 `accepted`.
 
 This Charter’s own validation additionally checks: all 19 sections
-project-specialized; no `Placeholder — not accepted` on this file; no
-sixth test; spikes forbidden here; “in the tree ≠ works”; popularity
-is not proof; no focused reports written in the Charter session;
-`charter.status` is not `accepted` until a human records the
+project-specialized; no leftover placeholder-status banner on this
+file; no sixth test; spikes forbidden here; “in the tree ≠ works”;
+popularity is not proof; no focused reports written in the Charter
+session; `charter.status` is not `accepted` until a human records the
 accepting commit.
 
 `just check` tests tree shape and acceptance consistency. It does not
@@ -626,8 +626,8 @@ A stage is not complete because a filename exists.
 A stage is complete when:
 
 1. The commissioning prompt’s required sections are filled with
-   project-specific content (no `_To be filled_`, no
-   `Placeholder — not accepted` on that artifact).
+   project-specific content (no `_To be filled_`, no leftover
+   placeholder-status banner on that artifact).
 2. Independent validation has passed (or passed with mechanical
    corrections only).
 3. The human accepts the artifact.
@@ -637,10 +637,9 @@ A stage is complete when:
    dispositioned.
 6. This Charter’s rubric in §10 holds for that stage.
 
-This Charter file meets items 1–3 (filled, independently validated,
-human accepted). Item 4 is the accepting commit recorded in
-`research-program.toml`. **Do not treat the stage as `accepted` until
-that commit is recorded.**
+This Charter file meets items 1–4 (filled, independently validated,
+human accepted, accepting commit recorded). Later stages still need
+their own human accept + commit.
 
 Program-level completion follows Blueprint §21 and
 [`program/operator/completion-criteria.md`](../program/operator/completion-criteria.md),
@@ -662,4 +661,4 @@ The program does **not** succeed by shipping a harness.
 - [x] Source hierarchy and citation rules explicit
 - [x] Evidence Ledger and recommendation formats locked
 - [x] Human accepts Charter
-- [ ] Manifest updated; accepting commit recorded
+- [x] Manifest updated; accepting commit recorded

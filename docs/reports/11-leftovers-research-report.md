@@ -3,7 +3,7 @@
 - **Artifact type:** Focused research report
 - **Program:** arvo-beam-harness-research
 - **Stage:** leftovers — Paper leftovers
-- **Status:** Draft — not accepted
+- **Status:** Accepted by human — awaiting accepting commit
 - **Version:** 1.0
 - **Created:** 2026-08-15
 - **Last updated:** 2026-08-15
@@ -23,12 +23,14 @@
 - **Open questions minted:** `OQ-007`…`OQ-012`
 - **Evidence IDs:** `EVD-100`…`EVD-115`
 - **Spikes:** none (`SPK-###` unused)
-- **Accepting commit:** _(empty — not accepted)_
+- **Accepting commit:** _(empty — awaiting recording commit)_
 
 > This file catalogs leftover insights as pattern cards on the accepted
 > host nouns G-001…G-003. It does not implement cards, boot Arvo, prove
 > any leftover on BEAM, or add a sixth headline. Most intake stays on
-> Watch on purpose. Robert has not accepted this draft.
+> Watch on purpose. Robert accepted this draft on 2026-08-15. The
+> leftovers stage is not `accepted` in `research-program.toml` until
+> the accepting commit is recorded.
 
 ## 1. Artifact metadata and actual research date
 
@@ -43,7 +45,7 @@
 | Rigor | focused (Blueprint §9) |
 | Replication | off |
 | DEC minted | none |
-| Accepting commit | empty |
+| Accepting commit | *(empty — awaiting recording commit)* |
 
 ## 2. Executive answer
 
@@ -2254,7 +2256,7 @@ Do not cite chat, root HANDOFF, or attachment manifests as evidence.
 - [x] Intake not reopened
 - [x] Shared IDs start at `RSK-010` / `OQ-007`
 - [x] Plain-language summary shown to Robert *(in the session message, not this file)*
-- [ ] Human accepts report
+- [x] Human accepts report
 - [ ] Manifest updated; accepting commit recorded
 
 [^jose-1]: José Valim, 14 Aug 2026, https://x.com/josevalim/status/2088186994849468659 — accessed 2026-08-15.

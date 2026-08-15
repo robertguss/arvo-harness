@@ -3,7 +3,7 @@
 - **Artifact type:** Focused research report
 - **Program:** arvo-beam-harness-research
 - **Stage:** score-harness — Score the harness
-- **Status:** Draft — not accepted
+- **Status:** Accepted by human — awaiting accepting commit
 - **Version:** 1.0
 - **Created:** 2026-08-15
 - **Last updated:** 2026-08-15
@@ -33,13 +33,14 @@
 - **Official docs dated:** Harbor pages on
   [harborframework.com](https://www.harborframework.com/docs) opened
   2026-08-15; GEPA abs v2 and ACE abs v3 re-opened 2026-08-15.
-- **Accepting commit:** *(empty — not accepted)*
+- **Accepting commit:** *(empty — awaiting recording commit)*
 
 > This file names how a later sibling repo would run G-004 and G-005
 > so the harness cannot edit the judge, and so the two tests stay
 > unmerged. It does not run Harbor, boot Arvo, invent a Harbor number,
-> mint G-006, or land the searcher as Arvo’s identity. This draft is
-> **not** accepted.
+> mint G-006, or land the searcher as Arvo’s identity. Robert accepted
+> this draft on 2026-08-15. The score-harness stage is not `accepted`
+> in `research-program.toml` until the accepting commit is recorded.
 
 ## 1. Artifact metadata and actual research date
 
@@ -54,7 +55,7 @@
 | Rigor | focused (Blueprint §9) |
 | Replication | off |
 | DEC minted | none |
-| Accepting commit | empty |
+| Accepting commit | *(empty — awaiting recording commit)* |
 
 ## 2. Executive answer
 
@@ -1912,7 +1913,7 @@ Do not cite chat, root HANDOFF, or attachment manifests as evidence.
 - [x] Intake not reopened
 - [x] Shared IDs start at `RSK-019` / `OQ-013`; `REC-200`…`REC-299` only
 - [x] Plain-language summary shown to Robert *(in the session message, not this file)*
-- [ ] Human accepts report
+- [x] Human accepts report
 - [ ] Manifest updated; accepting commit recorded
 
 [^harbor-docs]: Harbor, *Motivation*, https://www.harborframework.com/docs — accessed 2026-08-15.

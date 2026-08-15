@@ -3,7 +3,7 @@
 - **Artifact type:** Focused research report
 - **Program:** arvo-beam-harness-research
 - **Stage:** runtime — Runtime primitives
-- **Status:** Accepted by human — awaiting accepting commit
+- **Status:** Accepted
 - **Version:** 1.0
 - **Created:** 2026-08-15
 - **Last updated:** 2026-08-15
@@ -24,12 +24,12 @@
   `84004e1fcae11bbf72656c58e7fa5ae4aa92838b` (observed 2026-08-15)
 - **Official docs dated:** Erlang/OTP **29.0.5**, Elixir **1.20.3**,
   Livebook **0.19.9** (pages opened 2026-08-15)
+- **Accepting commit:** `636123f1a628803aa4ae2c44fc4659d167a80693`
 
 > This file catalogs three host primitives. It does not implement them,
 > boot Arvo, or prove any feature works when run.
-> Robert accepted this draft on 2026-08-15. The runtime stage is not
-> `accepted` in `research-program.toml` until the accepting commit is
-> recorded.
+> Robert accepted this draft on 2026-08-15. Runtime is `accepted` in
+> `research-program.toml` at the commit above.
 
 ## 1. Artifact metadata and actual research date
 
@@ -44,7 +44,7 @@
 | Rigor | focused (Blueprint §9) |
 | Replication | off |
 | DEC minted | none |
-| Accepting commit | *(empty — awaiting recording commit)* |
+| Accepting commit | `636123f1a628803aa4ae2c44fc4659d167a80693` |
 
 ## 2. Executive answer
 
@@ -1629,7 +1629,7 @@ Do not cite chat, root HANDOFF, or attachment manifests as evidence.
 - [x] Intake not reopened
 - [x] Plain-language summary shown to Robert *(in the session message, not this file)*
 - [x] Human accepts report
-- [ ] Manifest updated; accepting commit recorded
+- [x] Manifest updated; accepting commit recorded
 
 [^jose-1]: José Valim, 14 Aug 2026, https://x.com/josevalim/status/2088186994849468659 — accessed 2026-08-15.
 [^jose-2]: José Valim, 14 Aug 2026, https://x.com/josevalim/status/2088208133487264078 — accessed 2026-08-15.

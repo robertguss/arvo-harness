@@ -30,7 +30,6 @@ tile.
 ### Run
 
 ```bash
-cd arvo
 export ARVO_CWD="$PWD"   # optional; defaults to launch dir via bin/arvo
 bin/arvo                 # or: mix run --no-halt
 ```
@@ -87,21 +86,21 @@ you need it).
 ### Tests
 
 ```bash
-cd arvo && mix test
+mix test
 ```
 
 ## Repo guide
 
-| Path                                                                                                                       | What                          |
-| -------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| [SPEC.md](SPEC.md)                                                                                                         | Locked v0.1 specification     |
-| [CONTEXT.md](CONTEXT.md)                                                                                                   | Normative vocabulary          |
-| [wiki/](wiki/)                                                                                                             | LLM wiki (compiled knowledge) |
-| [docs/adr/](docs/adr/)                                                                                                     | Architecture decision records |
-| [docs/plans/2026-07-27-001-feat-arvo-d1-daily-driver-plan.md](docs/plans/2026-07-27-001-feat-arvo-d1-daily-driver-plan.md) | D1 plan                       |
-| [arvo/](arvo/)                                                                                                             | Elixir mix project            |
+| Path                     | What                          |
+| ------------------------ | ----------------------------- |
+| [CONTEXT.md](CONTEXT.md) | Normative vocabulary          |
+| [CONCEPTS.md](CONCEPTS.md) | Process glossary            |
+| [wiki/](wiki/)           | LLM wiki (compiled knowledge) |
+| [docs/adr/](docs/adr/)   | Architecture decision records |
+| [evals/](evals/)         | Harbor attention suite        |
+| [rel/RELEASE.md](rel/RELEASE.md) | Mix release / Harbor packaging |
 
 ## Status
 
-D1 daily-driver path implemented on `feat/arvo-d1-daily-driver`: Focus default,
-Session-owned turns, streaming, HEAD/rewind, handoff, thin profiles.
+D1 daily-driver path implemented: Focus default, Session-owned turns,
+streaming, HEAD/rewind, handoff, thin profiles.

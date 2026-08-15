@@ -6,8 +6,8 @@ updated: 2026-07-29
 sources:
   - README.md
   - CONCEPTS.md
-  - arvo/lib/arvo/tui.ex
-  - arvo/lib/arvo/tui/focus.ex
+  - lib/arvo/tui.ex
+  - lib/arvo/tui/focus.ex
 ---
 
 # Focus TUI

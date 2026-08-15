@@ -1,37 +1,29 @@
 ---
 title: Project overview
 type: overview
-tags: [overview, monorepo]
-updated: 2026-07-29
+tags: [overview, arvo]
+updated: 2026-08-15
 sources:
   - README.md
   - CONTEXT.md
   - CONCEPTS.md
-  - ore/README.md
   - evals/README.md
 ---
 
-# Coding Agent Harness — overview
+# Arvo — overview
 
-Personal terminal **coding-agent harness** monorepo. Workshop tool: used daily,
-tweaked constantly, built to learn harness engineering. Small core in the spirit
-of pi / grok-build; extension through plugins bundled into **profiles**.
+Personal terminal **coding-agent harness** in Elixir/BEAM. Workshop tool: used
+daily, tweaked constantly, built to learn harness engineering. Small core in the
+spirit of pi / grok-build; extension through plugins bundled into **profiles**.
 
-## Twin products
-
-| Product | Stack | Tree | Dotdirs |
-| ------- | ----- | ---- | ------- |
-| [[entities/arvo\|Arvo]] | Elixir / BEAM | `arvo/` | `~/.arvo/`, `.arvo/` |
-| [[entities/ore\|Ore]] | Rust | `ore/` | `~/.ore/`, `.ore/` |
-
-Shared domain concept: [[concepts/harness\|harness]] (agent loop, tools, TUI,
-plugin host, providers). Names **Arvo** and **Ore** are the user-facing product
-names; avoid calling either "the harness" in shipped UX once v0.1 lands
+Ore, the Rust twin, lives in
+[ore-harness](https://github.com/robertguss/ore-harness). Shared domain
+concept: [[concepts/harness|harness]] (agent loop, tools, TUI, plugin host,
+providers). Avoid calling Arvo "the harness" in shipped UX once v0.1 lands
 (`CONTEXT.md`).
 
-**Language choice:** Elixir/BEAM for Arvo is intentional curriculum (OTP,
-live load for profiles) — [[sources/adr-0001-elixir-beam|ADR 0001]]. Ore is the
-parallel Rust experiment (ratatui, static binary).
+**Language choice:** Elixir/BEAM is intentional curriculum (OTP, live load for
+profiles) — [[sources/adr-0001-elixir-beam|ADR 0001]].
 
 ## What Arvo optimizes for
 
@@ -72,11 +64,10 @@ Eval path: [[entities/evals-harbor|Harbor evals]] + audit JSONL honesty metrics.
 
 [[entities/profiles-plugins|Profiles + plugins]]: plugins ship tools, slash
 commands, hooks, skills; exactly one workflow profile active atop always-on
-`base`. Flagship search plugin story: [[entities/fff|FFF]] / `ore-plugin-fff`.
+`base`. Flagship search plugin story: [[entities/fff|FFF]].
 
 ## Process & docs
 
-- Issue tracking: [[entities/beads|bd (beads)]] — local Dolt, not markdown TODOs
 - Vocabulary: `CONTEXT.md` (names), `CONCEPTS.md` (process glossary)
 - Learnings: `docs/solutions/`
 - This wiki: compiled synthesis under `wiki/` per [[wiki/AGENTS|schema]]
@@ -85,19 +76,16 @@ commands, hooks, skills; exactly one workflow profile active atop always-on
 
 | Path | Role |
 | ---- | ---- |
-| `arvo/` | Elixir mix project; D1 daily driver |
-| `ore/` | Rust workspace (`ore`, `ore-core`, `ore-tui`, `ore-plugin-fff`) |
-| `evals/` | Harbor tasks, agents, jobs-config |
+| `lib/arvo/` | Mix project core |
+| `evals/` | Harbor attention suite |
 | `docs/adr/` | Architecture decisions |
-| `docs/plans/` | Implementation plans |
 | `docs/solutions/` | Compounded bug/practice writeups |
 | `wiki/` | This LLM wiki |
 
-## Status snapshot (seed date 2026-07-29)
+## Status snapshot
 
-- Arvo D1 daily-driver path implemented (Focus, Session turns, streaming, HEAD,
+- D1 daily-driver path implemented (Focus, Session turns, streaming, HEAD,
   rewind/tree, handoff, thin profiles) per root `README.md`.
 - Progressive attention + Harbor attention suite active in `evals/`.
-- Ore installable via cargo/just; fff plugin crate present.
 - Keepers and some residual-need matrix rows remain decision-gated by eval
-  evidence (see evals README / attention plans) — do not unpark from wiki alone.
+  evidence (see evals README) — do not unpark from wiki alone.

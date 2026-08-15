@@ -7,7 +7,7 @@ sources:
   - CONCEPTS.md
   - README.md
   - docs/solutions/logic-errors/session-product-path-trust-spine-races.md
-  - arvo/lib/arvo/session.ex
+  - lib/arvo/session.ex
 ---
 
 # Session
@@ -18,7 +18,7 @@ supervised product turn Task, cancel generation, and durable usage.
 **Product interactive chat enters the agent only through Session-owned turns.**
 Bare `Arvo.Agent.run` stays library/test territory.
 
-Code: `arvo/lib/arvo/session.ex` (+ `session/` store, tokens, warm, cold,
+Code: `lib/arvo/session.ex` (+ `session/` store, tokens, warm, cold,
 compaction, handoff, audit).
 
 ## Owns

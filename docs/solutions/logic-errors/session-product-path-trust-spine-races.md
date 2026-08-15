@@ -119,7 +119,7 @@ the handoff packet builder, and `Store.tip/1` over entry lists.
 ### 1. Idle-only guards on identity / HEAD mutations
 
 `turn_busy?/1` is true when `state.turn_task` is a live Task
-(`arvo/lib/arvo/session.ex` — `turn_busy?/1`). `open_new`, `resume`, and
+(`lib/arvo/session.ex` — `turn_busy?/1`). `open_new`, `resume`, and
 `rewind` reject with `{:error, :turn_in_progress}` when busy. `rebind/1` and the
 handoff call path use the same gate. Public `turn_in_progress?/0` exposes the
 probe for TUI (e.g. idle-only profile switch). `start_turn` remains a second
@@ -131,7 +131,7 @@ spawning another.
 Product path sets `"stream" => true` and routes through `request_sse` →
 `default_http_stream/4`. The default HTTP function streams body chunks into an
 accumulator and feeds the same line parser used by tests
-(`arvo/lib/arvo/providers/completion.ex` — `default_http_stream/4`,
+(`lib/arvo/providers/completion.ex` — `default_http_stream/4`,
 `feed_sse_chunk/3`). `feed_sse_chunk` maintains a line buffer across TCP chunk
 boundaries, parses complete `data:` lines, and invokes `on_delta` per non-empty
 text delta. `parse_sse_stream/2` is the same pipeline over a full body for

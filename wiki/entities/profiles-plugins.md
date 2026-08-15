@@ -5,9 +5,8 @@ tags: [plugin, profile, extension]
 updated: 2026-07-29
 sources:
   - CONTEXT.md
-  - arvo/lib/arvo/profiles.ex
-  - arvo/lib/arvo/plugin.ex
-  - ore/crates/ore-core/src/lib.rs
+  - lib/arvo/profiles.ex
+  - lib/arvo/plugin.ex
 ---
 
 # Profiles and plugins

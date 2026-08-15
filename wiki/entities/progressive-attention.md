@@ -6,8 +6,8 @@ updated: 2026-07-29
 sources:
   - CONCEPTS.md
   - evals/README.md
-  - arvo/lib/arvo/attention.ex
-  - arvo/lib/arvo/attention/policy.ex
+  - lib/arvo/attention.ex
+  - lib/arvo/attention/policy.ex
 ---
 
 # Progressive attention

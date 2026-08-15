@@ -8,7 +8,7 @@
 
 ```bash
 # from repo root — one command
-python3 -m http.server 8765 --directory arvo/prototype/tui-variants
+python3 -m http.server 8765 --directory prototype/tui-variants
 ```
 
 Open: http://127.0.0.1:8765/?variant=A
@@ -29,5 +29,5 @@ Switch: floating bar or `←` / `→`.
 
 ## After you pick
 
-Capture the winner (or mix) in ideation notes / beads, then implement in real
+Capture the winner (or mix) in ideation notes, then implement in real
 term_ui (or chosen stack). Do not promote this HTML into production UI.

@@ -1,8 +1,8 @@
-# LLM Wiki Schema — coding-agent-harness
+# LLM Wiki Schema — arvo-harness
 
 This directory is an **LLM-maintained wiki**: a persistent, compounding knowledge
-base about this monorepo. Humans curate sources and ask questions; the LLM
-writes and maintains wiki pages.
+base about Arvo. Humans curate sources and ask questions; the LLM writes and
+maintains wiki pages.
 
 Pattern source: [Karpathy llm-wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
@@ -10,15 +10,18 @@ Pattern source: [Karpathy llm-wiki](https://gist.github.com/karpathy/442a6bf5559
 
 | Layer | Location | Rules |
 | ----- | -------- | ----- |
-| **Raw sources** | Repo paths outside `wiki/` (`README.md`, `CONTEXT.md`, `CONCEPTS.md`, `docs/`, `arvo/`, `ore/`, `evals/`, solutions, ADRs, specs) | **Immutable to the wiki agent.** Read only. Never edit a source "to match the wiki." |
+| **Raw sources** | Repo paths outside `wiki/` (`README.md`, `CONTEXT.md`, `CONCEPTS.md`, `docs/`, `lib/`, `evals/`, solutions, ADRs) | **Immutable to the wiki agent.** Read only. Never edit a source "to match the wiki." |
 | **Wiki** | `wiki/**/*.md` except this schema may be co-evolved with the human | LLM owns content. Create, update, cross-link, retire. |
 | **Schema** | This file (`wiki/AGENTS.md`) | Conventions + workflows. Co-evolve with the human when friction appears. |
 
 ## Purpose
 
-Project knowledge for **coding-agent-harness**: Arvo (Elixir harness), Ore (Rust
-harness), progressive attention, evals/Harbor, plugins/profiles, Herdr panes,
-and process (beads). Not a personal journal and not a substitute for code.
+Project knowledge for **arvo-harness**: Arvo (Elixir harness), progressive
+attention, evals/Harbor, plugins/profiles, Herdr panes. Not a personal journal
+and not a substitute for code.
+
+Ore lives in a sibling repo:
+[ore-harness](https://github.com/robertguss/ore-harness).
 
 Canonical vocabulary still lives in source docs when they exist:
 
@@ -27,9 +30,9 @@ Canonical vocabulary still lives in source docs when they exist:
 - Decisions → `docs/adr/`
 - Bug learnings → `docs/solutions/`
 
-Wiki **compiles and links** those; it does not replace them as source of truth
-for normative wording. When wiki and source disagree, fix wiki or file a bead
-to fix the source — do not silently invent a third truth.
+Wiki **compiles and links** those; it does not replace those as source of truth
+for normative wording. When wiki and source disagree, fix wiki or fix the
+source — do not silently invent a third truth.
 
 ## Directory layout
 
@@ -148,7 +151,7 @@ On request or periodically:
 - Gaps that need a new source or code read
 
 Write findings to `lint-report.md` and log `lint`. Fix cheap issues in the same
-pass; bead larger ones.
+pass.
 
 ### Maintain
 
@@ -157,23 +160,20 @@ Renames, splits, tag cleanup, index repair. Log as `maintain`.
 ## Scope defaults (this project)
 
 **In scope:** architecture, product surfaces, trust spine, attention model,
-eval methodology, twin-product (Arvo/Ore) differences, documented solutions.
+eval methodology, documented solutions.
 
 **Out of scope for bulk pages:** every Elixir module, every eval job artifact,
-chat transcripts, secrets, generated `_build` / `target`.
+chat transcripts, secrets, generated `_build`.
 
 Entity depth: **top hubs only** unless human asks for deeper map.
 
 ## Agent rules (must)
 
 1. Never edit raw sources as part of wiki maintenance.
-2. Never commit or push unless the human explicitly asks (repo profile:
-   minimal/conservative).
-3. Use `bd` for durable task tracking of non-trivial wiki work — not markdown
-   TODO lists outside this wiki's own lint backlog.
-4. When implementing product code, still treat `CONTEXT.md` / `CONCEPTS.md` as
+2. Never commit or push unless the human explicitly asks.
+3. When implementing product code, treat `CONTEXT.md` / `CONCEPTS.md` as
    normative vocabulary sources; update wiki after or alongside doc changes.
-5. Keep technical names exact (`Session.start_turn`, `req_llm`, Harbor, …).
+4. Keep technical names exact (`Session.start_turn`, `req_llm`, Harbor, …).
 
 ## Suggested first reads for a new session
 

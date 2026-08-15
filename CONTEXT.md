@@ -1,4 +1,4 @@
-# Coding Agent Harness
+# Arvo
 
 A personal terminal coding-agent harness — a workshop tool Rob uses daily and
 tweaks constantly to learn harness engineering. Small core in the spirit of pi
@@ -6,18 +6,16 @@ and grok-build, extended through plugins.
 
 ## Language
 
-**Arvo**: The Elixir harness product. Names the binary/command, the user-global
-dotdir (`~/.arvo/`), and the per-project dir (`.arvo/`). _Avoid_: "the harness"
-in user-facing surfaces once v0.1 ships; do not use for the Rust twin
+**Arvo**: This product. Names the binary/command, the user-global dotdir
+(`~/.arvo/`), and the per-project dir (`.arvo/`). _Avoid_: "the harness" in
+user-facing surfaces once v0.1 ships.
 
-**Ore**: The Rust harness product (parallel experiment to Arvo). Names the
-monorepo sibling tree (`ore/`), binary/command, user-global dotdir (`~/.ore/`),
-and per-project dir (`.ore/`). _Avoid_: "the Rust harness" in user-facing
-surfaces once v0.1 ships; do not use for the Elixir twin
+**Ore**: A separate Rust harness
+([ore-harness](https://github.com/robertguss/ore-harness)). Not this
+repository.
 
-**Harness**: The machinery either product builds: agent loop, tool dispatch,
-TUI, plugin host, provider adapters. Shared domain concept across Arvo and Ore.
-_Avoid_: CLI wrapper, framework
+**Harness**: The machinery Arvo builds: agent loop, tool dispatch, TUI, plugin
+host, provider adapters. _Avoid_: CLI wrapper, framework
 
 **Tool**: A capability the model can invoke through the harness (read a file,
 run a shell command). _Avoid_: function, command

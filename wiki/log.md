@@ -17,3 +17,10 @@ Append-only. Grep recent: `grep "^## \[" wiki/log.md | tail -5`
 
 - Findings written to `lint-report.md`.
 - Fixed during pass: none blocking; noted gaps for follow-up ingest.
+
+## [2026-08-15] maintain | Split out of coding-agent-harness
+
+- Repo is now **arvo-harness**; Mix project is the root (no `arvo/` prefix).
+- Ore is a sibling repo (https://github.com/robertguss/ore-harness), not a tree here.
+- Retired [[entities/beads]] — no issue tracker in this repo.
+- Retargeted entity/source path prefixes (`lib/arvo/…`, `rel/RELEASE.md`, evals).

@@ -56,7 +56,7 @@ Shipping first-class Herdr **pane** tools required Arvo to own sibling terminal 
 Only `run` after `register_pane` succeeds. On register failure or EXIT, close the pane immediately and return a tool error.
 
 ```elixir
-# arvo/lib/arvo/tools/pane.ex — run_in_herdr/6 (pattern)
+# lib/arvo/tools/pane.ex — run_in_herdr/6 (pattern)
 reg =
   try do
     Arvo.Session.register_pane(%{pane_id: pane_id, mode: mode, command: command, start_reaper: false})
@@ -84,7 +84,7 @@ Long-lived reapers still start **after** running-state return (`ensure_pane_reap
 ### 3. Empty process_info is not exited
 
 ```elixir
-# arvo/lib/arvo/herdr.ex
+# lib/arvo/herdr.ex
 def process_exited?(%{foreground_processes: []}), do: false
 
 def process_exited?(%{foreground_processes: procs}) when is_list(procs) do
@@ -103,7 +103,7 @@ Durable notes use `type: "pane_teardown"` with `content` for operators/history, 
 While holding Session, never `GenServer.call` TUI. For pane chrome, push the list:
 
 ```elixir
-# arvo/lib/arvo/session.ex
+# lib/arvo/session.ex
 defp notify_pane_chrome(state) do
   case Process.whereis(Arvo.TUI) do
     pid when is_pid(pid) ->
@@ -115,7 +115,7 @@ end
 ```
 
 ```elixir
-# arvo/lib/arvo/tui.ex
+# lib/arvo/tui.ex
 def handle_cast({:set_live_panes, panes}, state) when is_list(panes) do
   {:noreply, %{state | live_panes: panes}}
 end

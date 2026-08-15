@@ -21,7 +21,7 @@ checklist, repo map.
    MCP in core.
 4. D1 path: Focus default, Session-owned turns, streaming, HEAD/rewind, handoff,
    thin profiles; wake-up checklist.
-5. Tests: `cd arvo && mix test`.
+5. Tests: `mix test`.
 
 ## Wiki pages updated
 

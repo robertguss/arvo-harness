@@ -6,9 +6,8 @@ updated: 2026-07-29
 sources:
   - CONTEXT.md
   - docs/adr/0002-core-speaks-req-llm-types.md
-  - arvo/lib/arvo/providers/
-  - arvo/lib/arvo/auth/
-  - ore/crates/ore-core/src/lib.rs
+  - lib/arvo/providers/
+  - lib/arvo/auth/
 ---
 
 # Providers and auth
@@ -40,5 +39,5 @@ No harness-owned message/chunk behaviour mirroring a second normalizer.
 
 ## Ore
 
-`ore_core::provider`, `ore_core::auth` (Grok device flow, `TokenManager`,
-`AuthStore`). Config via `~/.ore/config.toml` / env (`XAI_API_KEY`).
+Sibling repo [ore-harness](https://github.com/robertguss/ore-harness) has its
+own provider/auth stack. Not in this tree.

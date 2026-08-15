@@ -32,7 +32,7 @@ Fixture-only verification (no network):
 
 ```bash
 python3 evals/harbor_agents/test_attention_metrics.py
-cd arvo && mix test test/arvo/session_audit_test.exs
+mix test test/arvo/session_audit_test.exs
 ```
 
 ## Park / unpark (human)

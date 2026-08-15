@@ -68,7 +68,7 @@ that need a sync put; product and Session paths use cast only.
 ### Product API is cast
 
 ```elixir
-# arvo/lib/arvo/tui.ex — put_tokens/3
+# lib/arvo/tui.ex — put_tokens/3
 def put_tokens(turn, cumulative, window \\ 500_000) do
   # Cast so Session never GenServer.calls TUI while holding Session (AB-BA with slash).
   GenServer.cast(__MODULE__, {:put_tokens, turn, cumulative, window})
@@ -124,8 +124,8 @@ concurrent product paths. Resume already documents the complementary rule;
 Suggested review greps:
 
 ```bash
-rg 'Arvo\.TUI\.' arvo/lib/arvo/session.ex
-rg 'Arvo\.Session\.' arvo/lib/arvo/tui.ex
+rg 'Arvo\.TUI\.' lib/arvo/session.ex
+rg 'Arvo\.Session\.' lib/arvo/tui.ex
 rg 'put_tokens' arvo/
 ```
 

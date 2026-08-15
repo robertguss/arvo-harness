@@ -6,8 +6,8 @@ updated: 2026-07-29
 sources:
   - CONCEPTS.md
   - docs/solutions/logic-errors/herdr-pane-registry-ownership-and-chrome-push.md
-  - arvo/lib/arvo/herdr.ex
-  - arvo/lib/arvo/tools/pane.ex
+  - lib/arvo/herdr.ex
+  - lib/arvo/tools/pane.ex
 ---
 
 # Herdr and panes

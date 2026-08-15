@@ -2,7 +2,7 @@
 title: Wiki index
 type: overview
 tags: [index]
-updated: 2026-07-29
+updated: 2026-08-15
 sources: []
 ---
 
@@ -15,14 +15,14 @@ Schema: [[AGENTS]].
 
 | Page | Summary |
 | ---- | ------- |
-| [[overview]] | Monorepo map, twin products, trust spine, attention, status |
+| [[overview]] | Arvo map, trust spine, attention, status |
 
 ## Entities
 
 | Page | Summary |
 | ---- | ------- |
 | [[entities/arvo]] | Elixir harness product — modules, run, invariants |
-| [[entities/ore]] | Rust harness twin — workspace, crates, evals role |
+| [[entities/ore]] | Rust twin — now a sibling repo |
 | [[entities/session]] | Product turn owner, JSONL, HEAD, handoff, audit |
 | [[entities/progressive-attention]] | Hot/warm/cold, firewall, evidence stream |
 | [[entities/focus-tui]] | Default Focus surface, slash, focus claim |
@@ -30,15 +30,14 @@ Schema: [[AGENTS]].
 | [[entities/tools]] | Model tools (core + pane + recall) |
 | [[entities/providers-auth]] | req_llm, registry, OAuth device flow |
 | [[entities/herdr-panes]] | Workspace chrome, pane registry, pane tools |
-| [[entities/fff]] | Flagship fff-search plugin (Ore + Arvo) |
-| [[entities/evals-harbor]] | Harbor suites, attention metrics, fff jobs |
-| [[entities/beads]] | bd issue tracker, Dolt sync model |
+| [[entities/fff]] | Flagship fff-search plugin |
+| [[entities/evals-harbor]] | Harbor attention suite |
 
 ## Concepts
 
 | Page | Summary |
 | ---- | ------- |
-| [[concepts/harness]] | Shared machinery concept across twins |
+| [[concepts/harness]] | Shared machinery concept |
 | [[concepts/product-turn-head]] | Turn lifecycle, HEAD, cancel-as-fork, handoff |
 | [[concepts/hot-warm-cold]] | Attention layers; wiki vs cold distinction |
 | [[concepts/agent-tile]] | Tile vs Herdr chrome boundary |
@@ -68,8 +67,5 @@ Schema: [[AGENTS]].
 
 ## Not yet ingested (known gaps)
 
-- `SPEC-ore.md` / full Ore spec (if present at monorepo root variants)
-- `docs/plans/*` (attention plan, D1 plan)
-- `ore/README.md` as dedicated source page (content folded into [[entities/ore]])
-- `arvo/rel/RELEASE.md`
+- `rel/RELEASE.md`
 - Deep module map beyond top hubs

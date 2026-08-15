@@ -1,1 +1,1 @@
-"""Custom Harbor agent adapters for this monorepo."""
+"""Custom Harbor agent adapters for Arvo."""

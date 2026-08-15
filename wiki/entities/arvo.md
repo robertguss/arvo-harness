@@ -2,11 +2,10 @@
 title: Arvo
 type: entity
 tags: [arvo, elixir, product]
-updated: 2026-07-29
+updated: 2026-08-15
 sources:
   - README.md
   - CONTEXT.md
-  - arvo/README.md
   - docs/adr/0001-elixir-beam-for-the-harness.md
   - docs/adr/0002-core-speaks-req-llm-types.md
 ---
@@ -16,23 +15,24 @@ sources:
 Elixir/BEAM **coding-agent harness** product. Names the binary/command, user
 global dir `~/.arvo/`, and project dir `.arvo/`.
 
-Twin: [[entities/ore|Ore]] (Rust). Shared concept: [[concepts/harness|harness]].
+Twin: [[entities/ore|Ore]] (Rust, sibling repo
+[ore-harness](https://github.com/robertguss/ore-harness)). Shared concept:
+[[concepts/harness|harness]].
 
 ## Where
 
 | Item | Path |
 | ---- | ---- |
-| Mix project | `arvo/` |
-| Core lib | `arvo/lib/arvo/` |
-| Native FFF search (Arvo side) | `arvo/native/fff_search/`, `arvo/lib/fff/` |
-| Prompts | `arvo/priv/prompts/` |
-| Tests | `arvo/test/` |
-| Release notes | `arvo/rel/RELEASE.md` |
+| Mix project | repo root |
+| Core lib | `lib/arvo/` |
+| Native FFF search | `native/fff_search/`, `lib/fff/` |
+| Prompts | `priv/prompts/` |
+| Tests | `test/` |
+| Release notes | `rel/RELEASE.md` |
 
 ## Run
 
 ```bash
-cd arvo
 export ARVO_CWD="$PWD"   # optional
 bin/arvo                 # or: mix run --no-halt
 mix test
@@ -83,5 +83,5 @@ Races and fixes: [[sources/solution-trust-spine]], [[sources/solution-deadlock]]
 
 ## Tests / evals
 
-- Unit: `cd arvo && mix test`
+- Unit: `mix test`
 - Attention: progressive attention + audit tests; Harbor suite in [[entities/evals-harbor]]

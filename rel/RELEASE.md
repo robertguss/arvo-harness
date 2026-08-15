@@ -10,7 +10,6 @@ Build on the same architecture as the Harbor task image (typically
 `linux/amd64`):
 
 ```bash
-cd arvo
 MIX_ENV=prod mix deps.get --only prod
 MIX_ENV=prod mix compile
 MIX_ENV=prod mix release arvo

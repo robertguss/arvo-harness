@@ -14,15 +14,13 @@ sources: []
 - Normative vocabulary deferred to `CONTEXT.md` / `CONCEPTS.md` (no fork).
 - Sources left in place; wiki points at them.
 - Session / attention / evals stories align across README, CONCEPTS, evals README.
-- Twin products clearly separated (Ore ≠ attention ship path).
+- Ore is a sibling repo; this wiki covers Arvo only.
 
 ## Gaps (ingest later)
 
 | Gap | Severity | Note |
 | --- | -------- | ---- |
-| Specs (`SPEC-ore.md`, any Arvo SPEC) not ingested | Med | Status/claims may lag code |
-| Plans under `docs/plans/` not ingested | Low | Historical design; wiki has ship snapshot only |
-| `ore/README.md` no dedicated source page | Low | Content in [[entities/ore]] |
+| Arvo SPEC not ingested | Med | Status/claims may lag code |
 | `docs/ideation/*` not ingested | Low | Exploratory, not normative |
 | Deep crate/module pages | Out of scope | Top hubs only by design |
 

@@ -1,38 +1,26 @@
 ---
 title: FFF search plugin
 type: entity
-tags: [fff, plugin, search, ore, arvo]
-updated: 2026-07-29
+tags: [fff, plugin, search, arvo]
+updated: 2026-08-15
 sources:
-  - ore/README.md
-  - ore/crates/ore-plugin-fff/
-  - arvo/lib/fff/
+  - lib/fff/
   - evals/README.md
 ---
 
 # FFF (fuzzy file find / search)
 
-Flagship **search** capability for the harness twins.
-
-## Ore
-
-- Crate: `ore/crates/ore-plugin-fff/`
-- InProcess plugin using native **fff-search** engine
-- Registered through Ore plugin catalog / `OrePlugin` host
+Flagship **search** capability.
 
 ## Arvo
 
-- Elixir bindings / plugin surface under `arvo/lib/fff/`
-- Native: `arvo/native/fff_search/` (Rustler / precompiled `.so` under `priv/`)
-- Shipped plugin example under `arvo/plugins/fff/`
+- Elixir bindings / plugin surface under `lib/fff/`
+- Native: `native/fff_search/` (Rustler / precompiled `.so` under `priv/`)
+- Shipped plugin example under `plugins/fff/`
 
-## Evals
-
-Harbor Ore suites exercise fff behaviors (locate, gitignore, prefer-plugin,
-fuzzy path) via `evals/harbor_agents/ore_agent.py` and jobs under
-`evals/jobs-config/ore-fff-*.json`. See [[entities/evals-harbor]].
+Ore's `ore-plugin-fff` crate lives in
+[ore-harness](https://github.com/robertguss/ore-harness).
 
 ## Relation
 
-Extension vehicle: [[entities/profiles-plugins]]. Product: [[entities/ore]],
-[[entities/arvo]].
+Extension vehicle: [[entities/profiles-plugins]]. Product: [[entities/arvo]].

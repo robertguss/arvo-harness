@@ -54,16 +54,16 @@ class ArvoAgent(BaseAgent):
 
     @staticmethod
     def _default_release_path() -> Path:
-        # Monorepo default after `cd arvo && MIX_ENV=prod mix release arvo`
+        # Repo-root default after `MIX_ENV=prod mix release arvo`
         repo = Path(__file__).resolve().parents[2]
         candidates = sorted(
-            (repo / "arvo" / "_build" / "prod").glob("arvo-*.tar.gz"),
+            (repo / "_build" / "prod").glob("arvo-*.tar.gz"),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
         if candidates:
             return candidates[0]
-        return repo / "arvo" / "_build" / "prod" / "arvo-0.1.0.tar.gz"
+        return repo / "_build" / "prod" / "arvo-0.1.0.tar.gz"
 
     @staticmethod
     def _normalize_attention(value: str | int | bool | None) -> str:
@@ -94,7 +94,7 @@ class ArvoAgent(BaseAgent):
         if not host_release.is_file():
             raise FileNotFoundError(
                 f"Arvo release tarball not found at {host_release}. "
-                "Build with: cd arvo && MIX_ENV=prod mix release arvo "
+                "Build with: MIX_ENV=prod mix release arvo "
                 "(sets ARVO_RELEASE to the tar.gz path if non-default)."
             )
 

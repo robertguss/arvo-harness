@@ -5,8 +5,8 @@ tags: [tools, arvo, ore]
 updated: 2026-07-29
 sources:
   - CONTEXT.md
-  - arvo/lib/arvo/tool.ex
-  - arvo/lib/arvo/tools/
+  - lib/arvo/tool.ex
+  - lib/arvo/tools/
 ---
 
 # Tools

@@ -1,18 +1,17 @@
+# Mix
+/_build/
+/cover/
+/deps/
+/doc/
+/tmp/
+erl_crash.dump
+*.ez
+arvo-*.tar
 
-# Beads / Dolt files (added by bd init)
-.dolt/
-*.db
-.beads-credential-key
-.beads/proxieddb/
+# Rustler / native FFF
+/native/*/target
+/priv/native/*.so
 
-# bv (beads viewer) local config and caches
-.bv/
-
-# Rust (ore workspace)
-ore/target/
-**/*.rs.bk
-
-
-# Harbor run artifacts (local)
+# Harbor
 evals/jobs/
 evals/**/__pycache__/

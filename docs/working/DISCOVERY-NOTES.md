@@ -1,6 +1,7 @@
 # Living notes — Arvo / BEAM research program
 
 **Blueprint (2026-08-14):** [`docs/00-program-blueprint.md`](../00-program-blueprint.md) — accepted at `0b49540`.
+**Charter (2026-08-15):** [`docs/01-research-charter.md`](../01-research-charter.md) — human accepted; accepting commit not yet recorded.
 
 - **Repo:** [robertguss/arvo-beam-harness-research](https://github.com/robertguss/arvo-beam-harness-research)
 - **Status:** Working notes. **Not** an accepted Blueprint or Charter.

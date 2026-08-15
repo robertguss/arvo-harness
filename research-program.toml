@@ -70,12 +70,12 @@ accepted_commit = "636123f1a628803aa4ae2c44fc4659d167a80693"
 id = "leftovers"
 kind = "independent"
 name = "Paper leftovers"
-status = "awaiting-validation"
+status = "accepted"
 prompt = "docs/prompts/11-leftovers-research-prompt.md"
 depends_on = ["charter"]
 outputs = ["docs/reports/11-leftovers-research-report.md"]
 recommendation_range = "REC-100..REC-199"
-accepted_commit = ""
+accepted_commit = "9698362dbe5f90ff48e7aa1093d547d2e14d410a"
 
 [[stages]]
 id = "score-harness"

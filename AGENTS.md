@@ -45,6 +45,23 @@ Charter, accepted specs/plans) outside a commissioned revision stage.
 - Bounded spikes when load-bearing claims are testable.
 - No popularity-as-proof; no silent recommendation loss.
 
+## Exa (current research)
+
+When a stage requires current primary-source research, call Exa over
+**REST**. That is the working path. Do not use the Exa MCP server.
+
+- Key: `EXA_API_KEY` in gitignored `.env`. Load it; never print it or
+  write it into an artifact.
+- Ordinary lookup: `POST https://api.exa.ai/search` with `type` `auto`
+  or `fast`.
+- Deep research: same endpoint, `type` `deep` or `deep-reasoning`.
+- Multi-step Agent: `POST https://api.exa.ai/agent/runs`, then poll
+  `GET https://api.exa.ai/agent/runs/{id}` (`effort` `high` / `xhigh`
+  when the question is load-bearing).
+- Exa is retrieval. Open the cited primary URL and classify that page.
+  If the key is missing or the call fails, say so in Methodology and
+  continue with built-in search. Do not pretend Exa ran.
+
 ## Skills
 
 Portable skills live under `.agents/skills/`:

@@ -2,23 +2,23 @@
 
 - **Artifact type:** Adversarial review
 - **Program:** arvo-beam-harness-research
-- **Status:** Proposed — pending independent validation
-- **Human acceptance:** Accepted by human 2026-08-15 — awaiting accepting commit
+- **Status:** Accepted
+- **Human acceptance:** Accepted by human 2026-08-15
 - **Version:** 0.1
 - **Created:** 2026-08-15
 - **Last updated:** 2026-08-15
 - **Subject:** [`docs/specifications/01-definitive-specification.md`](../specifications/01-definitive-specification.md)
 - **Subject accepting commit:** `26bd0e4070ef822bdcd5c69d5f57a2a80131176f`
-- **Accepting commit:** *(empty — awaiting recording commit)*
+- **Accepting commit:** `e00ee9c5e79adffd93c13ce2a03b92517a6b8c26`
 - **Finding range:** `FND-001`…`FND-003` (allocated `FND-001`…`FND-199`)
 - **Depends on:** Proposed definitive specification (not implementation authority)
 
-> This file is the proposed specification review. Findings are
+> This file is the accepted specification review. Findings are
 > proposed corrections, not commandments. They do not become `REQ`s
 > until a later revision stage dispositions them. Robert accepted this
-> draft on 2026-08-15. Independent validation passed. Spec-review is
-> not `accepted` in `research-program.toml` until the accepting
-> commit is recorded.
+> draft on 2026-08-15. Spec-review is `accepted` in
+> `research-program.toml` at the commit above. Spec-revision is the
+> next stage, in a fresh session.
 
 ## 1. Artifact Metadata
 
@@ -31,9 +31,9 @@
 | Subject | [`docs/specifications/01-definitive-specification.md`](../specifications/01-definitive-specification.md) |
 | Subject status | Proposed — pending adversarial review. Not implementation authority. |
 | Subject accepting commit | `26bd0e4070ef822bdcd5c69d5f57a2a80131176f` (human-accepted as synthesis output on 2026-08-15) |
-| Human acceptance | Accepted by human 2026-08-15 — awaiting accepting commit |
-| Review accepting commit | *(empty — awaiting recording commit)* |
-| Review status | Proposed — pending independent validation |
+| Human acceptance | Accepted by human 2026-08-15 |
+| Review accepting commit | `e00ee9c5e79adffd93c13ce2a03b92517a6b8c26` |
+| Review status | Accepted |
 | Finding range used | `FND-001`…`FND-003` |
 | Date | 2026-08-15 |
 | Contract | [`program/contracts/adversarial-review.md`](../../program/contracts/adversarial-review.md) |
@@ -669,7 +669,7 @@ spec-revision in a **fresh** session. Do not start it here.
 - [x] Review exists at
       `docs/reviews/01-specification-adversarial-review.md`
 - [x] All 7 numbered headings present and filled
-- [x] Status: `Proposed — pending independent validation`
+- [x] Status: `Accepted` (was `Proposed — pending independent validation` at write time)
 - [x] Attacks attempted table covers every required attack
 - [x] Findings use `FND-001`…`FND-199` only; sequential; all
       template fields filled
@@ -689,4 +689,4 @@ spec-revision in a **fresh** session. Do not start it here.
       not this file)*
 - [x] Human accepts review
 - [x] Independent validation passed
-- [ ] Manifest updated; accepting commit recorded
+- [x] Manifest updated; accepting commit recorded

@@ -103,11 +103,12 @@ accepted_commit = "26bd0e4070ef822bdcd5c69d5f57a2a80131176f"
 id = "spec-review"
 kind = "adversarial-review"
 name = "Specification Adversarial Review"
-status = "awaiting-validation"
+status = "accepted"
 prompt = "docs/prompts/14-specification-adversarial-review-prompt.md"
 outputs = ["docs/reviews/01-specification-adversarial-review.md"]
 depends_on = ["synthesis"]
 finding_range = "FND-001..FND-199"
+accepted_commit = "e00ee9c5e79adffd93c13ce2a03b92517a6b8c26"
 
 [[stages]]
 id = "spec-revision"

@@ -422,11 +422,14 @@ def ship_score(
     tool_results_n: int | None = None,
     expected_treatment: str | None = None,
     b_full_off: int | None = None,
+    require_stub_reuse_on: bool = True,
 ) -> dict[str, Any]:
     """Ship-ready score bundle for one trial.
 
     Reward (pass) requires task_ok + treatment-aware honesty.
-    When expected_treatment is on: also require stub or reuse signal.
+    When expected_treatment is on: also require stub or reuse signal, unless
+    require_stub_reuse_on=False (control tasks whose tool outputs all sit
+    below the stub threshold legitimately produce zero stubs).
     When expected_treatment is off: require zero stubs and ≥1 full_hot if tools ran.
     Optional b_full_off enables waste_ratio when paired off baseline known.
     """
@@ -470,7 +473,12 @@ def ship_score(
         reasons.append("honesty_failed")
     if mode is None:
         reasons.append("no_treatment")
-    if expected_treatment == "on" and honesty_ok and stub_reuse_signal < 1:
+    if (
+        require_stub_reuse_on
+        and expected_treatment == "on"
+        and honesty_ok
+        and stub_reuse_signal < 1
+    ):
         reasons.append("missing_stub_or_reuse")
         honesty_ok = False  # AE1 second-read signal required for on ship task
     if expected_treatment == "off" and honesty_ok and m["stub_in_hot"] > 0:

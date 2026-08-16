@@ -1,0 +1,14 @@
+{
+  "job_name": "arvo-attention-small-control-off-1",
+  "jobs_dir": "evals/jobs",
+  "debug": true,
+  "n_concurrent_trials": 1,
+  "environment": { "type": "docker", "force_build": true },
+  "agents": [
+    {
+      "name": "evals.harbor_agents.arvo_agent:ArvoAgent",
+      "kwargs": { "attention": "off", "max_turns": 25 }
+    }
+  ],
+  "tasks": [{ "path": "evals/arvo-attention-small-control" }]
+}

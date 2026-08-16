@@ -22,6 +22,13 @@ Harbor attention evals: `evals/README.md`. Mix release packaging:
 - Decisions → `docs/adr/`
 - Bug learnings → `docs/solutions/`
 
+## Research program
+
+The BEAM-harness research program (hypothesis catalog, decisions, measured
+results) lives under `research/`. `research/AGENTS.md` governs that subtree;
+eval results land in `research/docs/working/RESULTS.md`. Its portable skills
+sit in `research/.agents/skills/` and are not auto-loaded from the repo root.
+
 ## LLM wiki
 
 Compiled knowledge under `wiki/`. Schema: `wiki/AGENTS.md`. Start at

@@ -14,6 +14,7 @@ Arvo product trail.
 | ---- | ---------- | -------------- |
 | `arvo-attention-reread` | Large re-read + rename edit under attention **on** vs **off** | `task_ok` + treatment-aware **honesty** + on: stub/reuse signal; off: full_hot identity |
 | `arvo-attention-small-control` | Tiny files + quick rename edit; every output below the stub threshold (does attention tax simple work?) | `task_ok` + treatment-aware **honesty** with `require_stub_reuse_on=False` (zero stubs is the honest outcome) |
+| `arvo-attention-needle-junk` | One small relevant file among three ~95 KB archives the agent must read (does the firewall select, not just compress?) | `task_ok` (ParserFixed rename + archives intact) + treatment-aware **honesty**, default stub/reuse gate; `max_turns` 40 both arms |
 
 **Ship metrics (KTD-M1)** from committed audit events:
 
@@ -30,6 +31,15 @@ verifies `small_module.ex` has `defmodule SmallFixed do` + `PAYLOAD_TOKEN_2b8e4d
 and waives the stub/reuse requirement (`require_stub_reuse_on=False`): its
 outputs all sit below the stub threshold, and its waste_ratio should read
 ~1.0, not < 1.0.
+
+Needle-junk verifies `parser_rules.ex` has `defmodule ParserFixed do` +
+`PAYLOAD_TOKEN_9d4e2f` and that the three archives keep their declarations and
+markers. Distractor sizing matters: first reads ride the 80 KB
+fidelity-exception budget into hot context and read chunks cap at 50 KB, so
+junk must be sized ~95 KB per file for its chunks to overflow the budget and
+stub (rationale in `evals/arvo-attention-needle-junk/tools/gen_workspace.py`).
+Its verifier also copies the scored `*.audit.jsonl` into `/logs/verifier/`
+for per-event forensics.
 
 **Unit baselines (no Harbor network):**
 

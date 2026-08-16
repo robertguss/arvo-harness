@@ -1,0 +1,11 @@
+# Local secrets — never commit
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

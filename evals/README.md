@@ -39,14 +39,30 @@ python3 -m pytest evals/harbor_agents/test_attention_metrics.py -q
 # 1) Build arch-matching Mix release (KTD-D1)
 MIX_ENV=prod mix release arvo
 # tarball: _build/prod/arvo-*.tar.gz  (or set ARVO_RELEASE)
+# Arch-matching means the TASK IMAGE (Linux), not the host. On macOS build in
+# a container (verified 2026-08-15):
+#   mkdir -p _build/linux-release
+#   docker run --rm -v "$PWD":/src:ro -v "$PWD/_build/linux-release":/out \
+#     -v "$PWD/rel/docker-build-release.sh":/build.sh:ro \
+#     hexpm/elixir:1.20.2-erlang-29.0.3-ubuntu-noble-20260610 bash /build.sh
+#   export ARVO_RELEASE=$PWD/_build/linux-release/arvo-0.1.0.tar.gz
 
 # 2) Oracle (task edit only; no attention honesty)
 export PYTHONPATH=$PWD${PYTHONPATH:+:$PYTHONPATH}
+# pipx-installed harbor IGNORES PYTHONPATH (its shim runs `python -E`).
+# One-time fix per install:
+#   echo "$PWD" > ~/.local/pipx/venvs/harbor/lib/python*/site-packages/arvo-evals.pth
 harbor run -c evals/jobs-config/arvo-attention-reread-oracle.json -y
 
-# 3) Attention on / off (needs XAI_API_KEY)
+# 3) Attention on / off — XAI_API_KEY, or Grok OAuth (subscription)
 harbor run -c evals/jobs-config/arvo-attention-reread-on.json -y --ae XAI_API_KEY
 harbor run -c evals/jobs-config/arvo-attention-reread-off.json -y --ae XAI_API_KEY
+# OAuth path (no API key): refresh + write an access-token-only store copy,
+# then point the adapter at it. The container gets a ~6h access card, never
+# the refresh token.
+#   mix run --no-start evals/refresh_eval_auth.exs
+#   ARVO_AUTH_FILE=/tmp/arvo-eval-auth.json harbor run \
+#     -c evals/jobs-config/arvo-attention-reread-on.json -y
 ```
 
 Compare `/logs/verifier/attention-metrics.json` (or job artifacts) for `b_full`
@@ -92,7 +108,7 @@ Pure helpers:
 
 ```bash
 MIX_ENV=prod mix release arvo
-# XAI_API_KEY for live agent trials
+# XAI_API_KEY or Grok OAuth store copy (ARVO_AUTH_FILE) for live agent trials
 ```
 
 ## Run patterns

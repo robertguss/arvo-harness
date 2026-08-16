@@ -1,7 +1,10 @@
 """Harbor adapter: install Arvo Mix release tarball and run `arvo-chat`.
 
 Translates Harbor instruction → headless Arvo product path (KTD-D1 / KTD-H1).
-Does **not** use the Ore single-binary packaging shape. Credentials from env only.
+Does **not** use the Ore single-binary packaging shape. Credentials: XAI_API_KEY
+env, or an Arvo auth store file (Grok OAuth) uploaded into the container's
+isolated HOME (`auth_file` kwarg / ARVO_AUTH_FILE env). Point it at a copy with
+the refresh token stripped: the container gets an access card, not the wallet.
 """
 
 from __future__ import annotations
@@ -31,10 +34,14 @@ class ArvoAgent(BaseAgent):
         attention: str | None = None,
         agent_timeout_sec: float | None = None,
         max_turns: int | None = None,
+        auth_file: str | None = None,
         *args,
         **kwargs,
     ):
         super().__init__(logs_dir, model_name=model_name, *args, **kwargs)
+        auth_file = auth_file or os.environ.get("ARVO_AUTH_FILE")
+        self._auth_file_host: Path | None = Path(auth_file) if auth_file else None
+        self._oauth_uploaded = False
         self._arvo_release_host = Path(
             arvo_release
             or os.environ.get("ARVO_RELEASE")
@@ -135,8 +142,26 @@ class ArvoAgent(BaseAgent):
             user="root",
         )
 
+        if self._auth_file_host is not None:
+            if not self._auth_file_host.is_file():
+                raise FileNotFoundError(
+                    f"Arvo auth store not found at {self._auth_file_host} "
+                    "(auth_file kwarg / ARVO_AUTH_FILE env)."
+                )
+            await environment.upload_file(
+                source_path=self._auth_file_host,
+                target_path="/home/agent/.arvo/auth.json",
+            )
+            await environment.exec(
+                command="chmod 644 /home/agent/.arvo/auth.json",
+                user="root",
+            )
+            self._oauth_uploaded = True
+
         if self._api_key():
             (self.logs_dir / "auth-mode.txt").write_text("XAI_API_KEY\n")
+        elif self._oauth_uploaded:
+            (self.logs_dir / "auth-mode.txt").write_text("oauth-store\n")
         else:
             (self.logs_dir / "auth-mode.txt").write_text("none\n")
 
@@ -165,10 +190,11 @@ class ArvoAgent(BaseAgent):
         context: AgentContext,
     ) -> None:
         key = self._api_key()
-        if not key:
+        if not key and not self._oauth_uploaded:
             raise RuntimeError(
-                "No credentials: set XAI_API_KEY "
-                "(harbor run --ae XAI_API_KEY) for Arvo agent trials."
+                "No credentials: set XAI_API_KEY (harbor run --ae XAI_API_KEY) "
+                "or point auth_file kwarg / ARVO_AUTH_FILE env at an Arvo auth "
+                "store copy for Arvo agent trials."
             )
 
         # Upload prompt file so multi-line instruction stays out of fragile argv.
@@ -195,8 +221,9 @@ class ArvoAgent(BaseAgent):
             "ARVO_MODE": "chat",
             "ARVO_CWD": "/app",
             "ARVO_PROGRESSIVE_ATTENTION": attn_env,
-            "XAI_API_KEY": key,
         }
+        if key:
+            model_env["XAI_API_KEY"] = key
 
         timeout = self._agent_timeout_sec
         timeout_arg = str(timeout if timeout is not None else 600)
@@ -232,6 +259,7 @@ class ArvoAgent(BaseAgent):
             "entrypoint": "arvo-chat",
             "exit_code": result.return_code,
             "attention": self._attention,
+            "auth_mode": "api-key" if key else "oauth-store",
             "stdout_chars": len(stdout),
             "stderr_chars": len(stderr),
             "model": self.model_name,

@@ -13,6 +13,7 @@ Arvo product trail.
 | Task | Capability | Primary reward |
 | ---- | ---------- | -------------- |
 | `arvo-attention-reread` | Large re-read + rename edit under attention **on** vs **off** | `task_ok` + treatment-aware **honesty** + on: stub/reuse signal; off: full_hot identity |
+| `arvo-attention-small-control` | Tiny files + quick rename edit; every output below the stub threshold (does attention tax simple work?) | `task_ok` + treatment-aware **honesty** with `require_stub_reuse_on=False` (zero stubs is the honest outcome) |
 
 **Ship metrics (KTD-M1)** from committed audit events:
 
@@ -23,6 +24,12 @@ Arvo product trail.
 | Task success | `big_module.ex` has `defmodule BigFixed do` + `PAYLOAD_TOKEN_7f3a9c` |
 | Stub/reuse (on) | `N_stub + N_reuse ≥ 1` |
 | Hot waste (paired) | `waste_ratio = B_full_on / max(B_full_off, 1) < 1.0` (compare on/off job metrics JSON) |
+
+Task success and stub/reuse rows above are reread-specific. The control task
+verifies `small_module.ex` has `defmodule SmallFixed do` + `PAYLOAD_TOKEN_2b8e4d`
+and waives the stub/reuse requirement (`require_stub_reuse_on=False`): its
+outputs all sit below the stub threshold, and its waste_ratio should read
+~1.0, not < 1.0.
 
 **Unit baselines (no Harbor network):**
 

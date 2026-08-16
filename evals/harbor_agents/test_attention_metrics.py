@@ -110,6 +110,25 @@ def test_ship_score_on_requires_stub_or_reuse():
     assert "missing_stub_or_reuse" in s["reasons"]
 
 
+def test_ship_score_on_control_waives_stub_requirement():
+    # Control task: every output below stub threshold, so full_hot-only is honest
+    events = [
+        {"type": "session_treatment", "attention_mode": "on", "committed": "committed"},
+        {"type": "full_hot", "size": 600, "reason_class": "small", "committed": "committed"},
+        {"type": "full_hot", "size": 400, "reason_class": "small", "committed": "committed"},
+    ]
+    s = ship_score(
+        events,
+        task_ok=True,
+        tool_results_n=2,
+        expected_treatment="on",
+        require_stub_reuse_on=False,
+    )
+    assert s["pass"] is True
+    assert s["metrics"]["stub_in_hot"] == 0
+    assert "missing_stub_or_reuse" not in s["reasons"]
+
+
 def test_ship_score_on_happy():
     events = [
         {"type": "session_treatment", "attention_mode": "on", "committed": "committed"},

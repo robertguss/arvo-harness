@@ -1,0 +1,9 @@
+{
+  "job_name": "arvo-attention-needle-junk-oracle-1",
+  "jobs_dir": "evals/jobs",
+  "debug": true,
+  "n_concurrent_trials": 1,
+  "environment": { "type": "docker", "force_build": true },
+  "agents": [{ "name": "oracle" }],
+  "tasks": [{ "path": "evals/arvo-attention-needle-junk" }]
+}

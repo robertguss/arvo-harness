@@ -14,6 +14,9 @@ Arvo product trail.
 | ---- | ---------- | -------------- |
 | `arvo-attention-reread` | Large re-read + rename edit under attention **on** vs **off** | `task_ok` + treatment-aware **honesty** + on: stub/reuse signal; off: full_hot identity |
 | `arvo-attention-small-control` | Tiny files + quick rename edit; every output below the stub threshold (does attention tax simple work?) | `task_ok` + treatment-aware **honesty** with `require_stub_reuse_on=False` (zero stubs is the honest outcome) |
+| `arvo-attention-needle-junk` | One small relevant file among three ~95 KB archives the agent must read (does the firewall select, not just compress?) | `task_ok` (ParserFixed rename + archives intact) + treatment-aware **honesty**, default stub/reuse gate; `max_turns` 40 both arms |
+| `arvo-attention-multifile` | Rename across three ~12 KB cross-referencing files with a mandated full re-read before each edit (does the cold shelf get reused instead of re-read?) | `task_ok` (unit_rate rename in all three files) + treatment-aware **honesty**; reuse_cold counts toward the stub/reuse gate |
+| `arvo-attention-stranding-trap` | The required fact sits ~6.9 KB deep in an ~11.6 KB bash report — past the 400-byte stub preview, under the 16 KB expand cap; non-read tools get no fidelity exception so the report always stubs on-arm (does attention strand the agent?) | `task_ok` (SensorRelay rename from the report + script intact) + treatment-aware **honesty**; expand counts land in metrics, not reward |
 
 **Ship metrics (KTD-M1)** from committed audit events:
 
@@ -30,6 +33,23 @@ verifies `small_module.ex` has `defmodule SmallFixed do` + `PAYLOAD_TOKEN_2b8e4d
 and waives the stub/reuse requirement (`require_stub_reuse_on=False`): its
 outputs all sit below the stub threshold, and its waste_ratio should read
 ~1.0, not < 1.0.
+
+Needle-junk verifies `parser_rules.ex` has `defmodule ParserFixed do` +
+`PAYLOAD_TOKEN_9d4e2f` and that the three archives keep their declarations and
+markers. Distractor sizing matters: first reads ride the 80 KB
+fidelity-exception budget into hot context and read chunks cap at 50 KB, so
+junk must be sized ~95 KB per file for its chunks to overflow the budget and
+stub (rationale in `evals/arvo-attention-needle-junk/tools/gen_workspace.py`).
+Its verifier also copies the scored `*.audit.jsonl` into `/logs/verifier/`
+for per-event forensics.
+
+Stranding-trap exploits the other stubbing path: only `read` results earn
+fidelity exceptions, so a >4 KB **bash** result stubs deterministically on-arm
+with no budget-overflow sizing needed. The approved name is rot13-encoded in
+`build_report.sh` (no workspace grep leaks it) and published only in the
+report output; the instruction mandates the exact unfiltered command so a
+`| grep` pipe cannot shrink the result below the stub threshold. When the
+trap fires, recovery requires `RecallEvidence` on the cold id.
 
 **Unit baselines (no Harbor network):**
 

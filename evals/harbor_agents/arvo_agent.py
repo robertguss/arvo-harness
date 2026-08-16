@@ -177,6 +177,16 @@ class ArvoAgent(BaseAgent):
             f"stderr:\n{smoke.stderr or ''}\n"
             f"attention={self._attention}\n"
         )
+        # `--help || true` masks exec failures; catch wrong-arch tarballs here
+        # instead of burning a live trial on exit 126 (the macho-fail trap).
+        smoke_text = f"{smoke.stdout or ''}\n{smoke.stderr or ''}"
+        if "Exec format error" in smoke_text:
+            raise RuntimeError(
+                f"arvo-chat cannot execute in the task image: release "
+                f"{host_release} is built for the wrong OS/arch. Build the "
+                "Linux release (rel/docker-build-release.sh) and set "
+                "ARVO_RELEASE to the linux tarball."
+            )
         if smoke.return_code != 0:
             raise RuntimeError(
                 f"arvo-chat not executable after install (exit {smoke.return_code})"

@@ -15,6 +15,7 @@ Arvo product trail.
 | `arvo-attention-reread` | Large re-read + rename edit under attention **on** vs **off** | `task_ok` + treatment-aware **honesty** + on: stub/reuse signal; off: full_hot identity |
 | `arvo-attention-small-control` | Tiny files + quick rename edit; every output below the stub threshold (does attention tax simple work?) | `task_ok` + treatment-aware **honesty** with `require_stub_reuse_on=False` (zero stubs is the honest outcome) |
 | `arvo-attention-needle-junk` | One small relevant file among three ~95 KB archives the agent must read (does the firewall select, not just compress?) | `task_ok` (ParserFixed rename + archives intact) + treatment-aware **honesty**, default stub/reuse gate; `max_turns` 40 both arms |
+| `arvo-attention-multifile` | Rename across three ~12 KB cross-referencing files with a mandated full re-read before each edit (does the cold shelf get reused instead of re-read?) | `task_ok` (unit_rate rename in all three files) + treatment-aware **honesty**; reuse_cold counts toward the stub/reuse gate |
 
 **Ship metrics (KTD-M1)** from committed audit events:
 

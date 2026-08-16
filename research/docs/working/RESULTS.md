@@ -4,6 +4,57 @@ Running log of live eval results. Numbers only count if the run is
 reproducible from this repo (see `evals/README.md` at the repo root; results
 and the code that produced them now version together). Newest first.
 
+## R-004 - 2026-08-16 - Multifile: every unchanged re-read served from the cold shelf (n=5 pairs)
+
+**Setup.** Task `arvo-attention-multifile` (rename `Pricing.rate/1` to
+`unit_rate/1` across three ~12 KB cross-referencing files; the instruction
+mandates a full re-read of each file immediately before editing it). Files
+sized above the 4 KB stub threshold, inside a single 50 KB read chunk (so the
+re-read digest matches), and 36 KB total, deliberately under the 80 KB
+exception budget so this task isolates the reuse mechanism from the
+budget-overflow stubbing R-003 measured. Same rig as R-001..R-003, model
+`xai:grok-4.5`, `max_turns` 25, default honesty gate (reuse counts toward
+the stub/reuse signal). Harness release from `main` @ `8d45403`; task +
+configs @ `08f6bf4`. Jobs:
+`evals/jobs/arvo-attention-multifile-{oracle-1,on-1,on-rep,off-1,off-rep}`.
+
+**Result.** All 10 trials passed task + honesty checks. Prediction (reuse ≈ 3
+per ON run, hot bytes ≈ half of OFF, task success equal) held exactly.
+
+| Metric | Attention ON (n=5) | Attention OFF (n=5) |
+|---|---|---|
+| hot bytes (b_full) | 36,392 (all five identical) | 72,443 (all five identical) |
+| task success | 5/5 | 5/5 |
+| honesty | 5/5 | 5/5 |
+| reuse_cold / same_path_reinvoke | 3 / 3 every run | 0 / 0 |
+| stubs in hot (demoted re-reads) | 3 | 0 |
+| expands / denied | 0 / 0 | 0 / 0 |
+| agent wall clock | 22.4-24.4 s (mean 23.3) | 22.0-35.2 s (mean 25.5) |
+
+- Ratio of means: **0.502** (worst case identical: the runs are byte-for-byte
+  deterministic within each arm; grok took the same tool path all ten times).
+- **Reuse answer: yes.** Every mandated pre-edit re-read of an unchanged file
+  was served from the cold shelf as a ~450-byte receipt instead of a 12 KB
+  re-ingest, in all five ON runs, and the edits still landed correctly from
+  the first read held in context.
+- The 0.502 ratio is by construction (the instruction makes both arms read
+  everything exactly twice); the finding is reuse 3/3 at zero task cost, not
+  the ratio itself.
+- Wall clock: no penalty (ON sat slightly leaner; ranges overlap).
+
+**Scope honesty.** The re-reads are instruction-forced, so this measures the
+mechanism (an unchanged same-path re-read gets served cold), not how often
+real work re-reads. Within-arm determinism means the five pairs sample one
+tool path five times; n=5 here confirms stability, not variance.
+
+**Build notes.** Oracle passed first try (21 s); zero burned live trials.
+Design constraints that made reuse observable, from `lib/arvo/attention.ex`:
+reuse demotion needs the result above the stub threshold (small results stay
+full-hot on re-read by design), an unchanged digest (so files must fit one
+read chunk), and an unedited path. Post-edit re-reads were explicitly
+forbidden in the instruction: an edited path re-read stubs by design (its
+fidelity window is gone) and would bait expands.
+
 ## R-003 - 2026-08-16 - Needle-junk: junk beyond the exception budget never reaches hot context (n=5 pairs)
 
 **Setup.** Task `arvo-attention-needle-junk` (one 571-byte parser file needing

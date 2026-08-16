@@ -4,6 +4,70 @@ Running log of live eval results. Numbers only count if the run is
 reproducible from this repo (see `evals/README.md` at the repo root; results
 and the code that produced them now version together). Newest first.
 
+## R-005 - 2026-08-16 - Stranding trap: a fully-buried fact is recovered by expand every time, at ~2 s cost (n=5 pairs)
+
+**Setup.** Task `arvo-attention-stranding-trap` (rename a module to a name
+published only inside an ~11.6 KB deterministic bash report, at byte offset
+~6,950 — past the 400-byte stub preview, under the 16 KB expand cap). Bash
+results get no fidelity exception (only `read` does), so under attention-on
+the report always stubs regardless of budget: the needed fact is invisible
+until the agent recalls the cold body. The name is rot13-encoded in the
+generator script so no workspace grep leaks it, and the instruction mandates
+running the exact report command with no filter pipes (a `| grep` would
+produce a tiny full-hot result and bypass the trap in both arms). Same rig as
+R-001..R-004, model `xai:grok-4.5`, `max_turns` 25, default honesty gate.
+Harness release from `main` @ `8d45403`; task + configs @ `89e5237`. Jobs:
+`evals/jobs/arvo-attention-stranding-trap-{oracle-1,on-1,on-rep,off-1,off-rep}`.
+
+**Result.** All 10 trials passed task + honesty checks. Prediction (stub every
+ON run, recovery via expand, task success equal) held; the open question was
+whether the model would strand, and it never did.
+
+| Metric | Attention ON (n=5) | Attention OFF (n=5) |
+|---|---|---|
+| hot bytes (b_full) | 679 (all five identical) | 12,279 (all five identical) |
+| expanded bytes (recalled cold bodies) | 11,600 every run | 0 |
+| task success | 5/5 | 5/5 |
+| honesty | 5/5 | 5/5 |
+| stubs in hot | 1 (the report) | 0 |
+| expands / denied | 1 / 0 every run | 0 / 0 |
+| tool results | 8 | 6 |
+| agent wall clock | 13.1-14.8 s (mean 13.7) | 11.2-12.1 s (mean 11.8) |
+
+- **Stranding answer: no.** In all five ON runs the model hit the stub,
+  issued one `RecallEvidence` call with the cold id on the first attempt,
+  got the full 11,600-byte body (under the 16 KB cap, so never denied), and
+  completed the rename. Audit forensics confirm the mandated path exactly:
+  bash report (stubbed) → read needle file → expand → edit; the generator
+  script source was never read.
+- **Do not read b_full alone here.** ON's 679 vs OFF's 12,279 looks like an
+  18x saving, but the expand pushed the full 11,600-byte body into hot
+  context: total prompt-visible bytes are 12,279 in both arms — identical by
+  design, because this task makes the whole stubbed body necessary. The
+  firewall's deferral won nothing and lost nothing on bytes; what it bought
+  was the *option* to skip the body, which this task deliberately removes.
+- Cost of the stub-then-recall round trip: +2 tool results and ~+2 s wall
+  (mean 13.7 vs 11.8 s, ranges nearly disjoint) — one extra model turn.
+  That is the measured price of attention when the gamble loses.
+
+**Scope honesty.** The body fits under the 16 KB expand cap, so one recall
+suffices; the harder variants — a body over the cap needing sliced recalls,
+or several facts scattered across multiple stubbed bodies — are untested.
+Within-arm determinism again: five pairs sample one tool path five times
+(stability, not variance). And the trap has a known residual bypass: a model
+could read the tiny script and rot13-decode the name, violating the
+instruction; grok never tried, but the design leans on instruction-following
+rather than making the bypass impossible.
+
+**Build notes.** Oracle passed first try (21 s); zero burned live trials —
+first task in the suite to go clean end to end. Design keys, from
+`lib/arvo/attention/policy.ex` and `lib/arvo/tools/bash.ex`: non-read tools
+never get fidelity exceptions, so a >4 KB bash result stubs deterministically
+(no ~95 KB budget-overflow sizing needed, unlike R-003); and bash output under
+100 KB arrives untruncated, keeping the report deterministic. Fact placement
+window: past the 400-byte preview, under the 16 KB cap — sized ~11.6 KB total
+with the fact at ~6.9 KB.
+
 ## R-004 - 2026-08-16 - Multifile: every unchanged re-read served from the cold shelf (n=5 pairs)
 
 **Setup.** Task `arvo-attention-multifile` (rename `Pricing.rate/1` to

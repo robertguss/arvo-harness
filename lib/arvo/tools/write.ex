@@ -1,7 +1,6 @@
 defmodule Arvo.Tools.Write do
   @moduledoc "Write a file, creating parent directories (SPEC §3)."
 
-
   use Jido.Action,
     name: "write",
     description: "Write content to a file. Creates parent directories if needed.",
@@ -18,26 +17,22 @@ defmodule Arvo.Tools.Write do
 
   @impl Jido.Action
   def run(params, ctx) do
-    path = resolve_path(params[:path] || params["path"], ctx)
     content = params[:content] || params["content"] || ""
 
-    parent = Path.dirname(path)
+    case Arvo.Isolation.resolve_tool_path(params[:path] || params["path"], ctx) do
+      {:error, msg} ->
+        {:error, msg}
 
-    with :ok <- File.mkdir_p(parent),
-         :ok <- File.write(path, content) do
-      {:ok, "Wrote #{byte_size(content)} bytes to #{path}"}
-    else
-      {:error, reason} ->
-        {:error, "Failed to write #{path}: #{inspect(reason)}"}
-    end
-  end
+      {:ok, path} ->
+        parent = Path.dirname(path)
 
-  defp resolve_path(path, ctx) when is_binary(path) do
-    if Path.type(path) == :absolute do
-      path
-    else
-      cwd = Map.get(ctx || %{}, :cwd) || Map.get(ctx || %{}, "cwd") || File.cwd!()
-      Path.expand(path, cwd)
+        with :ok <- File.mkdir_p(parent),
+             :ok <- File.write(path, content) do
+          {:ok, "Wrote #{byte_size(content)} bytes to #{path}"}
+        else
+          {:error, reason} ->
+            {:error, "Failed to write #{path}: #{inspect(reason)}"}
+        end
     end
   end
 end

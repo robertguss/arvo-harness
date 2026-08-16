@@ -1,7 +1,6 @@
 defmodule Arvo.Tools.Read do
   @moduledoc "Read a text file with 1-indexed offset/limit and size caps (SPEC §3)."
 
-
   use Jido.Action,
     name: "read",
     description:
@@ -23,20 +22,20 @@ defmodule Arvo.Tools.Read do
 
   @impl Jido.Action
   def run(params, ctx) do
-    path = resolve_path(params[:path] || params["path"], ctx)
     offset = params[:offset] || params["offset"] || 1
     limit = params[:limit] || params["limit"]
 
-    with :ok <- ensure_exists(path),
+    with {:ok, path} <- Arvo.Isolation.resolve_tool_path(params[:path] || params["path"], ctx),
+         :ok <- ensure_exists(path),
          :ok <- reject_binary(path),
          {:ok, content} <- File.read(path) do
       lines = String.split(content, ~r/\r\n|\n|\r/, trim: false)
-      # Drop trailing empty element from final newline for line count display
       total = length(lines)
       start_idx = max(offset - 1, 0)
 
       if start_idx >= total and total > 0 do
-        {:error, "offset #{offset} is past end of file (#{total} lines). Re-read with a smaller offset."}
+        {:error,
+         "offset #{offset} is past end of file (#{total} lines). Re-read with a smaller offset."}
       else
         slice = Enum.drop(lines, start_idx)
         slice = if limit, do: Enum.take(slice, limit), else: slice
@@ -60,15 +59,6 @@ defmodule Arvo.Tools.Read do
 
         {:ok, result}
       end
-    end
-  end
-
-  defp resolve_path(path, ctx) when is_binary(path) do
-    if Path.type(path) == :absolute do
-      path
-    else
-      cwd = Map.get(ctx || %{}, :cwd) || Map.get(ctx || %{}, "cwd") || File.cwd!()
-      Path.expand(path, cwd)
     end
   end
 

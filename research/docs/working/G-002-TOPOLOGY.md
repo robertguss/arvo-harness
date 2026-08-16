@@ -24,8 +24,8 @@ explosion in the building does not touch the house. Today there is no separate
 building. Every Arvo tool runs in the same house as the brain. Most tools run in
 the brain's own rooms (BEAM processes inside one `beam.smp`). The `bash` and
 `pane` tools step into the attached yard (a short-lived OS child of that same
-BEAM), but that yard shares the house's wallet through inherited environment and
-can walk back into any room because it runs as the same user.
+BEAM). Named secret env keys are unset on those children. The child can still
+walk the disk as the same user, including `cat` of `$HOME/.arvo/auth.json`.
 
 There is no garage. The garage in D-001 means an OS boundary that the tool cannot
 cross back through: a port program, a peer node, or a container that holds only
@@ -33,7 +33,8 @@ hands. None of those exist in the tree. Harbor's Docker is real, but it is a wal
 around the whole property, not a wall between the house and a garage. `XAI_API_KEY`
 is handed into that container and sits next to `bash`. So for G-002's two
 questions, the honest answer today is: crash containment is partly real at the
-Elixir level and has two holes; payload containment does not exist at all.
+Elixir level and has two holes; payload containment is a cheap inner latch on two
+doors, not a separate building.
 
 ---
 
@@ -100,16 +101,17 @@ path away, and nothing stops an in-VM tool from asking.
 ### Per-tool execution table
 
 "Same OS user" and "inherits env" are asked against the brain's BEAM. "Reads
-`$HOME/.arvo/auth.json`" means can it, as written, with no jail in the way. The
-store is mode `0600`, owned by the BEAM's user, so same-user reads succeed.
+`$HOME/.arvo/auth.json`" means can the tool reach that file as written today.
+Read, Edit, and Write refuse the home store. Bash `cat` still succeeds. Mode
+`0600` does not stop the owner.
 
 | Tool | Work call and where it runs | Same OS user as brain? | Inherits brain env? | Can read `$HOME/.arvo/auth.json`? | Crash mode and does Session survive? |
 |---|---|---|---|---|---|
-| `read` | `File.read/1` in the turn Task (`read.ex:32`). `resolve_path` keeps absolute paths and expands `~`, no denylist (`read.ex:66`). | Yes | Yes (in-VM) | Yes. An arg of `~/.arvo/auth.json` is a normal read. | Elixir raise is caught by `Agent.run` rescue (`agent.ex:55`). Session survives. |
-| `edit` | `File.read` then `File.write` in the turn Task (`edit.ex:34`). | Yes | Yes | Yes (read then rewrite). | Same as read. Session survives. |
-| `write` | `File.mkdir_p` + `File.write` in the turn Task (`write.ex:26`). | Yes | Yes | Can overwrite it. | Same as read. Session survives. |
-| `bash` | `System.cmd("bash", ["-c", command], cd:, stderr_to_stdout: true)` from a nested `Task.async` (`bash.ex:48`). Runs as an OS child of the BEAM through an Elixir-owned spawn Port. | Yes | Yes. No `:env` is passed, so the child sees `XAI_API_KEY` and, on the release path, `RELEASE_COOKIE`. | Yes. `cat "$HOME/.arvo/auth.json"` works. `0600` does not stop the owner. | OS process nonzero or crash returns `{output, code}`. Session survives. Timeout does `Task.shutdown(:brutal_kill)`. Orphan grandchildren are possible and unmeasured (H-171). |
-| `pane` | If `Herdr.available?` (needs `HERDR_ENV=1` + `herdr` on PATH): `System.cmd("herdr", ...)` control calls, workload runs in a multiplexer pane (`herdr/cli.ex:171`). Else falls back to the `bash` path (`pane.ex:59`). | Yes | Yes (fallback is BEAM env; herdr CLI inherits BEAM env). | Yes (same as bash on the fallback path). | herdr nonzero is handled. Fallback equals bash. But `register_pane` / recall calls run in Session `handle_call`; an exception there can crash Session. |
+| `read` | `File.read/1` in the turn Task. `Arvo.Isolation.resolve_tool_path/2` expands (including absolute `..`) and refuses `$HOME/.arvo`. | Yes | Yes (in-VM) | No for `$HOME/.arvo` via Read. Bash `cat` of the same path still works. | Elixir raise is caught by `Agent.run` rescue (`agent.ex:55`). Session survives. |
+| `edit` | `File.read` then `File.write` in the turn Task. Isolation refuses before either call. | Yes | Yes | No for `$HOME/.arvo`. | Same as read. Session survives. |
+| `write` | `File.mkdir_p` + `File.write` in the turn Task. Isolation refuses before `mkdir_p`. | Yes | Yes | Cannot overwrite `$HOME/.arvo` via Write. | Same as read. Session survives. |
+| `bash` | `System.cmd("bash", ["-c", command], cd:, stderr_to_stdout: true, env: Arvo.Isolation.cmd_env())` from a nested `Task.async`. Runs as an OS child of the BEAM through an Elixir-owned spawn Port. | Yes | Partial. `cmd_env/0` unsets `XAI_API_KEY`, `RELEASE_COOKIE`, `ARVO_AUTH_FILE`, and live `*_API_KEY`. PATH and HOME still inherit. | Yes. `cat "$HOME/.arvo/auth.json"` still works. The path jail is File tools only. `0600` does not stop the owner. | OS process nonzero or crash returns `{output, code}`. Session survives. Timeout does `Task.shutdown(:brutal_kill)`. Orphan grandchildren are possible and unmeasured (H-171). |
+| `pane` | If `Herdr.available?` (needs `HERDR_ENV=1` + `herdr` on PATH): `System.cmd("herdr", ...)` control calls with `env: Arvo.Isolation.cmd_env()`, workload runs in a multiplexer pane (`herdr/cli.ex`). Else falls back to the `bash` path (`pane.ex:59`). | Yes | Partial on herdr control (same overlay as bash). Fallback is the bash path. Pane shell env is not proven. | Yes (same as bash on the fallback path). | herdr nonzero is handled. Fallback equals bash. But `register_pane` / recall calls run in Session `handle_call`; an exception there can crash Session. |
 | `RecallEvidence` | `Arvo.Session.recall/2`, a `GenServer.call` that runs the disk read inside Session's own `handle_call` (`recall_evidence.ex:59`). | Yes | n/a (in-VM) | Reads cold sidecar files by design; runs inside the brain's own process. | Worst for crash. An exception in the recall handler crashes Session itself. The tool's `try/catch :exit` only helps if Session is already dead (`recall_evidence.ex:76`), not for a raise inside the handler. `one_for_one` restarts Session with empty state; disk JSONL is durable. |
 | `fff_search` (plugin) | `Fff.Native.search/2`, a Rustler NIF on a normal scheduler thread (`native/fff_search/src/lib.rs:9`, no `DirtyCpu`). | Yes | Yes (native code in the BEAM process) | Yes. `WalkDir` descends `.arvo` and reads `auth.json`; the dotfile skip only applies to basenames starting with `.`, and `auth.json` does not (`lib.rs:33`). | Worst for crash. A Rust panic or segfault takes down the whole BEAM including Session. No BEAM fence helps a native crash. |
 
@@ -120,17 +122,17 @@ secrets." Crash/kill is "can this tool's failure take down Session."
 
 | Execution site | Payload leak fence | Crash/kill fence |
 |---|---|---|
-| `read` / `edit` / `write` (in-VM Elixir, turn Task) | None. Same user, `File.*` with no path jail reaches `auth.json` and `config.toml`. | Real, at the Elixir level. A raise is caught by `Agent.run`'s rescue; Session lives. |
-| `bash` (OS child via `System.cmd` Port) | None. Full env inherited, so `XAI_API_KEY` and `RELEASE_COOKIE` are visible; same user can `cat` the store. | Partial. The OS boundary means a bash crash returns a value and Session lives. Caveats: orphan grandchildren (H-171), and a raise inside the inner spawn Task is an open question. |
-| `pane` (herdr control + pane shell, or bash fallback) | None. Same as bash. Herdr pane shell env is not proven equal, but the fallback is BEAM env. | Partial. Same OS story as bash for the workload. Hole: pane bookkeeping runs in Session `handle_call`, so an exception there crashes Session. |
+| `read` / `edit` / `write` (in-VM Elixir, turn Task) | `$HOME/.arvo` path jail via `Arvo.Isolation.resolve_tool_path/2`. Same user, in-VM. No env fence. | Real, at the Elixir level. A raise is caught by `Agent.run`'s rescue; Session lives. |
+| `bash` (OS child via `System.cmd` Port) | Env overlay unsets named secrets. Disk is open: `cat` still reads `auth.json`. | Partial. The OS boundary means a bash crash returns a value and Session lives. Caveats: orphan grandchildren (H-171), and a raise inside the inner spawn Task is an open question. |
+| `pane` (herdr control + pane shell, or bash fallback) | Herdr control uses the same env overlay as bash. Pane shell env is not proven. Fallback equals bash, so `cat` of the store still works. | Partial. Same OS story as bash for the workload. Hole: pane bookkeeping runs in Session `handle_call`, so an exception there crashes Session. |
 | `RecallEvidence` (in-VM, on the Session process) | None. It runs inside Session, so it can reach Session state and any named process. | None. It runs inside Session. An exception in the handler is a Session crash. |
 | `fff_search` (in-VM NIF, native) | None. Native code can read any file the user can, and can touch VM memory directly. | None. A native crash aborts the whole BEAM. |
 | Harbor Docker (wraps the whole node) | Not a brain-from-hands fence. `XAI_API_KEY` is injected into the same container as `bash` (`arvo_agent.py:227`). | Not a hands fence. If the BEAM dies, the whole container dies with it. It is an outer wall around house plus yard together. |
 
-The one-line reading: in-VM Elixir tools have a real crash fence and no payload
-fence. `bash` and `pane` have a partial crash fence and no payload fence. The NIF
-and `RecallEvidence` have neither. Docker is a property wall, not a hands fence.
-Do not score it as one.
+The one-line reading: in-VM Elixir File tools have a real crash fence and a
+`$HOME/.arvo` path jail. `bash` has a partial crash fence and an env overlay;
+disk is still open. The NIF and `RecallEvidence` have neither. Docker is a
+property wall, not a hands fence. Do not score it as one.
 
 ---
 
@@ -143,21 +145,24 @@ Four doors, named per D-001. Values are never printed here.
 - `XAI_API_KEY`. The only credential env the Elixir app reads.
   `TokenManager.api_key_fallback("grok")` checks it, and checks it before the
   OAuth store (`token_manager.ex:158`, ordered ahead of stored tokens at
-  `token_manager.ex:92`). So env shadows OAuth. Every `System.cmd` child inherits
-  it because no `:env` is set.
+  `token_manager.ex:92`). So env shadows OAuth. Bash and herdr children get
+  `env: Arvo.Isolation.cmd_env()`, which unsets this key. Prompt `git`, plugin
+  `mix compile`, and Focus `test -t 0` still inherit the full parent env.
 - `RELEASE_COOKIE`. On the Mix release path, `arvo-chat` runs `bin/arvo eval`,
   and Mix `eval` exports `RELEASE_COOKIE` into the process environment. Its value
   comes from the release `cookie: "arvo_headless"` in `mix.exs:36`. Bash children
-  on the release path inherit that cookie string through env. Note that `eval`
-  sets the cookie but does not start a named node, so this is a string in the
-  environment, not a live `:erpc` endpoint.
+  no longer inherit that cookie string. `cmd_env/0` unsets `RELEASE_COOKIE`.
+  `eval` still sets the cookie on the BEAM process itself, but does not start a
+  named node, so this remains a string in the parent environment, not a live
+  `:erpc` endpoint.
 - Locators, not credentials: `HOME`, `PATH`, `ARVO_CWD`, `ARVO_HEADLESS`,
   `ARVO_MODE`, `ARVO_PROGRESSIVE_ATTENTION`, `HERDR_ENV`, and the other `ARVO_*`
   flags.
-- `ARVO_AUTH_FILE` is not read by the Elixir app. Zero matches under `lib/`. It
-  exists only in the Harbor Python adapter (`arvo_agent.py:42`), which treats it
-  as a host path and uploads it into the container. Do not document it as a
-  product knob.
+- `ARVO_AUTH_FILE` is not read by the Elixir app. Zero matches under `lib/`
+  except the Isolation unset list. It exists in the Harbor Python adapter
+  (`arvo_agent.py:42`), which treats it as a host path and uploads it into the
+  container. `cmd_env/0` still unsets it on bash and herdr children. Do not
+  document it as a product knob.
 
 ### Door 2: VM state
 
@@ -196,8 +201,8 @@ All under `$HOME/.arvo` unless noted. Constructed from
 `System.get_env("HOME")` (`store.ex:9`).
 
 - `auth.json`. The OAuth store. Written mode `0600` by `Arvo.Auth.Store`
-  (`store.ex:42`). This is the disk door D-001 says the recorded test forgets:
-  same-user hands read it fine.
+  (`store.ex:42`). Read, Edit, and Write refuse this path. Bash `cat` still
+  reads it. Same-user `0600` is not a fence.
 - `config.toml`. May hold `providers.xai.api_key`. It is not chmod'd to `0600`.
 - `trust.json`. Plugin source allowlist, mode `0600`. Not a tool jail.
 - `sessions/<slug>/<ts>_<uuid>.jsonl`, plus `<session>.audit.jsonl` and
@@ -281,8 +286,8 @@ the four doors above.
 - `Session.tokens` is usage accounting, not API keys. Do not draw it as a
   credential in the map.
 - Mix `eval` still exports `RELEASE_COOKIE` without starting a node. The cookie
-  reaches bash as an env string. It is not a live distribution endpoint on this
-  path.
+  is a string on the BEAM process. Bash children no longer see it. `cmd_env/0`
+  unsets that key.
 - Harbor Docker is not a secret fence. The key is inside the container next to
   the shell. Score it as a property wall, not a hands wall.
 - The agent doc comment says "core four." `core_tools/0` returns six
@@ -293,11 +298,13 @@ the four doors above.
 Free tests in `test/arvo/g002_isolation_baseline_test.exs`. Markers only. Temp
 `HOME`. No real wallet.
 
-- H-123, payload. Confirmed leak. With `XAI_API_KEY` set, Bash `printenv`
-  returns the marker. With the var deleted, the marker is absent. Read of
-  `$HOME/.arvo/auth.json` at mode `0600` still returns the access_token marker.
-  The negative "hands cannot read the wallet" claim fails today by construction
-  (H-188).
+- H-123, payload. Mix now asserts the env and Read/Write fences hold. With
+  `XAI_API_KEY` and `RELEASE_COOKIE` set, Bash `printenv` does not return the
+  markers. Read of `$HOME/.arvo/auth.json` at mode `0600` returns `{:error, msg}`
+  and that message does not contain the access_token marker. Write into that
+  path is refused and the store file is unchanged. Remaining holes: Bash can
+  still `cat $HOME/.arvo/auth.json` because the path jail is File tools only;
+  symlink escape is untested; crash and orphan (H-121 / H-171) are unchanged.
 - H-121, crash. `Session.start_turn` with a scripted Bash `sleep 8`, then
   `cancel_turn` while bash is running. Session pid lives. The JSONL file exists.
   The prior user row is still readable. The post-tool assistant row does not
@@ -318,11 +325,9 @@ Still unread:
 
 ## Index card
 
-Every Arvo tool runs in the brain's own BEAM today, either as Elixir in the turn
-Task, as native code in the fff NIF, or inside the Session process, and the
-`bash` and `pane` tools shell out to an OS child that inherits the brain's full
-environment. So crash containment is real only for Elixir-level failures and
-breaks on the NIF and on `RecallEvidence`, while payload containment does not
-exist: any tool can reach `XAI_API_KEY`, `config.toml`, the token store, and
-`~/.arvo/auth.json` because there is no separate building yet, only Harbor's wall
-around the whole property.
+In-VM tools still share the house. This is a cheap inner latch on two doors, not
+a separate building. `Arvo.Isolation.cmd_env/0` unsets named secret env keys on
+bash and herdr children. `resolve_tool_path/2` refuses `$HOME/.arvo` for Read,
+Edit, and Write. Crash containment is unchanged: Elixir-level failures still
+stop at `Agent.run`, and the NIF plus `RecallEvidence` still have no crash
+fence. Bash can still `cat` the store. There is no garage and no peer node.

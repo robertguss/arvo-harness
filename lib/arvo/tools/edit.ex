@@ -1,7 +1,6 @@
 defmodule Arvo.Tools.Edit do
   @moduledoc "search_replace edit with exact-once match and whitespace-tolerant fallback (SPEC §3)."
 
-
   use Jido.Action,
     name: "edit",
     description:
@@ -26,12 +25,12 @@ defmodule Arvo.Tools.Edit do
 
   @impl Jido.Action
   def run(params, ctx) do
-    path = resolve_path(params[:path] || params["path"], ctx)
     old_string = params[:old_string] || params["old_string"]
     new_string = params[:new_string] || params["new_string"]
     replace_all? = params[:replace_all] || params["replace_all"] || false
 
-    with :ok <- ensure_exists(path),
+    with {:ok, path} <- Arvo.Isolation.resolve_tool_path(params[:path] || params["path"], ctx),
+         :ok <- ensure_exists(path),
          {:ok, content} <- File.read(path),
          {:ok, updated, count} <- apply_edit(content, old_string, new_string, replace_all?),
          :ok <- File.write(path, updated) do
@@ -50,8 +49,7 @@ defmodule Arvo.Tools.Edit do
             do_replace(content, exact_old, new_string, replace_all?, n, :whitespace)
 
           :none ->
-            {:error,
-             "old_string not found in file — file may have changed — re-read and retry"}
+            {:error, "old_string not found in file — file may have changed — re-read and retry"}
 
           :ambiguous ->
             {:error,
@@ -104,7 +102,7 @@ defmodule Arvo.Tools.Edit do
     len = String.length(content)
     needle_len = String.length(needle)
 
-    Enum.reduce(0..(max(len - 1, 0)), [], fn start, acc ->
+    Enum.reduce(0..max(len - 1, 0), [], fn start, acc ->
       # Limit window to reasonable size: needle length * 3 (whitespace expansion)
       max_window = min(len - start, max(needle_len * 4, needle_len + 64))
 
@@ -136,15 +134,6 @@ defmodule Arvo.Tools.Edit do
     s
     |> String.trim()
     |> String.replace(~r/\s+/, " ")
-  end
-
-  defp resolve_path(path, ctx) when is_binary(path) do
-    if Path.type(path) == :absolute do
-      path
-    else
-      cwd = Map.get(ctx || %{}, :cwd) || Map.get(ctx || %{}, "cwd") || File.cwd!()
-      Path.expand(path, cwd)
-    end
   end
 
   defp ensure_exists(path) do

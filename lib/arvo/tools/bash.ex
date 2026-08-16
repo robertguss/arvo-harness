@@ -1,7 +1,6 @@
 defmodule Arvo.Tools.Bash do
   @moduledoc "Run a shell command with merged stdout/stderr and tail truncation (SPEC §3)."
 
-
   use Jido.Action,
     name: "bash",
     description:
@@ -47,7 +46,11 @@ defmodule Arvo.Tools.Bash do
   def run_command(command, cwd, timeout_ms) do
     task =
       Task.async(fn ->
-        System.cmd("bash", ["-c", command], cd: cwd, stderr_to_stdout: true)
+        System.cmd("bash", ["-c", command],
+          cd: cwd,
+          stderr_to_stdout: true,
+          env: Arvo.Isolation.cmd_env()
+        )
       end)
 
     case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do

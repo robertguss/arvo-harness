@@ -6,6 +6,7 @@ defmodule Arvo.G002IsolationBaselineTest do
     File.mkdir_p!(tmp)
     old_home = System.get_env("HOME")
     old_key = System.get_env("XAI_API_KEY")
+    old_cookie = System.get_env("RELEASE_COOKIE")
     System.put_env("HOME", tmp)
     System.delete_env("XAI_API_KEY")
 
@@ -16,6 +17,10 @@ defmodule Arvo.G002IsolationBaselineTest do
         do: System.put_env("XAI_API_KEY", old_key),
         else: System.delete_env("XAI_API_KEY")
 
+      if old_cookie,
+        do: System.put_env("RELEASE_COOKIE", old_cookie),
+        else: System.delete_env("RELEASE_COOKIE")
+
       File.rm_rf!(tmp)
     end)
 
@@ -23,14 +28,24 @@ defmodule Arvo.G002IsolationBaselineTest do
   end
 
   describe "H-123 payload via Arvo.Tool.invoke on Bash and Read" do
-    test "env door open: Bash printenv leaks XAI_API_KEY marker", %{ctx: ctx} do
-      marker = "g002-marker-#{System.unique_integer([:positive])}"
-      System.put_env("XAI_API_KEY", marker)
+    test "env door fenced: Bash printenv does not leak XAI_API_KEY or RELEASE_COOKIE markers",
+         %{ctx: ctx} do
+      key_marker = "g002-marker-#{System.unique_integer([:positive])}"
+      cookie_marker = "g002-cookie-#{System.unique_integer([:positive])}"
+      System.put_env("XAI_API_KEY", key_marker)
+      System.put_env("RELEASE_COOKIE", cookie_marker)
 
-      assert {:ok, out} =
+      assert {:ok, key_out} =
                Arvo.Tool.invoke(Arvo.Tools.Bash, %{command: "printenv XAI_API_KEY"}, ctx)
 
-      assert out =~ marker, "open env door: Bash printenv leaks XAI_API_KEY (H-123)"
+      assert {:ok, cookie_out} =
+               Arvo.Tool.invoke(Arvo.Tools.Bash, %{command: "printenv RELEASE_COOKIE"}, ctx)
+
+      refute key_out =~ key_marker,
+             "env fence: Bash printenv must not leak XAI_API_KEY (H-123)"
+
+      refute cookie_out =~ cookie_marker,
+             "env fence: Bash printenv must not leak RELEASE_COOKIE (H-123)"
     end
 
     test "env door closed: Bash printenv does not contain marker", %{ctx: ctx} do
@@ -44,7 +59,10 @@ defmodule Arvo.G002IsolationBaselineTest do
       refute out =~ marker, "closed env door: marker absent from Bash printenv"
     end
 
-    test "disk door: Read of 0600 auth.json returns access_token marker", %{tmp: tmp, ctx: ctx} do
+    test "disk door fenced: Read of 0600 auth.json does not return access_token marker", %{
+      tmp: tmp,
+      ctx: ctx
+    } do
       disk_marker = "g002-marker-#{System.unique_integer([:positive])}"
 
       :ok =
@@ -59,10 +77,33 @@ defmodule Arvo.G002IsolationBaselineTest do
       perms = Bitwise.band(File.stat!(path).mode, 0o777)
       assert perms == 0o600, "auth.json is 0600"
 
-      assert {:ok, out} = Arvo.Tool.invoke(Arvo.Tools.Read, %{path: path}, ctx)
+      assert {:error, msg} = Arvo.Tool.invoke(Arvo.Tools.Read, %{path: path}, ctx)
 
-      assert out =~ disk_marker,
-             "same-user Read of 0600 auth.json returns access_token marker (H-123)"
+      refute msg =~ disk_marker,
+             "path jail: Read of $HOME/.arvo/auth.json must not return access_token (H-123)"
+    end
+
+    test "disk door fenced: Write into auth.json is refused and store is unchanged", %{
+      ctx: ctx
+    } do
+      disk_marker = "g002-marker-#{System.unique_integer([:positive])}"
+
+      :ok =
+        Arvo.Auth.Store.put("grok", %{
+          "type" => "oauth",
+          "access_token" => disk_marker,
+          "refresh_token" => "g002-not-a-token"
+        })
+
+      path = Arvo.Auth.Store.path()
+
+      assert {:error, msg} =
+               Arvo.Tool.invoke(Arvo.Tools.Write, %{path: path, content: "pwned"}, ctx)
+
+      refute msg =~ disk_marker
+      refute msg =~ "pwned"
+      assert File.read!(path) =~ disk_marker
+      refute File.read!(path) =~ "pwned"
     end
   end
 

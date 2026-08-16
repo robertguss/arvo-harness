@@ -67,7 +67,7 @@ defmodule Arvo.Herdr.CLI do
       |> maybe_opt("--lines", Keyword.get(opts, :lines))
       |> maybe_opt("--source", source_arg(Keyword.get(opts, :source)))
 
-    case System.cmd("herdr", args, stderr_to_stdout: true) do
+    case System.cmd("herdr", args, stderr_to_stdout: true, env: Arvo.Isolation.cmd_env()) do
       {out, 0} ->
         out = String.trim_trailing(out)
 
@@ -165,10 +165,8 @@ defmodule Arvo.Herdr.CLI do
     end
   end
 
-  # --- helpers ---
-
   defp cmd(args) do
-    case System.cmd("herdr", args, stderr_to_stdout: true) do
+    case System.cmd("herdr", args, stderr_to_stdout: true, env: Arvo.Isolation.cmd_env()) do
       {out, 0} ->
         parse_json_ok(out)
 

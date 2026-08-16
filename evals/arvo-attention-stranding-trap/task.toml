@@ -1,0 +1,37 @@
+schema_version = "1.4"
+
+[task]
+name = "arvo-harness/arvo-attention-stranding-trap"
+version = "1.0.0"
+description = "Arvo progressive attention stranding trap: the required fact sits ~6.6 KB deep in an ~11 KB bash report that always stubs under attention on (past the 400-byte preview, under the 16 KB expand cap); success needs expand recovery (where does attention hurt?)"
+keywords = ["arvo", "progressive-attention", "attention", "stranding", "expand", "harbor", "metrics"]
+
+[metadata]
+category = "programming"
+difficulty = "easy"
+difficulty_explanation = "Single rename edit; the load is recovering the approved name from a report whose stub preview hides it"
+agent_under_test = "arvo-chat"
+suite = "arvo-attention"
+
+[verifier]
+timeout_sec = 120.0
+# Verifier only greps workspace + audit JSONL — no network
+network_mode = "no-network"
+
+[agent]
+timeout_sec = 900.0
+# Live xAI completions for arvo-chat
+network_mode = "allowlist"
+allowed_hosts = ["api.x.ai", "*.x.ai", "auth.x.ai"]
+
+[solution]
+# Oracle needs no credentials
+
+[environment]
+build_timeout_sec = 300.0
+network_mode = "no-network"
+cpus = 2
+memory_mb = 4096
+storage_mb = 10240
+# API key: pass at agent run time only via `harbor run --ae XAI_API_KEY`
+# Release tarball uploaded by ArvoAgent (never bake into image)

@@ -1,7 +1,8 @@
 # Measured results
 
 Running log of live eval results. Numbers only count if the run is
-reproducible from the repo (see `arvo-harness/evals/README.md`). Newest first.
+reproducible from this repo (see `evals/README.md` at the repo root; results
+and the code that produced them now version together). Newest first.
 
 ## R-002 - 2026-08-15 - Small control: attention adds no tax on tiny work (n=5 pairs)
 

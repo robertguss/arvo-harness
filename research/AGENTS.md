@@ -1,6 +1,9 @@
-# Agent Rules — arvo-beam-harness-research
+# Agent Rules — research program (`research/`)
 
-Repository-local rules for humans and agents operating this research program.
+Rules for humans and agents operating this research program. They govern the
+`research/` subtree of the arvo-harness monorepo (the program was merged in
+from the standalone `arvo-beam-harness-research` repo, history preserved);
+harness code outside `research/` follows the repo-root agent rules instead.
 
 ## Authority
 

@@ -7,7 +7,7 @@
   "agents": [
     {
       "name": "evals.harbor_agents.arvo_agent:ArvoAgent",
-      "kwargs": { "attention": "off", "max_turns": 25 }
+      "kwargs": { "attention": "off", "max_turns": 40 }
     }
   ],
   "tasks": [{ "path": "evals/arvo-attention-needle-junk" }]

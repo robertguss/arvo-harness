@@ -288,28 +288,31 @@ the four doors above.
 - The agent doc comment says "core four." `core_tools/0` returns six
   (`tool.ex:23`). Trust the code.
 
-### Open measurements still needed
+### Baseline Mix measurements (in-VM, `016d2f8` plus this branch)
 
-These are the honest gaps. They need a booted VM or a killed process to answer,
-not more reading.
+Free tests in `test/arvo/g002_isolation_baseline_test.exs`. Markers only. Temp
+`HOME`. No real wallet.
 
-- H-171, orphan bash. After `Task.shutdown(task, :brutal_kill)` on a bash
-  timeout, are grandchildren of `bash -c` (a backgrounded `sleep`, a `nohup`, a
-  daemonized child) reaped, or left running? Arvo sets no process group and no
-  Port monitor. Unverified in this repo. Needs a real kill-and-inspect.
-- Kill-hands-mid-tool durability. If a tool is killed mid-run, exactly which rows
-  reach the session JSONL? Cold bodies and audit lines are written per completed
-  tool during the turn (`session.ex` projection path). The assistant and tool
-  message chain persists only when the turn Task returns successfully. So a
-  mid-tool kill can leave cold and audit ahead of the session JSONL. This split
-  is inferred from the code and should be confirmed by killing a live turn.
-- Negative key test (H-123). Boot with no `XAI_API_KEY` and no store, then prove
-  a tool cannot obtain a bearer by any door. Not run here. Today's map predicts
-  the opposite: the tool *can* obtain the bearer if any door is open.
-- Related unknowns: whether a raise in the bash inner spawn Task is caught by
-  `Agent.run`'s `catch :exit` or link-kills the turn Task first; and whether a
-  Harbor `eval` VM has `node()` equal to `nonode@nohost`. Both are reasoned from
-  Elixir 1.20 behavior, not observed.
+- H-123, payload. Confirmed leak. With `XAI_API_KEY` set, Bash `printenv`
+  returns the marker. With the var deleted, the marker is absent. Read of
+  `$HOME/.arvo/auth.json` at mode `0600` still returns the access_token marker.
+  The negative "hands cannot read the wallet" claim fails today by construction
+  (H-188).
+- H-121, crash. `Session.start_turn` with a scripted Bash `sleep 8`, then
+  `cancel_turn` while bash is running. Session pid lives. The JSONL file exists.
+  The prior user row is still readable. The post-tool assistant row does not
+  land. Cold/audit vs JSONL split for *completed* tools in the same turn is
+  still unmeasured (this turn never finished a tool).
+- H-171, orphan bash. Observed leftover count 1 after `run_command` timeout.
+  The `bash -c` wrapper is reaped. The `sleep` grandchild remains. Tagged
+  `:orphans_today`. The test kills leftovers on exit.
+
+Still unread:
+
+- Whether a raise in the bash inner spawn Task is caught by `Agent.run`'s
+  `catch :exit` or link-kills the turn Task first.
+- Whether a Harbor `eval` VM has `node()` equal to `nonode@nohost`.
+
 
 ---
 
